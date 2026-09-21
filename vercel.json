@@ -1,0 +1,49 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/pages/[pageId]/sync/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/sync/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/campaign-scheduled/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/campaign-loop/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/follow-up-automations/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/exports/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/pages/[pageId]/exports/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/exports/[exportId]/process/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/exports/[exportId]/retry/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/exports/[exportId]/download/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/campaigns/[campaignId]/send/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/pages/[pageId]/contacts/tracked-bulk-message/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/facebook/messages/send/route.ts": {
+      "maxDuration": 300
+    }
+  },
+  "regions": ["syd1"]
+}
+

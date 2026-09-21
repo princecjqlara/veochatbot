@@ -1,0 +1,347 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+    applyDynamicButtonValue,
+    buildSupportTeamTemplateBodyCandidates,
+    buildSupportTeamTemplateBody,
+    getMessagingType,
+    buildUtilityTemplateBodyExample,
+    buildUtilityTemplateBodyCandidates,
+    buildUtilityBodyParameters,
+    normalizeRequestedButtons,
+    resolveButtonMode,
+    resolveMessageParts,
+    templateMatchesRequestedButtons
+} from './helpers';
+
+describe('buildSupportTeamTemplateBody', () => {
+    it('builds the support-team template in the required page-name format', () => {
+        expect(buildSupportTeamTemplateBody('Ares Media')).toBe(
+            '{{1}} - from Ares Media support team - {{2}}'
+        );
+    });
+});
+
+describe('buildSupportTeamTemplateBodyCandidates', () => {
+    it('returns unique support-team variants with placeholders for auto-template retries', () => {
+        const candidates = buildSupportTeamTemplateBodyCandidates('Ares Media');
+
+        expect(candidates.length).toBeGreaterThan(1);
+        expect(new Set(candidates).size).toBe(candidates.length);
+        expect(candidates).toContain('{{1}} - from Ares Media support team - {{2}}');
+        expect(candidates.every((candidate) => candidate.includes('{{1}}'))).toBe(true);
+        expect(candidates.every((candidate) => candidate.includes('{{2}}'))).toBe(true);
+    });
+});
+
+describe('buildUtilityTemplateBodyCandidates', () => {
+    it('uses single placeholder body for one-part utility sends', () => {
+        expect(buildUtilityTemplateBodyCandidates('Ares Media', false)).toEqual(['{{1}}']);
+    });
+
+    it('uses support-team variants for two-part utility sends', () => {
+        const candidates = buildUtilityTemplateBodyCandidates('Ares Media', true);
+
+        expect(candidates).toContain('{{1}} - from Ares Media support team - {{2}}');
+        expect(candidates.every((candidate) => candidate.includes('{{1}}'))).toBe(true);
+        expect(candidates.some((candidate) => candidate.includes('{{2}}'))).toBe(true);
+    });
+
+    it('allows single and support-team options when dual mode is enabled', () => {
+        const candidates = buildUtilityTemplateBodyCandidates('Ares Media', true, true);
+
+        expect(candidates).toContain('{{1}}');
+        expect(candidates).toContain('{{1}} - from Ares Media support team - {{2}}');
+    });
+});
+
+describe('buildUtilityTemplateBodyExample', () => {
+    it('returns one example value for a single-placeholder body', () => {
+        expect(buildUtilityTemplateBodyExample('{{1}}')).toEqual([
+            ['Your account update is ready.']
+        ]);
+    });
+
+    it('returns matching example values for a two-placeholder body', () => {
+        expect(buildUtilityTemplateBodyExample('{{1}} - from Ares Media support team - {{2}}')).toEqual([
+            ['Your account update is ready.', 'Please review the latest details.']
+        ]);
+    });
+
+    it('returns undefined when body has no placeholders', () => {
+        expect(buildUtilityTemplateBodyExample('Hello there')).toBeUndefined();
+    });
+});
+
+describe('buildUtilityBodyParameters', () => {
+    it('keeps support-team separator between message parts', () => {
+        const parameters = buildUtilityBodyParameters(
+            2,
+            'Ready to increase your real estate sales!|||huwag ka nna mag pahuli you\'re one click away!',
+            { id: 'contact-1234', name: 'Prince Doe' },
+            '{{1}} - Message from Ares Media support team - {{2}}'
+        );
+
+        expect(parameters).toEqual([
+            'Ready to increase your real estate sales!',
+            'huwag ka nna mag pahuli you\'re one click away!'
+        ]);
+    });
+
+    it('keeps first-name substitution for one-part non support-team templates', () => {
+        const parameters = buildUtilityBodyParameters(
+            2,
+            'Your appointment is confirmed',
+            { id: 'contact-1234', name: 'Prince Doe' },
+            '{{1}}, your update: {{2}}'
+        );
+
+        expect(parameters).toEqual(['Prince', 'Your appointment is confirmed']);
+    });
+
+    it('keeps part1 and part2 order for two-part messages even on generic two-slot templates', () => {
+        const parameters = buildUtilityBodyParameters(
+            2,
+            'Huy! Kikim still interested?|||Don\'t worry there are 5 lots left',
+            { id: 'contact-1234', name: 'Prince Doe' },
+            '{{1}}, your update: {{2}}'
+        );
+
+        expect(parameters).toEqual(['Huy! Kikim still interested?', 'Don\'t worry there are 5 lots left']);
+    });
+
+    it('can collapse two-part text into one placeholder when separator is provided', () => {
+        const parameters = buildUtilityBodyParameters(
+            1,
+            'Part 1|||Part 2',
+            { id: 'contact-1234', name: 'Prince Doe' },
+            '{{1}}',
+            ' - from Ares Media support team - '
+        );
+
+        expect(parameters).toEqual(['Part 1 - from Ares Media support team - Part 2']);
+    });
+});
+
+describe('templateMatchesRequestedButtons', () => {
+    it('matches URL buttons when requested URL omits protocol', () => {
+        const template = {
+            components: [
+                { type: 'BODY', text: '{{1}}' },
+                {
+                    type: 'BUTTONS',
+                    buttons: [
+                        { type: 'URL', text: 'Join now', url: 'https://instantmeeting.vercel.app/join/aresmedia' }
+                    ]
+                }
+            ]
+        };
+
+        const requestedButtons = [
+            { type: 'URL', text: 'Join now', url: 'instantmeeting.vercel.app/join/aresmedia' }
+        ];
+
+        expect(templateMatchesRequestedButtons(template, requestedButtons)).toBe(true);
+    });
+
+    it('rejects a template with stale URL button values', () => {
+        const template = {
+            components: [
+                { type: 'BODY', text: '{{1}} - Message from Ares Media support team - {{2}}' },
+                {
+                    type: 'BUTTONS',
+                    buttons: [
+                        { type: 'URL', text: 'Click here', url: 'https://old.example.com/join' }
+                    ]
+                }
+            ]
+        };
+
+        const requestedButtons = [
+            { type: 'URL', text: 'Click here', url: 'https://instantmeeting.vercel.app/join/aresmedia' }
+        ];
+
+        expect(templateMatchesRequestedButtons(template, requestedButtons)).toBe(false);
+    });
+
+    it('rejects templates with buttons when none are requested', () => {
+        const template = {
+            components: [
+                { type: 'BODY', text: '{{1}}' },
+                {
+                    type: 'BUTTONS',
+                    buttons: [
+                        { type: 'URL', text: 'Click here', url: 'https://example.com' }
+                    ]
+                }
+            ]
+        };
+
+        expect(templateMatchesRequestedButtons(template, undefined)).toBe(false);
+    });
+
+    it('matches equivalent quick reply and postback button payloads', () => {
+        const template = {
+            components: [
+                { type: 'BODY', text: '{{1}}' },
+                {
+                    type: 'BUTTONS',
+                    buttons: [
+                        { type: 'POSTBACK', text: 'Talk to sales', payload: 'talk_sales' }
+                    ]
+                }
+            ]
+        };
+
+        const requestedButtons = [
+            { type: 'QUICK_REPLY', text: 'Talk to sales', payload: 'talk_sales' }
+        ];
+
+        expect(templateMatchesRequestedButtons(template, requestedButtons)).toBe(true);
+    });
+
+    it('rejects template buttons when button metadata is incomplete', () => {
+        const template = {
+            components: [
+                { type: 'BODY', text: '{{1}}' },
+                {
+                    type: 'BUTTONS',
+                    buttons: [
+                        { type: 'URL', text: 'View Details!' }
+                    ]
+                }
+            ]
+        };
+
+        expect(templateMatchesRequestedButtons(template, undefined)).toBe(false);
+    });
+});
+
+describe('normalizeRequestedButtons', () => {
+    it('normalizes URL buttons to valid https links', () => {
+        expect(
+            normalizeRequestedButtons([
+                { type: 'URL', text: 'Join now', url: 'instantmeeting.vercel.app/join/aresmedia' }
+            ])
+        ).toEqual([
+            {
+                type: 'URL',
+                text: 'Join now',
+                value: 'https://instantmeeting.vercel.app/join/aresmedia'
+            }
+        ]);
+    });
+
+    it('drops URL buttons that cannot be parsed as valid URIs', () => {
+        expect(
+            normalizeRequestedButtons([
+                { type: 'URL', text: 'Join now', url: 'not a valid uri' }
+            ])
+        ).toEqual([]);
+    });
+});
+
+describe('resolveButtonMode', () => {
+    it('defaults to TEMPLATE_STATIC for unknown values', () => {
+        expect(resolveButtonMode(undefined)).toBe('TEMPLATE_STATIC');
+        expect(resolveButtonMode('anything')).toBe('TEMPLATE_STATIC');
+    });
+
+    it('accepts RESPONSE_DYNAMIC when explicitly requested', () => {
+        expect(resolveButtonMode('RESPONSE_DYNAMIC')).toBe('RESPONSE_DYNAMIC');
+    });
+});
+
+describe('getMessagingType', () => {
+    it('uses RESPONSE whenever buttons are present so sending does not depend on utility templates', () => {
+        expect(getMessagingType('TEMPLATE_STATIC', 1)).toBe('RESPONSE');
+        expect(getMessagingType('RESPONSE_DYNAMIC', 1)).toBe('RESPONSE');
+    });
+
+    it('keeps UTILITY for buttonless sends', () => {
+        expect(getMessagingType('TEMPLATE_STATIC', 0)).toBe('UTILITY');
+    });
+});
+
+describe('applyDynamicButtonValue', () => {
+    it('replaces first URL button link when part2 is a valid URL', () => {
+        const updated = applyDynamicButtonValue(
+            [{ type: 'URL', text: 'Click here', url: 'https://example.com/start' }],
+            'instantmeeting.vercel.app/join/aresmedia'
+        );
+
+        expect(updated[0]).toEqual({
+            type: 'URL',
+            text: 'Click here',
+            url: 'https://instantmeeting.vercel.app/join/aresmedia',
+            payload: undefined
+        });
+    });
+
+    it('replaces first button text when part2 is not a URL', () => {
+        const updated = applyDynamicButtonValue(
+            [{ type: 'URL', text: 'Click here', url: 'https://example.com/start' }],
+            'Talk to support now'
+        );
+
+        expect(updated[0]).toEqual({
+            type: 'URL',
+            text: 'Talk to support now',
+            url: 'https://example.com/start',
+            payload: undefined
+        });
+    });
+
+    it('maps part2 to quick-reply text and payload', () => {
+        const updated = applyDynamicButtonValue(
+            [{ type: 'QUICK_REPLY', text: 'Old quick reply', payload: 'old_payload' }],
+            'Talk to sales'
+        );
+
+        expect(updated[0]).toEqual({
+            type: 'QUICK_REPLY',
+            text: 'Talk to sales',
+            payload: 'Talk to sales',
+            url: undefined
+        });
+    });
+});
+
+describe('resolveMessageParts', () => {
+    it('prefers explicit message parts when provided', () => {
+        const resolved = resolveMessageParts(
+            'Old combined text',
+            'Hi may marketing system na ba sila?',
+            'if intresado ka pa para sa real estate team mo click below'
+        );
+
+        expect(resolved).toEqual({
+            part1: 'Hi may marketing system na ba sila?',
+            part2: 'if intresado ka pa para sa real estate team mo click below',
+            combined: 'Hi may marketing system na ba sila?|||if intresado ka pa para sa real estate team mo click below',
+            isTwoPart: true
+        });
+    });
+
+    it('parses separator-based message text when explicit parts are missing', () => {
+        const resolved = resolveMessageParts('Part 1|||Part 2');
+
+        expect(resolved).toEqual({
+            part1: 'Part 1',
+            part2: 'Part 2',
+            combined: 'Part 1|||Part 2',
+            isTwoPart: true
+        });
+    });
+
+    it('treats empty second part as single-part message', () => {
+        const resolved = resolveMessageParts('Part 1|||   ');
+
+        expect(resolved).toEqual({
+            part1: 'Part 1',
+            part2: '   ',
+            combined: 'Part 1|||   ',
+            isTwoPart: false
+        });
+    });
+});
