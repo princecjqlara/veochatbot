@@ -1199,7 +1199,7 @@ export async function POST(request: NextRequest) {
                         contactId: contact.id,
                         messageId: sendResult.message_id,
                         sourceType: 'manual',
-                        sourceName: 'Tokko manual send',
+                        sourceName: 'VeoBot manual send',
                         actorUserId: userId,
                         actorName: session.user?.name || session.user?.email || null,
                         messageKind: msgType

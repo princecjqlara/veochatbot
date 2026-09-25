@@ -21,6 +21,13 @@ type SendResult = {
     partial?: boolean;
     sent?: Array<{ kind: string; partId?: string; messageId: string }>;
 };
+type HumanAgentDraft = {
+    id: string;
+    due_at: string;
+    message_text: string;
+    media?: { id: string; title: string; media_type: 'image' | 'video' } | null;
+    contact: Contact;
+};
 
 const BULK_SEND_CONCURRENCY = 4;
 
@@ -96,6 +103,8 @@ export default function SevenDayContactsPage() {
     const [total, setTotal] = useState(0);
     const [selectedContacts, setSelectedContacts] = useState<Record<string, Contact>>({});
     const [partialDeliveries, setPartialDeliveries] = useState<Record<string, ManualReplyRetryState>>({});
+    const [humanAgentDrafts, setHumanAgentDrafts] = useState<HumanAgentDraft[]>([]);
+    const [selectedDraftJobs, setSelectedDraftJobs] = useState<Record<string, string>>({});
     const [text, setText] = useState('');
     const [files, setFiles] = useState<File[]>([]);
     const [now, setNow] = useState(Date.now());
@@ -150,6 +159,35 @@ export default function SevenDayContactsPage() {
 
     const refreshContacts = useCallback(() => setRefreshKey((value) => value + 1), []);
 
+    useEffect(() => {
+        if (!pageId) {
+            setHumanAgentDrafts([]);
+            return;
+        }
+        const controller = new AbortController();
+        fetch(`/api/pages/${encodeURIComponent(pageId)}/chatbot/follow-ups`, { signal: controller.signal })
+            .then(async (response) => {
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || 'Could not load chatbot follow-up drafts.');
+                return data.jobs || [];
+            })
+            .then(setHumanAgentDrafts)
+            .catch((fetchError) => {
+                if (fetchError.name !== 'AbortError') setHumanAgentDrafts([]);
+            });
+        return () => controller.abort();
+    }, [pageId, refreshKey]);
+
+    const loadHumanAgentDraft = useCallback((draft: HumanAgentDraft) => {
+        setSelectedContacts({ [draft.contact.id]: draft.contact });
+        setSelectedDraftJobs({ [draft.contact.id]: draft.id });
+        setAllMatchingSelected(false);
+        setText(draft.message_text);
+        setFiles([]);
+        setError('');
+        setNotice('Draft loaded. Review it, then click Send staff reply.');
+    }, []);
+
     const selectedContactList = Object.values(selectedContacts);
     const allVisibleSelected = contacts.length > 0 && contacts.every((contact) => selectedContacts[contact.id]);
 
@@ -158,6 +196,11 @@ export default function SevenDayContactsPage() {
         const next = { ...selectedContacts };
         if (next[contact.id]) {
             delete next[contact.id];
+            setSelectedDraftJobs((current) => {
+                const updated = { ...current };
+                delete updated[contact.id];
+                return updated;
+            });
         } else {
             next[contact.id] = contact;
         }
@@ -179,6 +222,7 @@ export default function SevenDayContactsPage() {
 
     const clearSelection = useCallback(() => {
         setSelectedContacts({});
+        setSelectedDraftJobs({});
         setAllMatchingSelected(false);
     }, []);
 
@@ -369,7 +413,8 @@ export default function SevenDayContactsPage() {
                             body: JSON.stringify({
                                 contactId: contact.id,
                                 text: pendingText,
-                                mediaItems: pendingMediaItems
+                                mediaItems: pendingMediaItems,
+                                followUpJobId: selectedDraftJobs[contact.id] || undefined
                             })
                         });
                         const result = await response.json() as SendResult;
@@ -409,6 +454,9 @@ export default function SevenDayContactsPage() {
             setSelectedContacts((current) => Object.fromEntries(
                 Object.entries(current).filter(([contactId]) => !successes.has(contactId))
             ));
+            setSelectedDraftJobs((current) => Object.fromEntries(
+                Object.entries(current).filter(([contactId]) => !successes.has(contactId))
+            ));
             setAllMatchingSelected(false);
             if (failures.length === 0) {
                 setNotice(`Sent successfully to all ${successes.size.toLocaleString()} selected contacts.`);
@@ -443,6 +491,29 @@ export default function SevenDayContactsPage() {
             <p className="border border-black bg-[#f5f5f5] p-3 text-sm">
                 Sends the same staff reply to all selected eligible contacts. Each contact is rechecked against Meta&apos;s 7-day window immediately before delivery, and Meta must approve Human Agent access for the connected app.
             </p>
+
+            {humanAgentDrafts.length > 0 && (
+                <section className="border border-black">
+                    <div className="border-b border-black bg-[#f0f0f0] px-4 py-3 font-semibold flex items-center gap-2">
+                        <CheckSquare className="w-4 h-4" />Bot follow-up drafts ready for staff
+                    </div>
+                    <div className="divide-y divide-black">
+                        {humanAgentDrafts.map((draft) => (
+                            <div key={draft.id} className="p-4 flex flex-col md:flex-row md:items-center gap-3">
+                                <div className="min-w-0 flex-1">
+                                    <p className="font-semibold text-sm">{draft.contact.name || 'Unnamed contact'}</p>
+                                    <p className="text-xs text-gray-600">Due at the contact&apos;s best time: {new Date(draft.due_at).toLocaleString()}</p>
+                                    <p className="text-sm mt-2 whitespace-pre-wrap">{draft.message_text}</p>
+                                    {draft.media && <p className="text-xs font-semibold mt-2">Attached by RAG: {draft.media.title} ({draft.media.media_type})</p>}
+                                </div>
+                                <button type="button" onClick={() => loadHumanAgentDraft(draft)} disabled={sending} className="border border-black bg-black text-white px-3 py-2 text-sm disabled:opacity-50">
+                                    Review and send
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 border border-black p-4">
                 <label className="text-xs font-semibold">Facebook Page

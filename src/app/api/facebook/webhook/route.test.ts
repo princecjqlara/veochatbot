@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
     verifyWebhookSignature: vi.fn(),
     generateVerifyToken: vi.fn(),
     sendMessage: vi.fn(),
+    sendMessengerMediaAttachment: vi.fn(),
+    sendMessengerGenericCarousel: vi.fn(),
     getUserProfile: vi.fn(),
     getConversationForPsid: vi.fn(),
     handleFollowUpWorkflowContactReply: vi.fn(),
@@ -21,6 +23,8 @@ vi.mock('@/lib/facebook', () => ({
     verifyWebhookSignature: mocks.verifyWebhookSignature,
     generateVerifyToken: mocks.generateVerifyToken,
     sendMessage: mocks.sendMessage,
+    sendMessengerMediaAttachment: mocks.sendMessengerMediaAttachment,
+    sendMessengerGenericCarousel: mocks.sendMessengerGenericCarousel,
     getUserProfile: mocks.getUserProfile,
     getConversationForPsid: mocks.getConversationForPsid
 }));

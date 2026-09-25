@@ -87,20 +87,17 @@ export const authOptions: NextAuthOptions = {
     },
     debug: process.env.NODE_ENV !== 'production' || process.env.NEXTAUTH_DEBUG === 'true',
     logger: {
-        error(code, metadata) {
+        error(code) {
             console.error('NextAuth error:', code);
-            if (metadata) {
-                console.error('Error metadata:', JSON.stringify(metadata, null, 2));
-            }
         },
         warn(code) {
             if (process.env.NODE_ENV !== 'production') {
                 console.warn('NextAuth warning:', code);
             }
         },
-        debug(code, metadata) {
+        debug(code) {
             if (process.env.NODE_ENV !== 'production') {
-                console.log('NextAuth debug:', code, metadata);
+                console.log('NextAuth debug:', code);
             }
         }
     }

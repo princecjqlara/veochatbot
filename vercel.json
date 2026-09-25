@@ -42,6 +42,15 @@
     },
     "src/app/api/facebook/messages/send/route.ts": {
       "maxDuration": 300
+    },
+    "src/app/api/pages/[pageId]/chatbot/media/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/pages/[pageId]/chatbot/folders/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/telegram/webhook/route.ts": {
+      "maxDuration": 300
     }
   },
   "regions": ["syd1"]

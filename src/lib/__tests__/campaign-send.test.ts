@@ -606,7 +606,7 @@ describe('sendCampaignById', () => {
         expect(takeThreadControl).toHaveBeenCalledWith(
             'page_token',
             'psid_1',
-            'Tokko campaign campaign_1'
+            'VeoBot campaign campaign_1'
         );
         expect(sendMessage).toHaveBeenCalledTimes(2);
     });

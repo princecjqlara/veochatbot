@@ -1,8 +1,9 @@
 import { sendMessage, sendMessengerMediaAttachment } from './facebook';
 import { ContactRecord, replaceTemplateVariables } from './placeholders';
 import { recordOutboundMessageEvent } from './outbound-message-events';
+import { isPipelineClosedForAutomation } from './contact-pipeline';
 
-const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const STANDARD_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_FOLLOW_UP_STEPS = 10;
 const MAX_STEP_DELAY_MINUTES = 10080;
 
@@ -106,11 +107,11 @@ export function workflowTextMatchesCode(messageText: string, code: string | null
     return normalizeWorkflowKeyword(messageText) === normalizeWorkflowKeyword(code);
 }
 
-function isWithinHumanAgentWindow(lastInteractionAt: string | null | undefined, now: Date): boolean {
+function isWithinStandardReplyWindow(lastInteractionAt: string | null | undefined, now: Date): boolean {
     if (!lastInteractionAt) return false;
     const lastInteractionTime = new Date(lastInteractionAt).getTime();
     if (!Number.isFinite(lastInteractionTime)) return false;
-    return now.getTime() - lastInteractionTime <= HUMAN_AGENT_WINDOW_MS;
+    return now.getTime() - lastInteractionTime <= STANDARD_REPLY_WINDOW_MS;
 }
 
 function addMinutes(date: Date, minutes: number): string {
@@ -467,7 +468,7 @@ export async function processDueFollowUpAutomationSteps(params: {
                 reply_action,
                 pages(fb_page_id, access_token)
             ),
-            contacts(id, psid, page_id, name, last_interaction_at)
+            contacts(id, psid, page_id, name, last_interaction_at, pipeline_stage)
         `)
         .eq('status', 'active')
         .lte('next_step_at', now.toISOString())
@@ -495,6 +496,17 @@ export async function processDueFollowUpAutomationSteps(params: {
                 continue;
             }
 
+            if (isPipelineClosedForAutomation(contact.pipeline_stage)) {
+                await updateAutomationState(supabase, state.id, {
+                    status: 'stopped',
+                    stopped_at: now.toISOString(),
+                    stopped_reason: 'pipeline_stage_closed',
+                    next_step_at: null
+                });
+                result.stopped += 1;
+                continue;
+            }
+
             const automation = normalizeAutomation(rawAutomation as WorkflowAutomationRecord);
             const stepIndex = Math.max(0, Number(state.current_step_index || 0));
             const step = automation.steps[stepIndex];
@@ -509,11 +521,11 @@ export async function processDueFollowUpAutomationSteps(params: {
                 continue;
             }
 
-            if (!isWithinHumanAgentWindow(contact.last_interaction_at, now)) {
+            if (!isWithinStandardReplyWindow(contact.last_interaction_at, now)) {
                 await updateAutomationState(supabase, state.id, {
                     status: 'stopped',
                     stopped_at: now.toISOString(),
-                    stopped_reason: 'outside_human_agent_window',
+                    stopped_reason: 'outside_standard_reply_window',
                     next_step_at: null
                 });
                 result.stopped += 1;
@@ -543,7 +555,7 @@ export async function processDueFollowUpAutomationSteps(params: {
                     page.access_token,
                     contact.psid,
                     messageToSend,
-                    'HUMAN_AGENT'
+                    'RESPONSE'
                 );
                 await recordOutboundMessageEvent(supabase, {
                     pageId: automation.page_id,
@@ -552,7 +564,7 @@ export async function processDueFollowUpAutomationSteps(params: {
                     sourceType: 'automation',
                     sourceId: automation.id,
                     sourceName: automation.name,
-                    messageKind: 'HUMAN_AGENT'
+                    messageKind: 'RESPONSE'
                 });
             }
 
@@ -565,7 +577,7 @@ export async function processDueFollowUpAutomationSteps(params: {
                         type: step.media_type || 'image',
                         url: mediaUrl
                     },
-                    'HUMAN_AGENT'
+                    'RESPONSE'
                 );
                 await recordOutboundMessageEvent(supabase, {
                     pageId: automation.page_id,

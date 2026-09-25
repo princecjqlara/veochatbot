@@ -257,13 +257,13 @@ describe('workflow automations', () => {
         expect(stateUpserts).toHaveLength(0);
     });
 
-    it('restarts a workflow after a fresh reply reopens the Human Agent window', async () => {
+    it('restarts a workflow after a fresh reply reopens the standard reply window', async () => {
         const { supabase, stateUpserts } = createWorkflowSupabaseMock({
             automations: [{ ...automation, reply_action: 'stop' }],
             states: [{
                 automation_id: 'automation_1',
                 status: 'stopped',
-                stopped_reason: 'outside_human_agent_window',
+                stopped_reason: 'outside_standard_reply_window',
                 current_step_index: 0,
                 last_contact_reply_at: '2026-07-20T02:00:00.000Z'
             }]
@@ -326,7 +326,7 @@ describe('workflow automations', () => {
             'token_1',
             'psid_1',
             'Hi Juan step 1',
-            'HUMAN_AGENT'
+            'RESPONSE'
         );
         expect(stateUpdates[0]).toMatchObject({
             status: 'active',
@@ -335,7 +335,7 @@ describe('workflow automations', () => {
         });
     });
 
-    it('sends follow-up step media as a human-agent attachment after text', async () => {
+    it('sends follow-up step media as a standard response attachment after text', async () => {
         const { supabase, stateUpdates } = createWorkflowSupabaseMock({
             states: [{
                 id: 'state_1',
@@ -375,7 +375,7 @@ describe('workflow automations', () => {
             'token_1',
             'psid_1',
             'Hi Juan, here is the video.',
-            'HUMAN_AGENT'
+            'RESPONSE'
         );
         expect(mocks.sendMessengerMediaAttachment).toHaveBeenCalledWith(
             'fb_page_1',
@@ -385,7 +385,7 @@ describe('workflow automations', () => {
                 type: 'video',
                 url: 'https://example.com/Juan-tour.mp4'
             },
-            'HUMAN_AGENT'
+            'RESPONSE'
         );
         expect(stateUpdates[0]).toMatchObject({
             status: 'completed',
@@ -437,7 +437,7 @@ describe('workflow automations', () => {
                 type: 'image',
                 url: 'https://example.com/photo.jpg'
             },
-            'HUMAN_AGENT'
+            'RESPONSE'
         );
     });
 

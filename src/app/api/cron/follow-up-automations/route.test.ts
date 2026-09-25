@@ -4,6 +4,7 @@ import type { NextRequest } from 'next/server';
 const mocks = vi.hoisted(() => ({
     getSupabaseAdmin: vi.fn(),
     processDueFollowUpAutomationSteps: vi.fn(),
+    processDueChatbotFollowUps: vi.fn(),
     processOneMessagingAutoTagPage: vi.fn()
 }));
 
@@ -13,6 +14,10 @@ vi.mock('@/lib/supabase', () => ({
 
 vi.mock('@/lib/workflow-automations', () => ({
     processDueFollowUpAutomationSteps: mocks.processDueFollowUpAutomationSteps
+}));
+
+vi.mock('@/lib/chatbot-follow-ups', () => ({
+    processDueChatbotFollowUps: mocks.processDueChatbotFollowUps
 }));
 
 vi.mock('@/lib/messaging-auto-tag-worker', () => ({
@@ -26,6 +31,7 @@ describe('GET /api/cron/follow-up-automations', () => {
         vi.clearAllMocks();
         mocks.getSupabaseAdmin.mockReturnValue({ database: true });
         mocks.processDueFollowUpAutomationSteps.mockResolvedValue({ processed: 0 });
+        mocks.processDueChatbotFollowUps.mockResolvedValue({ checked: 0, sent: 0 });
         mocks.processOneMessagingAutoTagPage.mockResolvedValue({ pages: 1, conversations: 0, tagged: 0 });
     });
 
@@ -36,12 +42,12 @@ describe('GET /api/cron/follow-up-automations', () => {
         }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
         const response = await GET(new Request(
-            'https://tokkobeta.vercel.app/api/cron/follow-up-automations'
+            'https://veobot.vercel.app/api/cron/follow-up-automations'
         ) as NextRequest);
         const body = await response.json();
 
         expect(fetchMock).toHaveBeenCalledWith(
-            new URL('https://tokkobeta.vercel.app/api/cron/campaign-scheduled'),
+            new URL('https://veobot.vercel.app/api/cron/campaign-scheduled'),
             expect.objectContaining({ method: 'GET', cache: 'no-store' })
         );
         expect(body.campaignWorker).toEqual(expect.objectContaining({
@@ -49,6 +55,7 @@ describe('GET /api/cron/follow-up-automations', () => {
             processed: 1
         }));
         expect(mocks.processDueFollowUpAutomationSteps).toHaveBeenCalledTimes(1);
+        expect(mocks.processDueChatbotFollowUps).toHaveBeenCalledTimes(1);
         expect(mocks.processOneMessagingAutoTagPage).toHaveBeenCalledTimes(1);
     });
 
@@ -67,7 +74,7 @@ describe('GET /api/cron/follow-up-automations', () => {
         });
 
         await GET(new Request(
-            'https://tokkobeta.vercel.app/api/cron/follow-up-automations'
+            'https://veobot.vercel.app/api/cron/follow-up-automations'
         ) as NextRequest);
 
         expect(callOrder).toEqual(['follow-ups', 'campaigns']);
@@ -77,7 +84,7 @@ describe('GET /api/cron/follow-up-automations', () => {
         vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('temporary timeout'));
 
         const response = await GET(new Request(
-            'https://tokkobeta.vercel.app/api/cron/follow-up-automations'
+            'https://veobot.vercel.app/api/cron/follow-up-automations'
         ) as NextRequest);
         const body = await response.json();
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { processDueFollowUpAutomationSteps } from '@/lib/workflow-automations';
 import { processOneMessagingAutoTagPage } from '@/lib/messaging-auto-tag-worker';
+import { processDueChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,10 @@ export async function GET(_request: NextRequest) {
         const result = await processDueFollowUpAutomationSteps({
             supabase: getSupabaseAdmin(),
             limit: 10
+        });
+        const chatbotFollowUps = await processDueChatbotFollowUps({
+            supabase: getSupabaseAdmin(),
+            limit: 20
         });
 
         // Reuse the already-configured minute job on cron-jobs.org to advance
@@ -57,6 +62,7 @@ export async function GET(_request: NextRequest) {
         return NextResponse.json({
             success: true,
             ...result,
+            chatbotFollowUps,
             campaignWorker,
             messagingAutoTag,
             duration: Date.now() - startTime

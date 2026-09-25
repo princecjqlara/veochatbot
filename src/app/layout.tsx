@@ -7,7 +7,7 @@ import { ToastProvider } from '@/components/Toast';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Tokko - Facebook Page Management',
+  title: 'VeoBot - Facebook Page Management',
   description: 'Manage your Facebook Page contacts, tags, and messaging in one place',
 };
 
@@ -17,7 +17,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
         <Providers>
           <ToastProvider>

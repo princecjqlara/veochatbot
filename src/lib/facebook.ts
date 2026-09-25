@@ -394,8 +394,8 @@ export async function subscribePageToAppWebhook(
 // Send message to a contact
 // messagingType: 
 //   'RESPONSE' - within 24h window (plain text)
-//   'HUMAN_AGENT' - within 7-day window (plain text with tag)
-//   'UTILITY' - outside 7-day window (requires template)
+//   'HUMAN_AGENT' - manual reply by a real human during Meta's allowed support window
+//   'UTILITY' - approved utility template outside the standard 24h window
 const DEFAULT_UTILITY_TEMPLATE = 'account_general_notification';
 const DEFAULT_UTILITY_LANGUAGE = 'en_US';
 const FACEBOOK_SEND_TIMEOUT_MS = 20_000;
@@ -403,7 +403,7 @@ const FACEBOOK_SEND_TIMEOUT_MS = 20_000;
 export async function takeThreadControl(
     pageAccessToken: string,
     recipientPsid: string,
-    metadata: string = 'Tokko campaign delivery'
+    metadata: string = 'VeoBot campaign delivery'
 ): Promise<void> {
     const endpoint = '/me/take_thread_control';
     const controller = new AbortController();
@@ -496,7 +496,7 @@ export async function sendMessage(
             throw new Error(invalidParameter);
         }
 
-        // Utility message with template - no time window restrictions
+        // Utility message using an approved template.
         const template = templateName || DEFAULT_UTILITY_TEMPLATE;
         const templatePayload: Record<string, unknown> = {
             name: template,
@@ -548,7 +548,7 @@ export async function sendMessage(
             }
         };
     } else if (messagingType === 'HUMAN_AGENT') {
-        // HUMAN_AGENT tag - allows messaging within 7-day window
+        // HUMAN_AGENT is reserved for a real person's manual support reply.
         bodyPayload = {
             recipient: { id: recipientPsid },
             messaging_type: 'MESSAGE_TAG',
@@ -695,6 +695,94 @@ export async function sendMessengerMediaAttachment(
         throw new Error(errorMessage);
     }
 
+    return await response.json();
+}
+
+export type MessengerCarouselCard = {
+    title: string;
+    subtitle?: string;
+    url: string;
+    imageUrl?: string;
+    buttonTitle?: string;
+};
+
+export async function sendMessengerGenericCarousel(
+    pageId: string,
+    pageAccessToken: string,
+    recipientPsid: string,
+    cards: MessengerCarouselCard[],
+    messagingType: 'RESPONSE' | 'HUMAN_AGENT' = 'RESPONSE'
+): Promise<{ message_id: string }> {
+    const normalizedCards = cards
+        .filter((card) => card.title.trim() && /^https:\/\//i.test(card.url.trim()))
+        .slice(0, 10)
+        .map((card) => ({
+            title: card.title.trim().slice(0, 80),
+            ...(card.subtitle?.trim() ? { subtitle: card.subtitle.trim().slice(0, 80) } : {}),
+            ...(card.imageUrl && /^https:\/\//i.test(card.imageUrl.trim())
+                ? { image_url: card.imageUrl.trim() }
+                : {}),
+            default_action: {
+                type: 'web_url',
+                url: card.url.trim(),
+                webview_height_ratio: 'tall'
+            },
+            buttons: [{
+                type: 'web_url',
+                url: card.url.trim(),
+                title: (card.buttonTitle?.trim() || 'View sample').slice(0, 20)
+            }]
+        }));
+    if (normalizedCards.length < 1) {
+        throw new Error('Messenger generic template requires at least one valid card');
+    }
+
+    const bodyPayload: Record<string, unknown> = {
+        recipient: { id: recipientPsid },
+        message: {
+            attachment: {
+                type: 'template',
+                payload: {
+                    template_type: 'generic',
+                    elements: normalizedCards
+                }
+            }
+        },
+        ...(messagingType === 'HUMAN_AGENT'
+            ? { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' }
+            : { messaging_type: 'RESPONSE' })
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FACEBOOK_SEND_TIMEOUT_MS);
+    let response: Response;
+    try {
+        response = await fetch(`${FACEBOOK_GRAPH_URL}/me/messages?access_token=${pageAccessToken}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyPayload),
+            signal: controller.signal
+        });
+    } catch (error) {
+        if (controller.signal.aborted) {
+            throw new Error(`Facebook carousel send timed out after ${FACEBOOK_SEND_TIMEOUT_MS / 1000} seconds`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
+        const errorMessage = errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+        console.error('Facebook send carousel error:', {
+            pageId,
+            recipientPsid,
+            status: response.status,
+            error: errorMessage
+        });
+        throw new Error(errorMessage);
+    }
     return await response.json();
 }
 

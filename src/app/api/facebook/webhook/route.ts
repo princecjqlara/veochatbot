@@ -1,18 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
-import { verifyWebhookSignature, sendMessage, getConversationForPsid, getUserProfile } from '@/lib/facebook';
+import { verifyWebhookSignature, sendMessage, sendMessengerGenericCarousel, getConversationForPsid, getUserProfile } from '@/lib/facebook';
 import { isExpectedFacebookProfileLookupError } from '@/lib/facebook-errors';
 import { getPhilippinesDayOfWeek, getPhilippinesHour } from '@/lib/philippines-time';
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { handleFollowUpWorkflowContactReply, stopWorkflowAutomationsFromPageMessage } from '@/lib/workflow-automations';
 import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
-import { generateChatbotReply, type ChatbotConfig } from '@/lib/chatbot';
+import { generateChatbotResponse, type ChatbotConfig } from '@/lib/chatbot';
+import { createChatbotMediaPublicViewUrl, createChatbotMediaSignedUrl, getReadyChatbotMediaForDocuments } from '@/lib/chatbot-media';
+import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument } from '@/lib/chatbot-drive-folders';
+import { cancelPendingChatbotFollowUps, scheduleChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 import { claimChatbotReply, finishChatbotReply } from '@/lib/chatbot-replies';
+import {
+    classifyChatbotStopIntent,
+    getChatbotContactState,
+    getChatbotStateStopReason,
+    getMissingChatbotDetails,
+    saveChatbotContactState,
+    type ChatbotStopReason
+} from '@/lib/chatbot-control';
+import {
+    isPipelineClosedForAutomation,
+    pipelineStageForChatbotProgress,
+    updateContactPipelineStage
+} from '@/lib/contact-pipeline';
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../lib/contact-names';
 
 const PROFILE_LOOKUP_FAILURE_TTL_MS = 60 * 60 * 1000;
 const CONTACT_NAME_LOOKUP_TIMEOUT_MS = 2500;
 const profileLookupSuppressedUntil = new Map<string, number>();
+
+function chatbotStopReasonForPipelineStage(stage: unknown): ChatbotStopReason | null {
+    if (stage === 'qualified') return 'qualified';
+    if (stage === 'order_created') return 'order_created';
+    if (stage === 'converted') return 'converted';
+    if (stage === 'not_qualified') return 'not_qualified';
+    if (stage === 'opted_out') return 'opt_out';
+    return null;
+}
 
 function isProfileLookupSuppressed(pageId: string, senderId: string) {
     const key = `${pageId}:${senderId}`;
@@ -177,7 +202,7 @@ export async function POST(request: NextRequest) {
                 // Get our page record
                 const { data: page, error: pageError } = await supabase
                     .from('pages')
-                    .select('id, access_token')
+                    .select('id, name, access_token')
                     .eq('fb_page_id', pageId)
                     .single();
 
@@ -323,7 +348,7 @@ export async function POST(request: NextRequest) {
                         // Check if contact exists BEFORE upsert (to detect new contacts)
                         const { data: existingContact, error: existingContactError } = await supabase
                             .from('contacts')
-                            .select('id, name, last_inbound_at')
+                            .select('id, name, last_inbound_at, best_contact_hour, pipeline_stage')
                             .eq('page_id', page.id)
                             .eq('psid', senderId)
                             .maybeSingle();
@@ -433,7 +458,7 @@ export async function POST(request: NextRequest) {
                             .upsert(contactPayload, {
                                 onConflict: 'page_id,psid'
                             })
-                            .select('id, name')
+                            .select('id, name, best_contact_hour, pipeline_stage')
                             .single();
 
                         if (
@@ -454,7 +479,7 @@ export async function POST(request: NextRequest) {
                                 .upsert(legacyContactPayload, {
                                     onConflict: 'page_id,psid'
                                 })
-                                .select('id, name')
+                                .select('id, name, best_contact_hour, pipeline_stage')
                                 .single();
 
                             contact = retryResult.data;
@@ -472,7 +497,7 @@ export async function POST(request: NextRequest) {
                             const insertResult = await supabase
                                 .from('contacts')
                                 .insert(insertContactPayload)
-                                .select('id, name')
+                                .select('id, name, best_contact_hour, pipeline_stage')
                                 .single();
 
                             contact = insertResult.data;
@@ -491,9 +516,38 @@ export async function POST(request: NextRequest) {
 
                         processedContacts += 1;
                         let welcomeMessageSent = false;
+                        let conversationHistoryUnavailable = false;
+
+                        // A contact can be new to our database while already having an
+                        // existing Messenger thread. Read that thread before treating
+                        // the person as a brand-new conversation.
+                        if (isNewContact && !resolvedConversation) {
+                            try {
+                                resolvedConversation = await getConversationForPsid(
+                                    pageId,
+                                    senderId,
+                                    page.access_token,
+                                    { throwOnError: true, timeoutMs: 5000 }
+                                );
+                            } catch (conversationError) {
+                                conversationHistoryUnavailable = true;
+                                logWarn('Could not verify conversation history for new contact; skipping welcome safely', {
+                                    pageId,
+                                    senderId,
+                                    error: (conversationError as Error).message || String(conversationError)
+                                });
+                            }
+                        }
+
+                        const currentInboundMessageId = typeof event.message?.mid === 'string'
+                            ? event.message.mid.trim()
+                            : '';
+                        const hasPriorConversation = (resolvedConversation?.messages?.data || []).some((message) =>
+                            !currentInboundMessageId || message.id !== currentInboundMessageId
+                        );
 
                         // Send welcome message to new contacts
-                        if (isNewContact && contact) {
+                        if (isNewContact && contact && !hasPriorConversation && !conversationHistoryUnavailable) {
                             // Lazy-load welcome config once per page per webhook batch
                             if (!welcomeConfigFetched) {
                                 const { data: wc, error: welcomeConfigError } = await supabase
@@ -608,7 +662,29 @@ export async function POST(request: NextRequest) {
                             // inbound message rather than text-only messages.
                             if (eventType === 'message') {
                                 try {
-                                    const workflowResult = await handleFollowUpWorkflowContactReply({
+                                    await cancelPendingChatbotFollowUps({
+                                        supabase,
+                                        pageId: page.id,
+                                        contactId: contact.id,
+                                        reason: 'Customer replied',
+                                        now: interactionTime
+                                    });
+                                } catch (followUpCancelError) {
+                                    logWarn('Could not cancel pending chatbot follow-ups', {
+                                        pageId,
+                                        senderId,
+                                        contactId: contact.id,
+                                        error: (followUpCancelError as Error).message
+                                    });
+                                }
+
+                                try {
+                                    const pipelineClosed = isPipelineClosedForAutomation(
+                                        (contact as { pipeline_stage?: unknown }).pipeline_stage
+                                    );
+                                    const workflowResult = pipelineClosed
+                                        ? { scheduled: 0, continued: 0, reset: 0, stopped: 0, errors: 0 }
+                                        : await handleFollowUpWorkflowContactReply({
                                         supabase,
                                         page: {
                                             id: page.id,
@@ -624,7 +700,7 @@ export async function POST(request: NextRequest) {
                                         },
                                         messageText: inboundMessageText,
                                         interactionAt
-                                    });
+                                        });
 
                                     if (
                                         workflowResult.scheduled > 0 ||
@@ -665,7 +741,7 @@ export async function POST(request: NextRequest) {
                                     try {
                                         const { data: storedChatbotConfig, error: chatbotConfigError } = await supabase
                                             .from('chatbot_configs')
-                                            .select('page_id, enabled, instructions, fallback_reply, model')
+                                            .select('page_id, enabled, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
                                             .eq('page_id', page.id)
                                             .maybeSingle();
 
@@ -689,20 +765,96 @@ export async function POST(request: NextRequest) {
                                 }
 
                                 if (chatbotConfig?.enabled) {
-                                    let claimed = false;
+                                    let chatbotState = null;
+                                    let stateStopReason: ChatbotStopReason | null = chatbotStopReasonForPipelineStage(
+                                        (contact as { pipeline_stage?: unknown }).pipeline_stage
+                                    );
                                     try {
-                                        claimed = await claimChatbotReply(supabase, {
-                                            inboundMessageId,
-                                            pageId: page.id,
-                                            contactId: contact.id
-                                        });
-                                    } catch (claimError) {
-                                        logWarn('Could not claim chatbot reply', {
+                                        chatbotState = await getChatbotContactState(supabase, page.id, contact.id);
+                                        const storedStopReason = getChatbotStateStopReason(chatbotState, interactionTime);
+                                        if (storedStopReason === 'window_expired') {
+                                            // A fresh customer message opens a new seven-day activity window.
+                                            // Other stop reasons remain durable until manually reset.
+                                            chatbotState = null;
+                                        } else if (!stateStopReason) {
+                                            stateStopReason = storedStopReason;
+                                        }
+                                        stateStopReason = stateStopReason || classifyChatbotStopIntent(inboundMessageText, {
+                                                stopOnOptOut: chatbotConfig.stop_on_opt_out,
+                                                stopOnRefusal: chatbotConfig.stop_on_refusal
+                                            });
+
+                                        if (stateStopReason && chatbotState?.status !== 'stopped') {
+                                            await saveChatbotContactState(supabase, {
+                                                pageId: page.id,
+                                                contactId: contact.id,
+                                                existingState: chatbotState,
+                                                collectedDetails: chatbotState?.collected_details || {},
+                                                missingDetails: getMissingChatbotDetails(
+                                                    chatbotConfig.details_to_collect,
+                                                    chatbotState?.collected_details || {}
+                                                ),
+                                                inboundAt: interactionAt,
+                                                stopReason: stateStopReason,
+                                                now: interactionTime
+                                            });
+                                        }
+                                    } catch (stateError) {
+                                        stateStopReason = 'manual';
+                                        logWarn('Chatbot state is unavailable; skipping automatic reply safely', {
                                             pageId,
                                             senderId,
-                                            inboundMessageId,
-                                            error: (claimError as Error).message
+                                            error: (stateError as Error).message
                                         });
+                                    }
+
+                                    if (stateStopReason !== 'manual' && stateStopReason !== 'window_expired') {
+                                        try {
+                                            await updateContactPipelineStage(supabase, {
+                                                pageId: page.id,
+                                                contactId: contact.id,
+                                                stage: pipelineStageForChatbotProgress({
+                                                    stopReason: stateStopReason,
+                                                    collectedDetails: chatbotState?.collected_details || {}
+                                                }),
+                                                source: 'chatbot',
+                                                now: interactionTime
+                                            });
+                                        } catch (pipelineError) {
+                                            logWarn('Could not update chatbot contact pipeline stage', {
+                                                pageId,
+                                                senderId,
+                                                contactId: contact.id,
+                                                error: (pipelineError as Error).message
+                                            });
+                                        }
+                                    }
+
+                                    if (stateStopReason) {
+                                        logInfo('Chatbot reply skipped by stop rule', {
+                                            pageId,
+                                            senderId,
+                                            contactId: contact.id,
+                                            reason: stateStopReason
+                                        });
+                                    }
+
+                                    let claimed = false;
+                                    if (!stateStopReason) {
+                                        try {
+                                            claimed = await claimChatbotReply(supabase, {
+                                                inboundMessageId,
+                                                pageId: page.id,
+                                                contactId: contact.id
+                                            });
+                                        } catch (claimError) {
+                                            logWarn('Could not claim chatbot reply', {
+                                                pageId,
+                                                senderId,
+                                                inboundMessageId,
+                                                error: (claimError as Error).message
+                                            });
+                                        }
                                     }
 
                                     if (claimed) {
@@ -712,19 +864,60 @@ export async function POST(request: NextRequest) {
                                                     pageId,
                                                     senderId,
                                                     page.access_token,
-                                                    { timeoutMs: 5000 }
+                                                    { throwOnError: true, timeoutMs: 5000 }
                                                 );
                                             }
 
-                                            let replyText = chatbotConfig.fallback_reply;
+                                            let replyMessages = chatbotConfig.fallback_reply.trim()
+                                                ? [chatbotConfig.fallback_reply.trim()]
+                                                : [];
+                                            let collectedDetails = chatbotState?.collected_details || {};
+                                            let missingDetails = getMissingChatbotDetails(
+                                                chatbotConfig.details_to_collect,
+                                                collectedDetails
+                                            );
+                                            let generatedStopReason: ChatbotStopReason | null = null;
+                                            let detailsComplete = false;
+                                            let generatedMediaDocumentIds: string[] = [];
+                                            let generatedDriveFileDocumentIds: string[] = [];
+                                            let generatedLinkDocumentId: string | undefined;
                                             try {
-                                                replyText = await generateChatbotReply({
+                                                const generated = await generateChatbotResponse({
                                                     config: chatbotConfig,
                                                     contactName: (contact as { name?: string | null }).name,
+                                                    pageName: page.name,
                                                     pageId,
                                                     inboundMessage: inboundMessageText,
-                                                    history: resolvedConversation?.messages?.data || []
+                                                    history: resolvedConversation?.messages?.data || [],
+                                                    collectedDetails
                                                 });
+                                                replyMessages = generated.messages;
+                                                collectedDetails = generated.collected_details;
+                                                missingDetails = generated.missing_details;
+                                                detailsComplete = generated.details_complete;
+                                                generatedMediaDocumentIds = generated.media_document_ids?.length
+                                                    ? generated.media_document_ids
+                                                    : generated.media_document_id
+                                                        ? [generated.media_document_id]
+                                                        : [];
+                                                generatedDriveFileDocumentIds = generated.drive_file_document_ids || [];
+                                                generatedLinkDocumentId = generated.link_document_id;
+                                                if (
+                                                    generated.detected_stop_reason === 'opt_out' &&
+                                                    chatbotConfig.stop_on_opt_out
+                                                ) {
+                                                    generatedStopReason = 'opt_out';
+                                                } else if (
+                                                    generated.detected_stop_reason === 'refusal' &&
+                                                    chatbotConfig.stop_on_refusal
+                                                ) {
+                                                    generatedStopReason = 'refusal';
+                                                } else if (
+                                                    generated.details_complete &&
+                                                    chatbotConfig.stop_when_details_collected
+                                                ) {
+                                                    generatedStopReason = 'details_collected';
+                                                }
                                             } catch (generationError) {
                                                 logWarn('AI reply generation failed; using chatbot fallback', {
                                                     pageId,
@@ -733,30 +926,244 @@ export async function POST(request: NextRequest) {
                                                 });
                                             }
 
-                                            if (!replyText.trim()) {
+                                            if (generatedStopReason === 'opt_out' || generatedStopReason === 'refusal') {
+                                                replyMessages = [];
+                                            }
+
+                                            if (replyMessages.length === 0 && !generatedStopReason) {
                                                 throw new Error('Chatbot generated no reply and no fallback is configured');
                                             }
 
-                                            const sendResult = await sendMessage(
-                                                pageId,
-                                                page.access_token,
-                                                senderId,
-                                                replyText.trim(),
-                                                'RESPONSE'
-                                            );
+                                            let lastOutboundMessageId: string | undefined;
+                                            let sentMedia = false;
+                                            let selectedDriveFolder = null;
+                                            let selectedDriveFiles = [] as Awaited<ReturnType<typeof getReadyChatbotDriveFilesForDocuments>>;
+                                            if (generatedDriveFileDocumentIds.length > 0 && !generatedStopReason) {
+                                                try {
+                                                    selectedDriveFiles = await getReadyChatbotDriveFilesForDocuments({
+                                                        pageId: page.id,
+                                                        documentIds: generatedDriveFileDocumentIds
+                                                    });
+                                                } catch (driveFileError) {
+                                                    logWarn('Chatbot reply generated but indexed Drive file lookup failed', {
+                                                        pageId,
+                                                        senderId,
+                                                        documentIds: generatedDriveFileDocumentIds,
+                                                        error: (driveFileError as Error).message
+                                                    });
+                                                }
+                                            }
+                                            if (generatedLinkDocumentId && selectedDriveFiles.length === 0 && !generatedStopReason) {
+                                                try {
+                                                    selectedDriveFolder = await getReadyChatbotDriveFolderForDocument({
+                                                        pageId: page.id,
+                                                        documentId: generatedLinkDocumentId
+                                                    });
+                                                } catch (folderError) {
+                                                    logWarn('Chatbot reply generated but Drive folder lookup failed', {
+                                                        pageId,
+                                                        senderId,
+                                                        documentId: generatedLinkDocumentId,
+                                                        error: (folderError as Error).message
+                                                    });
+                                                }
+                                            }
+                                            for (const [messageIndex, replyText] of replyMessages.entries()) {
+                                                const isFinalMessage = messageIndex === replyMessages.length - 1;
+                                                const sendResult = await sendMessage(
+                                                    pageId,
+                                                    page.access_token,
+                                                    senderId,
+                                                    replyText.trim(),
+                                                    'RESPONSE',
+                                                    undefined,
+                                                    undefined,
+                                                    undefined,
+                                                    isFinalMessage && selectedDriveFolder
+                                                        ? [{
+                                                            type: 'URL',
+                                                            text: selectedDriveFolder.button_text,
+                                                            url: selectedDriveFolder.folder_url
+                                                        }]
+                                                        : undefined
+                                                );
+                                                lastOutboundMessageId = sendResult.message_id;
 
-                                            await recordOutboundMessageEvent(supabase, {
+                                                await recordOutboundMessageEvent(supabase, {
+                                                    pageId: page.id,
+                                                    contactId: contact.id,
+                                                    messageId: sendResult.message_id,
+                                                    sourceType: 'chatbot',
+                                                    sourceName: replyMessages.length > 1
+                                                        ? `AI Chatbot (${messageIndex + 1}/${replyMessages.length})`
+                                                        : 'AI Chatbot',
+                                                    messageKind: 'RESPONSE'
+                                                });
+                                            }
+
+                                            if (selectedDriveFiles.length > 0 && !generatedStopReason) {
+                                                try {
+                                                    const mediaResult = await sendMessengerGenericCarousel(
+                                                        pageId,
+                                                        page.access_token,
+                                                        senderId,
+                                                        selectedDriveFiles.map((file) => ({
+                                                            title: file.name,
+                                                            subtitle: file.media_type === 'image' ? 'Image sample' : 'Video sample',
+                                                            url: file.web_view_url,
+                                                            imageUrl: file.thumbnail_url || undefined,
+                                                            buttonTitle: file.media_type === 'image' ? 'View image' : 'Watch video'
+                                                        })),
+                                                        'RESPONSE'
+                                                    );
+                                                    lastOutboundMessageId = mediaResult.message_id;
+                                                    sentMedia = true;
+                                                    await recordOutboundMessageEvent(supabase, {
+                                                        pageId: page.id,
+                                                        contactId: contact.id,
+                                                        messageId: mediaResult.message_id,
+                                                        sourceType: 'chatbot',
+                                                        sourceName: selectedDriveFiles.length > 1
+                                                            ? `AI Chatbot Drive carousel (${selectedDriveFiles.length} cards)`
+                                                            : `AI Chatbot Drive card: ${selectedDriveFiles[0].name}`,
+                                                        messageKind: selectedDriveFiles.length > 1
+                                                            ? `Drive media carousel (${selectedDriveFiles.length} cards)`
+                                                            : 'Drive media card'
+                                                    });
+                                                } catch (driveCarouselError) {
+                                                    logWarn('Chatbot text sent but Drive file carousel failed', {
+                                                        pageId,
+                                                        senderId,
+                                                        fileIds: selectedDriveFiles.map((file) => file.drive_file_id),
+                                                        error: (driveCarouselError as Error).message
+                                                    });
+                                                }
+                                            }
+
+                                            if (generatedMediaDocumentIds.length > 0 && !generatedStopReason) {
+                                                try {
+                                                    const mediaItems = await getReadyChatbotMediaForDocuments({
+                                                        pageId: page.id,
+                                                        documentIds: generatedMediaDocumentIds
+                                                    });
+                                                    if (mediaItems.length > 0) {
+                                                        const cards = await Promise.all(mediaItems.map(async (media) => {
+                                                            const mediaUrl = await createChatbotMediaSignedUrl(media);
+                                                            return {
+                                                                title: media.title,
+                                                                subtitle: media.usage_notes || `${media.media_type === 'image' ? 'Image' : 'Video'} sample`,
+                                                                url: createChatbotMediaPublicViewUrl(media.id),
+                                                                imageUrl: media.media_type === 'image' ? mediaUrl : undefined,
+                                                                buttonTitle: media.media_type === 'image' ? 'View image' : 'Watch video'
+                                                            };
+                                                        }));
+                                                        const mediaResult = await sendMessengerGenericCarousel(
+                                                            pageId,
+                                                            page.access_token,
+                                                            senderId,
+                                                            cards,
+                                                            'RESPONSE'
+                                                        );
+                                                        lastOutboundMessageId = mediaResult.message_id;
+                                                        sentMedia = true;
+                                                        await recordOutboundMessageEvent(supabase, {
+                                                            pageId: page.id,
+                                                            contactId: contact.id,
+                                                            messageId: mediaResult.message_id,
+                                                            sourceType: 'chatbot',
+                                                            sourceName: mediaItems.length > 1
+                                                                ? `AI Chatbot media carousel (${mediaItems.length} cards)`
+                                                                : `AI Chatbot media card: ${mediaItems[0].title}`,
+                                                            messageKind: mediaItems.length > 1
+                                                                ? `media carousel (${mediaItems.length} cards)`
+                                                                : 'media card'
+                                                        });
+                                                    }
+                                                } catch (mediaError) {
+                                                    logWarn('Chatbot text sent but media attachment failed', {
+                                                        pageId,
+                                                        senderId,
+                                                        documentIds: generatedMediaDocumentIds,
+                                                        error: (mediaError as Error).message
+                                                    });
+                                                }
+                                            }
+
+                                            await saveChatbotContactState(supabase, {
                                                 pageId: page.id,
                                                 contactId: contact.id,
-                                                messageId: sendResult.message_id,
-                                                sourceType: 'chatbot',
-                                                sourceName: 'AI Chatbot',
-                                                messageKind: 'RESPONSE'
+                                                existingState: chatbotState,
+                                                collectedDetails,
+                                                missingDetails,
+                                                inboundAt: interactionAt,
+                                                botRepliedAt: replyMessages.length > 0 || sentMedia ? new Date().toISOString() : undefined,
+                                                stopReason: generatedStopReason
                                             });
+
+                                            const chatbotPipelineStage = pipelineStageForChatbotProgress({
+                                                stopReason: generatedStopReason,
+                                                detailsComplete,
+                                                collectedDetails
+                                            });
+                                            try {
+                                                await updateContactPipelineStage(supabase, {
+                                                    pageId: page.id,
+                                                    contactId: contact.id,
+                                                    stage: chatbotPipelineStage,
+                                                    source: 'chatbot'
+                                                });
+                                            } catch (pipelineError) {
+                                                logWarn('Chatbot state saved but pipeline stage update failed', {
+                                                    pageId,
+                                                    senderId,
+                                                    contactId: contact.id,
+                                                    error: (pipelineError as Error).message
+                                                });
+                                            }
+
+                                            if (
+                                                !generatedStopReason &&
+                                                !isPipelineClosedForAutomation(chatbotPipelineStage) &&
+                                                (replyMessages.length > 0 || sentMedia)
+                                            ) {
+                                                try {
+                                                    const scheduledFollowUps = await scheduleChatbotFollowUps({
+                                                        supabase,
+                                                        pageId: page.id,
+                                                        contact: {
+                                                            id: contact.id,
+                                                            page_id: page.id,
+                                                            psid: senderId,
+                                                            name: (contact as { name?: string | null }).name || null,
+                                                            best_contact_hour: (contact as { best_contact_hour?: number | null }).best_contact_hour,
+                                                            last_interaction_at: interactionAt,
+                                                            pipeline_stage: chatbotPipelineStage
+                                                        },
+                                                        config: chatbotConfig,
+                                                        anchorInboundAt: interactionAt,
+                                                        now: interactionTime
+                                                    });
+                                                    if (scheduledFollowUps > 0) {
+                                                        logInfo('Scheduled chatbot follow-ups', {
+                                                            pageId,
+                                                            senderId,
+                                                            contactId: contact.id,
+                                                            count: scheduledFollowUps
+                                                        });
+                                                    }
+                                                } catch (followUpScheduleError) {
+                                                    logWarn('Chatbot reply sent but follow-up scheduling failed', {
+                                                        pageId,
+                                                        senderId,
+                                                        contactId: contact.id,
+                                                        error: (followUpScheduleError as Error).message
+                                                    });
+                                                }
+                                            }
 
                                             await finishChatbotReply(supabase, inboundMessageId, {
                                                 status: 'sent',
-                                                outboundMessageId: sendResult.message_id
+                                                outboundMessageId: lastOutboundMessageId
                                             }).catch((finishError) => {
                                                 logWarn('Chatbot reply sent but status update failed', {
                                                     pageId,
@@ -769,7 +1176,10 @@ export async function POST(request: NextRequest) {
                                                 pageId,
                                                 senderId,
                                                 inboundMessageId,
-                                                model: chatbotConfig.model
+                                                model: chatbotConfig.model,
+                                                messageParts: replyMessages.length,
+                                                stopReason: generatedStopReason,
+                                                missingDetails
                                             });
                                         } catch (chatbotError) {
                                             await finishChatbotReply(supabase, inboundMessageId, {

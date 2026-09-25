@@ -144,7 +144,7 @@ export default function SettingsPage() {
                 <div className="border-b-2 border-black pb-4 mb-4">
                     <h2 className="text-xl font-bold uppercase">Messaging lead auto-tag</h2>
                     <p className="font-mono text-xs text-gray-600 mt-2">
-                        Add each Page&apos;s Paid / Availed Service tag to its Tokko contact when Messenger records an order created
+                        Add each Page&apos;s Paid / Availed Service tag to its VeoBot contact when Messenger records an order created
                         or a lead stage set to Qualified or Converted. On by default. An order record does not prove payment.
                     </p>
                 </div>

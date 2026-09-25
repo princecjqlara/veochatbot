@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sendMessage, sendUtilityMessage, takeThreadControl } from '../facebook';
+import { sendMessage, sendMessengerGenericCarousel, sendUtilityMessage, takeThreadControl } from '../facebook';
 
 function createJsonResponse(ok: boolean, payload: unknown, status: number = 200, statusText: string = 'OK') {
     return {
@@ -274,6 +274,47 @@ describe('sendMessage', () => {
         expect(payload.message.template).toBeUndefined();
     });
 
+});
+
+describe('sendMessengerGenericCarousel', () => {
+    it('sends swipeable cards with thumbnails and URL buttons', async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValue(createJsonResponse(true, { message_id: 'mid.carousel' }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await sendMessengerGenericCarousel('page_1', 'token_1', 'psid_1', [
+            {
+                title: 'Sample one',
+                subtitle: 'First portfolio sample',
+                url: 'https://example.com/sample-one.jpg',
+                imageUrl: 'https://example.com/sample-one.jpg',
+                buttonTitle: 'View image'
+            },
+            {
+                title: 'Sample two',
+                subtitle: 'Second portfolio sample',
+                url: 'https://example.com/sample-two.mp4',
+                buttonTitle: 'Watch video'
+            }
+        ]);
+
+        const [, requestInit] = fetchMock.mock.calls[0];
+        const payload = JSON.parse((requestInit as RequestInit).body as string);
+        expect(payload.messaging_type).toBe('RESPONSE');
+        expect(payload.message.attachment.payload.template_type).toBe('generic');
+        expect(payload.message.attachment.payload.elements).toEqual([
+            expect.objectContaining({
+                title: 'Sample one',
+                image_url: 'https://example.com/sample-one.jpg',
+                buttons: [{ type: 'web_url', url: 'https://example.com/sample-one.jpg', title: 'View image' }]
+            }),
+            expect.objectContaining({
+                title: 'Sample two',
+                buttons: [{ type: 'web_url', url: 'https://example.com/sample-two.mp4', title: 'Watch video' }]
+            })
+        ]);
+    });
 });
 
 describe('takeThreadControl', () => {

@@ -1,8 +1,9 @@
-    -- Tokko Database Schema
+    -- VeoBot Database Schema
     -- Run this SQL in your Supabase SQL Editor
 
     -- Enable UUID extension
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
 
     -- Users table
     CREATE TABLE IF NOT EXISTS users (
@@ -11,6 +12,9 @@
         name TEXT,
         image TEXT,
         facebook_id TEXT,
+        password_hash TEXT,
+        role TEXT DEFAULT 'user',
+        is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -41,6 +45,11 @@
         access_token TEXT NOT NULL,
         business_id UUID REFERENCES businesses(id) ON DELETE SET NULL,
         last_synced_at TIMESTAMPTZ, -- Timestamp of last successful sync (for incremental syncing)
+        messaging_auto_tag_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        messaging_auto_tag_checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        messaging_auto_tag_cursor TEXT,
+        messaging_auto_tag_attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        messaging_auto_tag_last_error TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -62,6 +71,15 @@
         name TEXT,
         profile_pic TEXT,
         last_interaction_at TIMESTAMPTZ,
+        best_contact_hour INTEGER,
+        best_contact_confidence TEXT DEFAULT 'none',
+        best_contact_hours JSONB DEFAULT '[]'::jsonb,
+        interaction_count INTEGER DEFAULT 0,
+        first_interaction_at TIMESTAMPTZ,
+        last_inbound_at TIMESTAMPTZ,
+        pipeline_stage TEXT NOT NULL DEFAULT 'new' CHECK (pipeline_stage IN ('new', 'engaged', 'collecting_details', 'qualified', 'order_created', 'converted', 'not_qualified', 'opted_out')),
+        pipeline_stage_source TEXT NOT NULL DEFAULT 'system' CHECK (pipeline_stage_source IN ('system', 'chatbot', 'messenger', 'manual')),
+        pipeline_stage_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW(),
         CONSTRAINT contacts_name_not_placeholder CHECK (
@@ -125,6 +143,17 @@
         next_attempt_at TIMESTAMPTZ,
         last_error TEXT,
         background_delivery_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        is_loop BOOLEAN DEFAULT FALSE,
+        ai_prompt TEXT,
+        loop_status TEXT DEFAULT 'stopped',
+        last_run_at TIMESTAMPTZ,
+        use_ai_message BOOLEAN DEFAULT FALSE,
+        scheduled_date TIMESTAMPTZ,
+        use_best_time BOOLEAN DEFAULT FALSE,
+        template_name TEXT,
+        template_language TEXT,
+        recurrence TEXT DEFAULT 'none',
+        recurrence_end_at TIMESTAMPTZ,
         started_at TIMESTAMPTZ,
         completed_at TIMESTAMPTZ,
         recipient_history_purged_at TIMESTAMPTZ,
@@ -279,9 +308,139 @@
         instructions TEXT NOT NULL DEFAULT 'You are a helpful customer support assistant for this Facebook Page. Be concise, friendly, accurate, and never invent prices, policies, availability, or promises.',
         fallback_reply TEXT NOT NULL DEFAULT 'Thanks for your message! A member of our team will get back to you shortly.',
         model TEXT NOT NULL DEFAULT '~deepseek/deepseek-flash-latest',
+        rag_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        follow_up_prompt TEXT NOT NULL DEFAULT '',
+        details_to_collect JSONB NOT NULL DEFAULT '[]'::jsonb,
+        details_completion_percent INTEGER NOT NULL DEFAULT 100 CHECK (details_completion_percent BETWEEN 1 AND 100),
+        bot_dos TEXT NOT NULL DEFAULT '' CHECK (char_length(bot_dos) <= 3000),
+        bot_donts TEXT NOT NULL DEFAULT '' CHECK (char_length(bot_donts) <= 3000),
+        follow_up_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        follow_up_quick_delays_minutes JSONB NOT NULL DEFAULT '[10, 60, 240, 720, 1380]'::jsonb,
+        follow_up_best_time_days JSONB NOT NULL DEFAULT '[2, 3, 5, 7]'::jsonb,
+        follow_up_messages JSONB NOT NULL DEFAULT '["Just checking in — would you like help with anything else?", "I am still here if you have questions about your request."]'::jsonb,
+        follow_up_ai_instructions TEXT NOT NULL DEFAULT 'Write a fresh, personal follow-up based on this contact''s conversation. Do not repeat earlier wording. When relevant, offer helpful proof such as previous work, product photos, or a promotional video from the Page knowledge base.' CHECK (char_length(follow_up_ai_instructions) BETWEEN 1 AND 3000),
+        follow_up_utility_template_name TEXT NOT NULL DEFAULT 'acct_followup_v1',
+        follow_up_utility_template_language TEXT NOT NULL DEFAULT 'en_US',
+        follow_up_utility_text TEXT NOT NULL DEFAULT 'We are following up on your recent request' CHECK (char_length(follow_up_utility_text) BETWEEN 1 AND 500),
+        follow_up_media_asset_id UUID,
+        split_messages BOOLEAN NOT NULL DEFAULT TRUE,
+        max_message_parts INTEGER NOT NULL DEFAULT 0 CHECK (max_message_parts >= 0),
+        stop_when_details_collected BOOLEAN NOT NULL DEFAULT TRUE,
+        stop_on_opt_out BOOLEAN NOT NULL DEFAULT TRUE,
+        stop_on_refusal BOOLEAN NOT NULL DEFAULT TRUE,
+        stop_on_qualified BOOLEAN NOT NULL DEFAULT TRUE,
+        stop_on_not_qualified BOOLEAN NOT NULL DEFAULT TRUE,
+        stop_on_converted BOOLEAN NOT NULL DEFAULT TRUE,
+        stop_on_order_created BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT chatbot_configs_details_to_collect_array_check
+            CHECK (jsonb_typeof(details_to_collect) = 'array')
+    );
+
+    -- Per-contact bot lifecycle, collected lead details, and durable stop reason.
+    CREATE TABLE IF NOT EXISTS chatbot_contact_states (
+        id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+        page_id UUID NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'stopped')),
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        window_expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '7 days'),
+        collected_details JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(collected_details) = 'object'),
+        missing_details JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(missing_details) = 'array'),
+        stop_reason TEXT CHECK (stop_reason IS NULL OR stop_reason IN (
+            'details_collected', 'opt_out', 'refusal', 'qualified', 'not_qualified',
+            'converted', 'order_created', 'window_expired', 'manual'
+        )),
+        stopped_at TIMESTAMPTZ,
+        last_inbound_at TIMESTAMPTZ,
+        last_bot_reply_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (page_id, contact_id),
+        CHECK (window_expires_at >= started_at)
+    );
+
+    -- Page-scoped source documents used to ground chatbot answers.
+    CREATE TABLE IF NOT EXISTS chatbot_knowledge_documents (
+        id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+        page_id UUID NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        source_type TEXT NOT NULL DEFAULT 'manual',
+        original_filename TEXT,
+        content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        char_count INTEGER NOT NULL DEFAULT 0 CHECK (char_count >= 0),
+        chunk_count INTEGER NOT NULL DEFAULT 0 CHECK (chunk_count >= 0),
+        status TEXT NOT NULL DEFAULT 'processing',
+        error_message TEXT,
+        media_asset_id UUID REFERENCES chatbot_media_assets(id) ON DELETE SET NULL,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT chatbot_knowledge_documents_source_type_check
+            CHECK (source_type IN ('manual', 'file')),
+        CONSTRAINT chatbot_knowledge_documents_status_check
+            CHECK (status IN ('processing', 'ready', 'failed')),
+        UNIQUE (page_id, content_hash)
+    );
+
+    -- Searchable chunks and their OpenRouter-generated embeddings.
+    CREATE TABLE IF NOT EXISTS chatbot_knowledge_chunks (
+        id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+        document_id UUID NOT NULL REFERENCES chatbot_knowledge_documents(id) ON DELETE CASCADE,
+        page_id UUID NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+        content TEXT NOT NULL,
+        char_count INTEGER NOT NULL CHECK (char_count > 0),
+        embedding extensions.vector(1536) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (document_id, chunk_index)
+    );
+
+    -- Page-scoped photos/videos analyzed into RAG and eligible for Messenger replies.
+    CREATE TABLE IF NOT EXISTS chatbot_media_assets (
+        id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+        page_id UUID NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        knowledge_document_id UUID UNIQUE REFERENCES chatbot_knowledge_documents(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        usage_notes TEXT NOT NULL DEFAULT '',
+        media_type TEXT NOT NULL CHECK (media_type IN ('image', 'video')),
+        mime_type TEXT NOT NULL,
+        original_filename TEXT NOT NULL,
+        source_folder TEXT NOT NULL DEFAULT '',
+        source_relative_path TEXT NOT NULL DEFAULT '',
+        storage_bucket TEXT NOT NULL DEFAULT 'chatbot-media',
+        storage_path TEXT NOT NULL UNIQUE,
+        file_size INTEGER NOT NULL CHECK (file_size > 0),
+        analysis_text TEXT,
+        auto_send BOOLEAN NOT NULL DEFAULT TRUE,
+        status TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing', 'ready', 'failed')),
+        error_message TEXT,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Large media collections remain in Google Drive and are shared as contextual Messenger buttons.
+    CREATE TABLE IF NOT EXISTS chatbot_drive_folders (
+        id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+        page_id UUID NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        knowledge_document_id UUID UNIQUE REFERENCES chatbot_knowledge_documents(id) ON DELETE CASCADE,
+        name TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 160),
+        folder_url TEXT NOT NULL CHECK (folder_url ~ '^https://drive\.google\.com/drive/folders/[A-Za-z0-9_-]+$'),
+        usage_notes TEXT NOT NULL DEFAULT '',
+        button_text TEXT NOT NULL DEFAULT 'View media samples' CHECK (char_length(button_text) BETWEEN 1 AND 20),
+        auto_send BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (page_id, folder_url)
+    );
+
+    ALTER TABLE chatbot_configs
+        ADD CONSTRAINT chatbot_configs_follow_up_media_asset_id_fkey
+        FOREIGN KEY (follow_up_media_asset_id) REFERENCES chatbot_media_assets(id) ON DELETE SET NULL;
 
     -- Idempotency and delivery status for automatic chatbot replies.
     CREATE TABLE IF NOT EXISTS chatbot_reply_events (
@@ -294,6 +453,38 @@
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         CONSTRAINT chatbot_reply_events_status_check CHECK (status IN ('processing', 'sent', 'failed'))
+    );
+
+    CREATE TABLE IF NOT EXISTS chatbot_follow_up_jobs (
+        id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+        page_id UUID NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+        anchor_inbound_at TIMESTAMPTZ NOT NULL,
+        schedule_type TEXT NOT NULL CHECK (schedule_type IN ('response', 'human_agent', 'manual_human_agent')),
+        sequence_index INTEGER NOT NULL CHECK (sequence_index >= 0),
+        due_at TIMESTAMPTZ NOT NULL,
+        message_text TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'ready_manual', 'sent', 'cancelled', 'failed')),
+        message_id TEXT,
+        error_message TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        claimed_at TIMESTAMPTZ,
+        sent_at TIMESTAMPTZ,
+        cancelled_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (contact_id, anchor_inbound_at, schedule_type, sequence_index)
+    );
+
+    -- Per-page welcome message sent when a new Messenger contact appears.
+    CREATE TABLE IF NOT EXISTS welcome_messages (
+        id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+        page_id UUID NOT NULL UNIQUE REFERENCES pages(id) ON DELETE CASCADE,
+        enabled BOOLEAN DEFAULT FALSE,
+        message_text TEXT NOT NULL DEFAULT '',
+        buttons JSONB DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     -- Exact source attribution for outbound messages in conversation exports.
@@ -347,6 +538,35 @@
     CREATE INDEX IF NOT EXISTS idx_workflow_automation_states_automation ON workflow_automation_states(automation_id, status);
     CREATE INDEX IF NOT EXISTS idx_workflow_automation_states_due ON workflow_automation_states(next_step_at, status) WHERE next_step_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_chatbot_reply_events_page_created ON chatbot_reply_events(page_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chatbot_knowledge_documents_page_created
+        ON chatbot_knowledge_documents(page_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chatbot_knowledge_chunks_page
+        ON chatbot_knowledge_chunks(page_id, document_id, chunk_index);
+    CREATE INDEX IF NOT EXISTS idx_chatbot_knowledge_chunks_embedding
+        ON chatbot_knowledge_chunks USING hnsw (embedding extensions.vector_cosine_ops);
+    CREATE INDEX IF NOT EXISTS idx_chatbot_media_assets_page_created
+        ON chatbot_media_assets(page_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chatbot_media_assets_page_document
+        ON chatbot_media_assets(page_id, knowledge_document_id)
+        WHERE status = 'ready' AND auto_send;
+    CREATE INDEX IF NOT EXISTS idx_chatbot_media_assets_page_source_folder
+        ON chatbot_media_assets(page_id, source_folder)
+        WHERE status = 'ready' AND auto_send;
+    CREATE INDEX IF NOT EXISTS idx_chatbot_drive_folders_page_created
+        ON chatbot_drive_folders(page_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chatbot_drive_folders_page_document
+        ON chatbot_drive_folders(page_id, knowledge_document_id)
+        WHERE auto_send;
+    CREATE INDEX IF NOT EXISTS idx_chatbot_follow_up_jobs_due
+        ON chatbot_follow_up_jobs(due_at, id) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS idx_chatbot_follow_up_jobs_contact
+        ON chatbot_follow_up_jobs(contact_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chatbot_follow_up_jobs_media_asset
+        ON chatbot_follow_up_jobs(media_asset_id) WHERE media_asset_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_chatbot_contact_states_page_status
+        ON chatbot_contact_states(page_id, status, window_expires_at);
+    CREATE INDEX IF NOT EXISTS idx_chatbot_contact_states_contact
+        ON chatbot_contact_states(contact_id);
 
     -- Function to update updated_at timestamp
     CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -396,6 +616,21 @@
     CREATE TRIGGER update_chatbot_configs_updated_at BEFORE UPDATE ON chatbot_configs
         FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+    CREATE TRIGGER update_chatbot_knowledge_documents_updated_at BEFORE UPDATE ON chatbot_knowledge_documents
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+    CREATE TRIGGER update_chatbot_contact_states_updated_at BEFORE UPDATE ON chatbot_contact_states
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+    CREATE TRIGGER update_chatbot_media_assets_updated_at BEFORE UPDATE ON chatbot_media_assets
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+    CREATE TRIGGER update_chatbot_drive_folders_updated_at BEFORE UPDATE ON chatbot_drive_folders
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+    CREATE TRIGGER update_chatbot_follow_up_jobs_updated_at BEFORE UPDATE ON chatbot_follow_up_jobs
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
     CREATE TRIGGER update_conversation_export_jobs_updated_at BEFORE UPDATE ON conversation_export_jobs
         FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -435,6 +670,35 @@
     REVOKE ALL ON FUNCTION claim_conversation_export_job(UUID) FROM PUBLIC;
     GRANT EXECUTE ON FUNCTION claim_conversation_export_job(UUID) TO service_role;
 
+    CREATE OR REPLACE FUNCTION match_chatbot_knowledge(
+        p_page_id UUID,
+        p_query_embedding extensions.vector(1536),
+        p_match_threshold DOUBLE PRECISION DEFAULT 0.35,
+        p_match_count INTEGER DEFAULT 5
+    )
+    RETURNS TABLE (
+        chunk_id UUID,
+        document_id UUID,
+        title TEXT,
+        content TEXT,
+        similarity DOUBLE PRECISION
+    )
+    LANGUAGE sql
+    STABLE
+    SECURITY DEFINER
+    SET search_path = public, extensions
+    AS $$
+        SELECT chunk.id, chunk.document_id, document.title, chunk.content,
+            1 - (chunk.embedding <=> p_query_embedding) AS similarity
+        FROM chatbot_knowledge_chunks AS chunk
+        INNER JOIN chatbot_knowledge_documents AS document ON document.id = chunk.document_id
+        WHERE chunk.page_id = p_page_id
+          AND document.status = 'ready'
+          AND 1 - (chunk.embedding <=> p_query_embedding) >= p_match_threshold
+        ORDER BY chunk.embedding <=> p_query_embedding
+        LIMIT LEAST(GREATEST(p_match_count, 1), 10);
+    $$;
+
     -- Row Level Security (RLS) Policies
     -- Enable RLS on all tables
     ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -454,6 +718,14 @@
     ALTER TABLE workflow_automation_states ENABLE ROW LEVEL SECURITY;
     ALTER TABLE chatbot_configs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE chatbot_reply_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE chatbot_knowledge_documents ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE chatbot_knowledge_chunks ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE chatbot_contact_states ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE chatbot_media_assets ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE chatbot_drive_folders ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE chatbot_follow_up_jobs ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE outbound_message_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE welcome_messages ENABLE ROW LEVEL SECURITY;
 
     -- Note: Since we're using service role key in the API routes,
     -- RLS policies are bypassed. But we can add policies for future use:
@@ -466,4 +738,22 @@
     GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated;
     GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated;
     GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated;
+
+    -- Knowledge is only accessed through authenticated server routes and the service role.
+    REVOKE ALL ON chatbot_knowledge_documents FROM PUBLIC, anon, authenticated;
+    REVOKE ALL ON chatbot_knowledge_chunks FROM PUBLIC, anon, authenticated;
+    GRANT ALL ON chatbot_knowledge_documents TO postgres, service_role;
+    GRANT ALL ON chatbot_knowledge_chunks TO postgres, service_role;
+    REVOKE ALL ON chatbot_contact_states FROM PUBLIC, anon, authenticated;
+    GRANT ALL ON chatbot_contact_states TO postgres, service_role;
+    REVOKE ALL ON chatbot_media_assets FROM PUBLIC, anon, authenticated;
+    GRANT ALL ON chatbot_media_assets TO postgres, service_role;
+    REVOKE ALL ON chatbot_drive_folders FROM PUBLIC, anon, authenticated;
+    GRANT ALL ON chatbot_drive_folders TO postgres, service_role;
+    REVOKE ALL ON chatbot_follow_up_jobs FROM PUBLIC, anon, authenticated;
+    GRANT ALL ON chatbot_follow_up_jobs TO postgres, service_role;
+    REVOKE ALL ON FUNCTION match_chatbot_knowledge(UUID, extensions.vector, DOUBLE PRECISION, INTEGER)
+        FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION match_chatbot_knowledge(UUID, extensions.vector, DOUBLE PRECISION, INTEGER)
+        TO postgres, service_role;
 

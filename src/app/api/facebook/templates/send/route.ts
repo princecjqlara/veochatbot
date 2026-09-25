@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
             contactId: contact?.id || null,
             messageId: result.message_id,
             sourceType: 'manual',
-            sourceName: 'Tokko template send',
+            sourceName: 'VeoBot template send',
             actorUserId: session.user.id,
             actorName: session.user.name || session.user.email || null,
             messageKind: `UTILITY (${templateName})`

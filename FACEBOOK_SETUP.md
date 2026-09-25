@@ -8,7 +8,7 @@ Follow these steps to set up your Facebook app integration.
 2. Click **"My Apps"** → **"Create App"**
 3. Select **"Business"** as the app type
 4. Fill in:
-   - **App Name**: Your app name (e.g., "Tokko Beta")
+   - **App Name**: Your app name (e.g., "VeoBot")
    - **App Contact Email**: Your email
    - Click **"Create App"**
 

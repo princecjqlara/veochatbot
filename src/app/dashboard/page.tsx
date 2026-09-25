@@ -137,7 +137,7 @@ export default function DashboardPage() {
                     <div className="w-20 h-20 border border-black flex items-center justify-center mx-auto mb-6 bg-gray-50">
                         <MessageSquare className="w-10 h-10 text-black" />
                     </div>
-                    <h2 className="text-2xl font-bold uppercase mb-3">Welcome to Tokko</h2>
+                    <h2 className="text-2xl font-bold uppercase mb-3">Welcome to VeoBot</h2>
                     <p className="text-gray-600 mb-8 font-mono text-sm max-w-md mx-auto">
                         Connect your first Facebook Page to get started with contact management and messaging.
                     </p>

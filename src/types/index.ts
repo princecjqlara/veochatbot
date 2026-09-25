@@ -57,6 +57,9 @@ export interface Contact {
   best_contact_hours?: { hour: number; count: number }[];
   best_contact_confidence: 'high' | 'medium' | 'low' | 'inferred' | 'none';
   interaction_count?: number;
+  pipeline_stage: 'new' | 'engaged' | 'collecting_details' | 'qualified' | 'order_created' | 'converted' | 'not_qualified' | 'opted_out';
+  pipeline_stage_source: 'system' | 'chatbot' | 'messenger' | 'manual';
+  pipeline_stage_updated_at: string;
 }
 
 export interface ChatbotConfig {
@@ -65,6 +68,30 @@ export interface ChatbotConfig {
   instructions: string;
   fallback_reply: string;
   model: string;
+  rag_enabled: boolean;
+  follow_up_prompt: string;
+  details_to_collect: string[];
+  details_completion_percent: number;
+  bot_dos: string;
+  bot_donts: string;
+  follow_up_enabled: boolean;
+  follow_up_quick_delays_minutes: number[];
+  follow_up_best_time_days: number[];
+  follow_up_messages: string[];
+  follow_up_ai_instructions: string;
+  follow_up_utility_template_name: string;
+  follow_up_utility_template_language: string;
+  follow_up_utility_text: string;
+  follow_up_media_asset_id: string | null;
+  split_messages: boolean;
+  max_message_parts: number;
+  stop_when_details_collected: boolean;
+  stop_on_opt_out: boolean;
+  stop_on_refusal: boolean;
+  stop_on_qualified: boolean;
+  stop_on_not_qualified: boolean;
+  stop_on_converted: boolean;
+  stop_on_order_created: boolean;
   created_at?: string;
   updated_at?: string;
 }

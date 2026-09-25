@@ -10,6 +10,7 @@ import {
 } from '@/lib/messenger-media';
 import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
 import { recordPageActivity } from '@/lib/activity-history';
+import { createChatbotMediaSignedUrl, type ChatbotMediaAsset } from '@/lib/chatbot-media';
 
 export async function POST(
     request: NextRequest,
@@ -23,6 +24,7 @@ export async function POST(
         const { pageId } = await params;
         const body = await request.json().catch(() => ({}));
         const contactId = typeof body.contactId === 'string' ? body.contactId.trim() : '';
+        const followUpJobId = typeof body.followUpJobId === 'string' ? body.followUpJobId.trim() : '';
         const text = typeof body.text === 'string' ? body.text.trim() : '';
         const legacyMediaPath = typeof body.mediaPath === 'string' ? body.mediaPath.trim() : '';
         const legacyMediaType = typeof body.mediaType === 'string' ? body.mediaType : '';
@@ -75,6 +77,46 @@ export async function POST(
         if (!page?.access_token || !contact?.psid) {
             return NextResponse.json({ message: 'The Page or contact is not ready to send Messenger messages.' }, { status: 400 });
         }
+        let followUpMedia: ChatbotMediaAsset | null = null;
+        if (followUpJobId) {
+            const [{ data: followUpJob, error: followUpError }, { data: chatbotState, error: stateError }] = await Promise.all([
+                db.from('chatbot_follow_up_jobs')
+                    .select('id,status,media_asset_id')
+                    .eq('id', followUpJobId)
+                    .eq('page_id', pageId)
+                    .eq('contact_id', contactId)
+                    .eq('schedule_type', 'manual_human_agent')
+                    .maybeSingle(),
+                db.from('chatbot_contact_states')
+                    .select('status')
+                    .eq('page_id', pageId)
+                    .eq('contact_id', contactId)
+                    .maybeSingle()
+            ]);
+            if (followUpError) throw followUpError;
+            if (stateError) throw stateError;
+            if (!followUpJob || followUpJob.status !== 'ready_manual') {
+                return NextResponse.json({ message: 'This Human Agent follow-up is no longer ready to send. Refresh the list.' }, { status: 409 });
+            }
+            if (chatbotState?.status === 'stopped') {
+                await db.from('chatbot_follow_up_jobs').update({
+                    status: 'cancelled',
+                    cancelled_at: new Date().toISOString(),
+                    error_message: 'Chatbot conversation stopped before staff approval'
+                }).eq('id', followUpJobId);
+                return NextResponse.json({ message: 'This follow-up was cancelled because the chatbot conversation has stopped.' }, { status: 409 });
+            }
+            if (followUpJob.media_asset_id) {
+                const { data: media, error: mediaError } = await db.from('chatbot_media_assets')
+                    .select('id, page_id, knowledge_document_id, title, usage_notes, media_type, mime_type, original_filename, storage_bucket, storage_path, file_size, analysis_text, auto_send, status, error_message, created_at, updated_at')
+                    .eq('id', followUpJob.media_asset_id)
+                    .eq('page_id', pageId)
+                    .eq('status', 'ready')
+                    .maybeSingle();
+                if (mediaError) throw mediaError;
+                followUpMedia = media as ChatbotMediaAsset | null;
+            }
+        }
         if (!getManualReplyMessagingType(contact.last_inbound_at)) {
             return NextResponse.json({ message: 'This contact is no longer in the 7-day reply window. Refresh the list.' }, { status: 409 });
         }
@@ -107,6 +149,13 @@ export async function POST(
                 type: mediaItem.type as 'image' | 'video' | 'audio' | 'file',
                 url: data.signedUrl,
                 partId: mediaItem.partId
+            });
+        }
+        if (followUpMedia) {
+            preparedMedia.push({
+                type: followUpMedia.media_type,
+                url: await createChatbotMediaSignedUrl(followUpMedia),
+                partId: 'chatbot-follow-up-media'
             });
         }
 
@@ -166,6 +215,19 @@ export async function POST(
                 messagingType
             }
         });
+        if (followUpJobId) {
+            const lastMessageId = sent[sent.length - 1]?.messageId || null;
+            const { error: followUpUpdateError } = await db.from('chatbot_follow_up_jobs').update({
+                status: 'sent',
+                message_id: lastMessageId,
+                sent_at: new Date().toISOString(),
+                claimed_at: null,
+                error_message: null
+            }).eq('id', followUpJobId).eq('status', 'ready_manual');
+            if (followUpUpdateError) {
+                console.warn('Human Agent follow-up sent but job update failed:', followUpUpdateError.message);
+            }
+        }
         return NextResponse.json({ success: true, sent, messagingType });
     } catch (error) {
         console.error('Manual Human Agent send failed:', error);

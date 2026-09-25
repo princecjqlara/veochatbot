@@ -21,7 +21,8 @@ import {
     History,
     Download,
     Clock3,
-    Bot
+    Bot,
+    GitBranch
 } from 'lucide-react';
 import { Page } from '@/types';
 
@@ -88,6 +89,7 @@ export default function DashboardLayout({
     const navItems = [
         { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
         { href: '/dashboard/contacts', icon: Users, label: 'Contacts' },
+        { href: '/dashboard/pipeline', icon: GitBranch, label: 'Pipeline' },
         { href: '/dashboard/7-day-contacts', icon: Clock3, label: '7-Day Window Contacts' },
         { href: '/dashboard/tags', icon: Tag, label: 'Tags' },
         { href: '/dashboard/campaigns', icon: MessageSquare, label: 'Campaigns' },
@@ -116,7 +118,7 @@ export default function DashboardLayout({
                         <div className="w-10 h-10 bg-white border border-black flex items-center justify-center flex-shrink-0">
                             <MessageCircle className="w-5 h-5 text-black" />
                         </div>
-                        <span className="text-lg md:text-xl font-bold text-black">Tokko</span>
+                        <span className="text-lg md:text-xl font-bold text-black">VeoBot</span>
                     </Link>
                 </div>
 
