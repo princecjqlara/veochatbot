@@ -72,12 +72,11 @@ export async function GET(request: NextRequest) {
 
     const appSecret = process.env.FACEBOOK_APP_SECRET;
     const appId = process.env.FACEBOOK_CLIENT_ID;
+    const verifyToken = process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN?.trim();
 
-    if (!appSecret || !appId) {
-        return NextResponse.json({ error: 'Facebook app credentials not configured' }, { status: 500 });
+    if (!appSecret || !appId || !verifyToken) {
+        return NextResponse.json({ error: 'Facebook app credentials or webhook verify token not configured' }, { status: 500 });
     }
-
-    const verifyToken = 'TEST_TOKEN';
 
     // Show token in development mode for Facebook webhook setup
     const isDevelopment = process.env.NODE_ENV !== 'production';

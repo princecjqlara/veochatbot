@@ -39,7 +39,48 @@ vi.mock('@/lib/workflow-automations', () => ({
     stopWorkflowAutomationsFromPageMessage: mocks.stopWorkflowAutomationsFromPageMessage
 }));
 
-import { POST } from './route';
+import { GET, POST } from './route';
+
+function createWebhookVerificationRequest(verifyToken: string): NextRequest {
+    const nextUrl = new URL('http://localhost:3000/api/facebook/webhook');
+    nextUrl.searchParams.set('hub.mode', 'subscribe');
+    nextUrl.searchParams.set('hub.verify_token', verifyToken);
+    nextUrl.searchParams.set('hub.challenge', 'facebook-challenge');
+    return { nextUrl } as unknown as NextRequest;
+}
+
+describe('GET /api/facebook/webhook', () => {
+    beforeEach(() => {
+        vi.stubEnv('NODE_ENV', 'production');
+        vi.stubEnv('FACEBOOK_APP_SECRET', 'app-secret');
+        vi.stubEnv('FACEBOOK_CLIENT_ID', '123456789');
+        vi.stubEnv('FACEBOOK_WEBHOOK_VERIFY_TOKEN', 'configured-verify-token');
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
+    it('verifies Meta using the configured environment token', async () => {
+        const response = await GET(createWebhookVerificationRequest('configured-verify-token'));
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('facebook-challenge');
+    });
+
+    it('rejects the previous hardcoded test token', async () => {
+        const response = await GET(createWebhookVerificationRequest('TEST_TOKEN'));
+
+        expect(response.status).toBe(403);
+    });
+
+    it('fails clearly when the verify token is missing', async () => {
+        vi.stubEnv('FACEBOOK_WEBHOOK_VERIFY_TOKEN', '');
+        const response = await GET(createWebhookVerificationRequest('anything'));
+
+        expect(response.status).toBe(500);
+    });
+});
 
 function createWebhookRequest(payload?: Record<string, unknown>): NextRequest {
     const defaultPayload = {
