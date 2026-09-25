@@ -30,6 +30,23 @@ type ChatbotStopConfig = {
     stop_on_order_created: boolean;
 };
 
+type DefaultPageTag = {
+    id: string;
+    name: string;
+    created_at?: string | null;
+};
+
+function normalizeTagName(name: string) {
+    return name.toLowerCase().replace(/[^a-z]/g, '');
+}
+
+export function choosePositiveOutcomeTag(tags: DefaultPageTag[]) {
+    return tags.find(tag => {
+        const normalized = normalizeTagName(tag.name);
+        return normalized === 'paidavailedservice' || normalized === 'paidavailedservices';
+    }) || tags[0] || null;
+}
+
 function shouldStopForSignal(config: ChatbotStopConfig | null, signal: MessengerSystemSignal) {
     if (!config) return false;
     if (signal === 'qualified') return config.stop_on_qualified;
@@ -76,9 +93,24 @@ export async function processOneMessagingAutoTagPage() {
     const runStartedAt = new Date().toISOString();
 
     try {
-        const { data: tag, error: tagError } = await db.from('tags').select('id')
-            .eq('owner_type', 'page').eq('owner_id', current.id).eq('is_default', true).single();
-        if (tagError || !tag) throw tagError || new Error('Combined page tag is missing');
+        const { data: defaultTags, error: tagError } = await db.from('tags')
+            .select('id,name,created_at')
+            .eq('owner_type', 'page')
+            .eq('owner_id', current.id)
+            .eq('is_default', true)
+            .order('created_at', { ascending: true })
+            .order('id', { ascending: true })
+            .limit(25);
+        if (tagError) throw tagError;
+        const tag = choosePositiveOutcomeTag((defaultTags || []) as DefaultPageTag[]);
+        if (!tag) throw new Error('Combined page tag is missing');
+        if ((defaultTags || []).length > 1) {
+            console.warn('Multiple default Page tags found; using the Paid / Availed Service tag', {
+                pageId: current.id,
+                count: defaultTags?.length,
+                selectedTagId: tag.id
+            });
+        }
 
         const { data: rawChatbotConfig, error: chatbotConfigError } = await db
             .from('chatbot_configs')
