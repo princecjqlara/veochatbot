@@ -528,9 +528,9 @@ export async function PUT(request: NextRequest) {
             );
         }
 
-        if (existingTag.is_default && typeof name === 'string' && name.trim() !== existingTag.name.trim()) {
+        if ((existingTag.is_default || existingTag.system_key) && typeof name === 'string' && name.trim() !== existingTag.name.trim()) {
             return NextResponse.json(
-                { error: 'Bad Request', message: 'Default page tags cannot be renamed' },
+                { error: 'Bad Request', message: 'System page tags cannot be renamed' },
                 { status: 400 }
             );
         }
@@ -544,7 +544,7 @@ export async function PUT(request: NextRequest) {
         }
 
         const updates: { name?: string; color?: string; is_shared?: boolean } = {};
-        if (name && !existingTag.is_default) updates.name = name;
+        if (name && !existingTag.is_default && !existingTag.system_key) updates.name = name;
         if (color) updates.color = color;
 
         const shouldUpdateShareTargets = Array.isArray(sharedWithUserIds);
@@ -760,9 +760,9 @@ export async function DELETE(request: NextRequest) {
             );
         }
 
-        if (existingTag.is_default) {
+        if (existingTag.is_default || existingTag.system_key) {
             return NextResponse.json(
-                { error: 'Bad Request', message: 'Default page tags cannot be deleted' },
+                { error: 'Bad Request', message: 'System page tags cannot be deleted' },
                 { status: 400 }
             );
         }

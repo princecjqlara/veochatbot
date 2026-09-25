@@ -36,6 +36,65 @@ type DefaultPageTag = {
     created_at?: string | null;
 };
 
+type MessengerOutcomeTag = {
+    id: string;
+    system_key: MessengerSystemSignal;
+};
+
+export const MESSENGER_OUTCOME_TAGS: Record<MessengerSystemSignal, { name: string; color: string }> = {
+    qualified: { name: 'Qualified', color: '#2563eb' },
+    not_qualified: { name: 'Not Qualified', color: '#dc2626' },
+    converted: { name: 'Converted', color: '#7c3aed' },
+    order_created: { name: 'Order Created', color: '#f59e0b' }
+};
+
+export function buildMessengerOutcomeTagRows(pageId: string) {
+    return (Object.entries(MESSENGER_OUTCOME_TAGS) as Array<[
+        MessengerSystemSignal,
+        { name: string; color: string }
+    ]>).map(([systemKey, tag]) => ({
+        name: tag.name,
+        color: tag.color,
+        owner_type: 'page' as const,
+        owner_id: pageId,
+        page_id: pageId,
+        is_default: false,
+        system_key: systemKey
+    }));
+}
+
+async function ensureMessengerOutcomeTags(db: ReturnType<typeof getSupabaseAdmin>, pageId: string) {
+    const systemKeys = Object.keys(MESSENGER_OUTCOME_TAGS) as MessengerSystemSignal[];
+    const { data: existingRows, error: existingError } = await db.from('tags')
+        .select('id,system_key')
+        .eq('owner_type', 'page')
+        .eq('owner_id', pageId)
+        .in('system_key', systemKeys);
+    if (existingError) throw existingError;
+
+    const existingKeys = new Set(
+        ((existingRows || []) as MessengerOutcomeTag[]).map(row => row.system_key)
+    );
+    const missingRows = buildMessengerOutcomeTagRows(pageId)
+        .filter(row => !existingKeys.has(row.system_key));
+
+    if (missingRows.length > 0) {
+        const { error: insertError } = await db.from('tags').upsert(missingRows, {
+            onConflict: 'owner_id,system_key'
+        });
+        if (insertError) throw insertError;
+    }
+
+    const { data: outcomeTags, error: outcomeTagError } = await db.from('tags')
+        .select('id,system_key')
+        .eq('owner_type', 'page')
+        .eq('owner_id', pageId)
+        .in('system_key', systemKeys);
+    if (outcomeTagError) throw outcomeTagError;
+
+    return (outcomeTags || []) as MessengerOutcomeTag[];
+}
+
 function normalizeTagName(name: string) {
     return name.toLowerCase().replace(/[^a-z]/g, '');
 }
@@ -112,6 +171,14 @@ export async function processOneMessagingAutoTagPage() {
             });
         }
 
+        const rawOutcomeTags = await ensureMessengerOutcomeTags(db, current.id);
+        const outcomeTagIds = new Map(
+            rawOutcomeTags.map(outcomeTag => [
+                outcomeTag.system_key,
+                outcomeTag.id
+            ])
+        );
+
         const { data: rawChatbotConfig, error: chatbotConfigError } = await db
             .from('chatbot_configs')
             .select('stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
@@ -164,6 +231,18 @@ export async function processOneMessagingAutoTagPage() {
                 }, { onConflict: 'contact_id,tag_id', ignoreDuplicates: true });
                 if (assignError) throw assignError;
                 tagged++;
+            }
+            const outcomeAssignments = signals.flatMap(signal => {
+                const tagId = outcomeTagIds.get(signal);
+                return tagId ? [{ contact_id: contact.id, tag_id: tagId }] : [];
+            });
+            if (outcomeAssignments.length > 0) {
+                const { error: outcomeAssignError } = await db.from('contact_tags').upsert(
+                    outcomeAssignments,
+                    { onConflict: 'contact_id,tag_id', ignoreDuplicates: true }
+                );
+                if (outcomeAssignError) throw outcomeAssignError;
+                tagged += outcomeAssignments.length;
             }
 
             const pipelineSignal = (['converted', 'order_created', 'qualified', 'not_qualified'] as MessengerSystemSignal[])

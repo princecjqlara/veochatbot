@@ -105,6 +105,7 @@ export interface Tag {
   page_id: string | null;
   is_shared?: boolean;
   is_default?: boolean;
+  system_key?: 'qualified' | 'not_qualified' | 'converted' | 'order_created' | null;
   shared_with_user_ids?: string[];
   tagged_by_user_id?: string | null;
   tagged_by_name?: string | null;

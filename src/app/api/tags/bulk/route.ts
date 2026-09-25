@@ -68,9 +68,9 @@ export async function DELETE(request: NextRequest) {
 
         const allowedTags = tags.filter(tag => allowedTagIds.includes(tag.id));
 
-        if (allowedTags.some(tag => tag.is_default)) {
+        if (allowedTags.some(tag => tag.is_default || tag.system_key)) {
             return NextResponse.json(
-                { error: 'Bad Request', message: 'Default page tags cannot be deleted' },
+                { error: 'Bad Request', message: 'System page tags cannot be deleted' },
                 { status: 400 }
             );
         }
