@@ -265,6 +265,7 @@ export async function processDueChatbotFollowUps(input: {
             }
 
             let personalizedMessage = '';
+            let personalizedMessages: string[] = [];
             let selectedMediaItems: ChatbotMediaAsset[] = [];
             let selectedDriveFiles: ChatbotDriveFile[] = [];
             let selectedDriveFolder: ChatbotDriveFolder | null = null;
@@ -298,6 +299,9 @@ export async function processDueChatbotFollowUps(input: {
                     throw new Error('AI could not create a validated personalized follow-up');
                 }
                 personalizedMessage = generated.message;
+                personalizedMessages = generated.messages?.length
+                    ? generated.messages
+                    : [generated.message];
                 const generatedMediaDocumentIds = generated.media_document_ids?.length
                     ? generated.media_document_ids
                     : generated.media_document_id
@@ -350,41 +354,53 @@ export async function processDueChatbotFollowUps(input: {
                 name: contact.name || null,
                 last_interaction_at: contact.last_interaction_at || null
             };
-            const message = replaceTemplateVariables(personalizedMessage, placeholderContact).trim();
-            const sendResult = selectedDriveFolder
-                ? await sendMessage(
-                    page.fb_page_id,
-                    page.access_token,
-                    contact.psid,
-                    message,
-                    messagingType || 'RESPONSE',
-                    undefined,
-                    undefined,
-                    undefined,
-                    [{
-                        type: 'URL',
-                        text: selectedDriveFolder.button_text,
-                        url: selectedDriveFolder.folder_url
-                    }]
-                )
-                : await sendMessage(
-                    page.fb_page_id,
-                    page.access_token,
-                    contact.psid,
-                    message,
-                    messagingType || 'RESPONSE'
-                );
-            await recordOutboundMessageEvent(supabase, {
-                pageId: job.page_id,
-                contactId: job.contact_id,
-                messageId: sendResult.message_id,
-                sourceType: 'chatbot',
-                sourceId: job.id,
-                sourceName: job.schedule_type === 'human_agent'
-                    ? 'AI Chatbot day 2-7 follow-up'
-                    : 'AI Chatbot quick follow-up',
-                messageKind: messagingType || 'RESPONSE'
-            });
+            const messageParts = personalizedMessages
+                .map(part => replaceTemplateVariables(part, placeholderContact).trim())
+                .filter(Boolean);
+            if (messageParts.length === 0) throw new Error('AI follow-up did not contain a sendable message');
+            const followUpSourceName = job.schedule_type === 'human_agent'
+                ? 'AI Chatbot day 2-7 follow-up'
+                : 'AI Chatbot quick follow-up';
+            let lastSendResult: { message_id: string } | null = null;
+            for (const [partIndex, message] of messageParts.entries()) {
+                const isFinalPart = partIndex === messageParts.length - 1;
+                const sendResult = selectedDriveFolder && isFinalPart
+                    ? await sendMessage(
+                        page.fb_page_id,
+                        page.access_token,
+                        contact.psid,
+                        message,
+                        messagingType || 'RESPONSE',
+                        undefined,
+                        undefined,
+                        undefined,
+                        [{
+                            type: 'URL',
+                            text: selectedDriveFolder.button_text,
+                            url: selectedDriveFolder.folder_url
+                        }]
+                    )
+                    : await sendMessage(
+                        page.fb_page_id,
+                        page.access_token,
+                        contact.psid,
+                        message,
+                        messagingType || 'RESPONSE'
+                    );
+                lastSendResult = sendResult;
+                await recordOutboundMessageEvent(supabase, {
+                    pageId: job.page_id,
+                    contactId: job.contact_id,
+                    messageId: sendResult.message_id,
+                    sourceType: 'chatbot',
+                    sourceId: job.id,
+                    sourceName: messageParts.length > 1
+                        ? `${followUpSourceName} (${partIndex + 1}/${messageParts.length})`
+                        : followUpSourceName,
+                    messageKind: messagingType || 'RESPONSE'
+                });
+            }
+            if (!lastSendResult) throw new Error('AI follow-up was not sent');
 
             if (selectedDriveFiles.length > 0) {
                 try {
@@ -466,8 +482,8 @@ export async function processDueChatbotFollowUps(input: {
 
             await markJob(supabase, job.id, {
                 status: 'sent',
-                message_id: sendResult.message_id,
-                message_text: personalizedMessage,
+                message_id: lastSendResult.message_id,
+                message_text: messageParts.join('\n\n'),
                 media_asset_id: selectedMedia?.id || null,
                 sent_at: now.toISOString(),
                 claimed_at: null,

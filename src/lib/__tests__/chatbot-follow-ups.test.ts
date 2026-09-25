@@ -144,7 +144,7 @@ describe('chatbot follow-up scheduling', () => {
         expect(from).not.toHaveBeenCalled();
     });
 
-    it('sends a due day 2-7 job directly with HUMAN_AGENT', async () => {
+    it('sends a due day 2-7 job as ordered split HUMAN_AGENT bubbles', async () => {
         vi.clearAllMocks();
         const conversationHistory = [{
             id: 'message-1',
@@ -154,11 +154,14 @@ describe('chatbot follow-up scheduling', () => {
         }];
         mocks.getConversationForPsid.mockResolvedValue({ messages: { data: conversationHistory } });
         mocks.generateChatbotFollowUp.mockResolvedValue({
-            message: 'Personalized Human Agent follow-up',
+            message: 'Personalized Human Agent follow-up\n\nWould Friday work?',
+            messages: ['Personalized Human Agent follow-up', 'Would Friday work?'],
             personalization_basis: 'Premium haircut next Friday',
             media_document_id: null
         });
-        mocks.sendMessage.mockResolvedValue({ message_id: 'mid-1' });
+        mocks.sendMessage
+            .mockResolvedValueOnce({ message_id: 'mid-1' })
+            .mockResolvedValueOnce({ message_id: 'mid-2' });
         mocks.recordOutboundMessageEvent.mockResolvedValue(undefined);
         const updates: Array<Record<string, unknown>> = [];
         const dueJob = {
@@ -211,11 +214,20 @@ describe('chatbot follow-up scheduling', () => {
         });
 
         expect(result).toMatchObject({ checked: 1, sent: 1, readyManual: 0 });
-        expect(mocks.sendMessage).toHaveBeenCalledWith(
+        expect(mocks.sendMessage).toHaveBeenNthCalledWith(
+            1,
             'fb-page-1',
             'token',
             'psid-1',
             'Personalized Human Agent follow-up',
+            'HUMAN_AGENT'
+        );
+        expect(mocks.sendMessage).toHaveBeenNthCalledWith(
+            2,
+            'fb-page-1',
+            'token',
+            'psid-1',
+            'Would Friday work?',
             'HUMAN_AGENT'
         );
         expect(mocks.getConversationForPsid).toHaveBeenCalledWith(
@@ -233,10 +245,21 @@ describe('chatbot follow-up scheduling', () => {
         expect(mocks.recordOutboundMessageEvent).toHaveBeenCalledWith(
             supabase,
             expect.objectContaining({
-                sourceName: 'AI Chatbot day 2-7 follow-up',
+                sourceName: 'AI Chatbot day 2-7 follow-up (1/2)',
                 messageKind: 'HUMAN_AGENT'
             })
         );
-        expect(updates).toContainEqual(expect.objectContaining({ status: 'sent', message_id: 'mid-1' }));
+        expect(mocks.recordOutboundMessageEvent).toHaveBeenLastCalledWith(
+            supabase,
+            expect.objectContaining({
+                sourceName: 'AI Chatbot day 2-7 follow-up (2/2)',
+                messageKind: 'HUMAN_AGENT'
+            })
+        );
+        expect(updates).toContainEqual(expect.objectContaining({
+            status: 'sent',
+            message_id: 'mid-2',
+            message_text: 'Personalized Human Agent follow-up\n\nWould Friday work?'
+        }));
     });
 });

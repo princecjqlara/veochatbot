@@ -164,7 +164,7 @@ describe('VeoBot chatbot', () => {
                 model: '~deepseek/deepseek-flash-latest',
                 usage: { prompt_tokens: 900, completion_tokens: 35, total_tokens: 935 },
                 choices: [{ message: { content: JSON.stringify({
-                    message: 'Hi po! Interested pa rin ba kayo sa haircut schedule next week?',
+                    messages: ['Hi po!', 'Interested pa rin ba kayo sa haircut schedule next week?'],
                     personalization_basis: 'Customer asked about a haircut schedule next week.',
                     media_document_id: null
                 }) } }]
@@ -172,8 +172,8 @@ describe('VeoBot chatbot', () => {
         });
         vi.stubGlobal('fetch', fetchMock);
 
-        await generateChatbotFollowUp({
-            config,
+        const result = await generateChatbotFollowUp({
+            config: { ...config, split_messages: true, max_message_parts: 0 },
             pageId: 'page-facebook-id',
             pageName: 'Test Salon',
             contactName: 'CJ',
@@ -199,6 +199,11 @@ describe('VeoBot chatbot', () => {
         expect(requestBody.messages[0].content).toContain('The normal follow-up is text-only');
         expect(requestBody.messages[0].content).toContain('do not keep sending samples on every follow-up');
         expect(requestBody.messages[0].content).toContain('Prefer one best video or image card');
+        expect(requestBody.messages[0].content).toContain('Use 2 to 4 concise bubbles');
+        expect(result.messages).toEqual([
+            'Hi po!',
+            'Interested pa rin ba kayo sa haircut schedule next week?'
+        ]);
     });
 
     it('refuses to create a follow-up without customer conversation history', async () => {

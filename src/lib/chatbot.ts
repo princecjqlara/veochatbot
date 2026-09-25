@@ -104,6 +104,7 @@ export type ChatbotResponse = {
 
 export type ChatbotFollowUpResponse = {
     message: string;
+    messages: string[];
     personalization_basis?: string;
     knowledge: ChatbotKnowledgeMatch[];
     media_document_ids?: string[];
@@ -305,6 +306,16 @@ function splitNaturalMessages(content: string, enabled: boolean): string[] {
         }
     }
     return parts;
+}
+
+function limitNaturalMessageParts(parts: string[], maxMessageParts: number): string[] {
+    const limit = Math.min(4, Math.max(1, Math.round(Number(maxMessageParts)) || 1));
+    if (parts.length <= limit) return parts;
+    if (limit === 1) return [parts.join(' ').trim().slice(0, 600)];
+    return [
+        ...parts.slice(0, limit - 1),
+        parts.slice(limit - 1).join(' ').trim().slice(0, 600)
+    ];
 }
 
 function sanitizeGeneratedMessage(content: string): string {
@@ -752,6 +763,13 @@ export async function generateChatbotFollowUp(input: {
             .map((message) => message.content.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim())
             .filter(Boolean)
     );
+    const configuredFollowUpParts = Math.round(Number(input.config.max_message_parts));
+    const followUpMaxMessageParts = input.config.split_messages
+        ? Number.isFinite(configuredFollowUpParts) && configuredFollowUpParts > 0
+            ? Math.min(4, configuredFollowUpParts)
+            : 4
+        : 1;
+    const splitFollowUpMessages = input.config.split_messages && followUpMaxMessageParts > 1;
     const system =
         `You are the official Messenger assistant for the Facebook Page "${pageName}". That Page identity is fixed; never claim to represent another Page. ` +
         `The contact's saved Messenger profile name is "${contactName}". This is the customer identity, not the Page identity. ` +
@@ -785,7 +803,9 @@ export async function generateChatbotFollowUp(input: {
         'Do not use canned assistant openers, generic filler, fake enthusiasm, corporate buzzwords, repeated summaries, essay-like explanations, excessive emojis, headings, or decorative Markdown. ' +
         'Do not use em dashes, en dashes, dash-style bullet lists, or headline-style labels ending in a colon. Use ordinary conversational sentences and punctuation instead. ' +
         'Answer first, then give one useful next step or question, and vary the wording naturally. ' +
-        'Return only JSON: {"message":"one natural Messenger message under 600 characters","personalization_basis":"briefly name the exact verified customer topic or detail used","media_decision_reason":null,"media_document_ids":[],"drive_file_document_ids":[],"link_document_id":null}. ' +
+        (splitFollowUpMessages
+            ? `Return only JSON: {"messages":["first short Messenger bubble","second short Messenger bubble"],"personalization_basis":"briefly name the exact verified customer topic or detail used","media_decision_reason":null,"media_document_ids":[],"drive_file_document_ids":[],"link_document_id":null}. Use 2 to ${followUpMaxMessageParts} concise bubbles when the thought naturally benefits from splitting; keep the complete follow-up under 600 characters and do not add filler merely to create another bubble. `
+            : 'Return only JSON: {"message":"one natural Messenger message under 600 characters","personalization_basis":"briefly name the exact verified customer topic or detail used","media_decision_reason":null,"media_document_ids":[],"drive_file_document_ids":[],"link_document_id":null}. ') +
         'personalization_basis is required for validation and must come from the conversation or verified collected details, never from guessing. Do not include it in the customer-facing message. ' +
         'Set media_decision_reason to null when sending text only. When selecting any media, set it to a short explanation of why that exact sample helps this customer now. ' +
         'media_document_ids must contain exact document_ids of retrieved MEDIA ASSET entries. Select one when only one helps, or 2 to 10 only for a useful related carousel; otherwise use an empty array. ' +
@@ -822,10 +842,22 @@ export async function generateChatbotFollowUp(input: {
 
         try {
             const parsed = JSON.parse(content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')) as Record<string, unknown>;
-            const message = typeof parsed.message === 'string'
-                ? sanitizeGeneratedMessage(parsed.message).slice(0, 600)
-                : '';
-            if (!message) throw new Error('missing message');
+            const rawMessages = (Array.isArray(parsed.messages)
+                ? parsed.messages.filter((value): value is string => typeof value === 'string')
+                : typeof parsed.message === 'string'
+                    ? [parsed.message]
+                    : [])
+                .map(value => sanitizeGeneratedMessage(value).slice(0, 600))
+                .filter(Boolean);
+            const combinedMessage = rawMessages.join('\n\n').slice(0, 600);
+            const messages = limitNaturalMessageParts(
+                rawMessages.length > 1 && splitFollowUpMessages
+                    ? rawMessages
+                    : splitNaturalMessages(combinedMessage, splitFollowUpMessages),
+                followUpMaxMessageParts
+            );
+            const message = messages.join('\n\n').trim();
+            if (!message || messages.length === 0) throw new Error('missing message');
             const personalizationBasis = typeof parsed.personalization_basis === 'string'
                 ? parsed.personalization_basis.trim().slice(0, 500)
                 : '';
@@ -892,6 +924,7 @@ export async function generateChatbotFollowUp(input: {
                 : undefined;
             return {
                 message,
+                messages,
                 personalization_basis: personalizationBasis,
                 knowledge,
                 ...(media.length > 0 ? {
