@@ -9,7 +9,7 @@ import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
 import { getPhilippinesDateParts, getPhilippinesScheduledAtIso } from '@/lib/philippines-time';
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { getSupabaseAdmin } from '@/lib/supabase';
-import { generateChatbotFollowUp, type ChatbotConfig } from '@/lib/chatbot';
+import { generateChatbotFollowUp, getChatbotKnowledgePageId, type ChatbotConfig } from '@/lib/chatbot';
 import { isChatbotContactAllowed } from '@/lib/chatbot-control';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument, type ChatbotDriveFile, type ChatbotDriveFolder } from '@/lib/chatbot-drive-folders';
 import { isPipelineClosedForAutomation, type ContactPipelineStage } from '@/lib/contact-pipeline';
@@ -284,6 +284,7 @@ export async function processDueChatbotFollowUps(input: {
                 throw new Error('Messenger conversation history is unavailable; personalized follow-up was not sent');
             }
             try {
+                const knowledgePageId = getChatbotKnowledgePageId(config as ChatbotConfig);
                 const generated = await generateChatbotFollowUp({
                     config: config as ChatbotConfig,
                     contactName: contact.name,
@@ -309,19 +310,19 @@ export async function processDueChatbotFollowUps(input: {
                         : [];
                 if (generatedMediaDocumentIds.length > 0) {
                     selectedMediaItems = await getReadyChatbotMediaForDocuments({
-                        pageId: job.page_id,
+                        pageId: knowledgePageId,
                         documentIds: generatedMediaDocumentIds
                     });
                 }
                 if (generated.drive_file_document_ids?.length) {
                     selectedDriveFiles = await getReadyChatbotDriveFilesForDocuments({
-                        pageId: job.page_id,
+                        pageId: knowledgePageId,
                         documentIds: generated.drive_file_document_ids
                     });
                 }
                 if (generated.link_document_id && selectedDriveFiles.length === 0 && job.schedule_type === 'response') {
                     selectedDriveFolder = await getReadyChatbotDriveFolderForDocument({
-                        pageId: job.page_id,
+                        pageId: knowledgePageId,
                         documentId: generated.link_document_id
                     });
                 }

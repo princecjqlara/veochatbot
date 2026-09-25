@@ -17,7 +17,9 @@ vi.mock('@/lib/facebook', () => ({
 }));
 
 vi.mock('@/lib/chatbot', () => ({
-    generateChatbotFollowUp: mocks.generateChatbotFollowUp
+    generateChatbotFollowUp: mocks.generateChatbotFollowUp,
+    getChatbotKnowledgePageId: (config: { page_id: string; knowledge_source_page_id?: string | null }) =>
+        config.knowledge_source_page_id || config.page_id
 }));
 
 vi.mock('@/lib/outbound-message-events', () => ({

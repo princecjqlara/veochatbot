@@ -5,6 +5,7 @@ import {
     generateChatbotFollowUp,
     generateChatbotResponse,
     generateChatbotReply,
+    getChatbotKnowledgePageId,
     includeKnownContactName,
     type ChatbotConfig
 } from '@/lib/chatbot';
@@ -45,6 +46,16 @@ const config: ChatbotConfig = {
     stop_on_converted: true,
     stop_on_order_created: true
 };
+
+describe('shared chatbot knowledge library', () => {
+    it('uses the configured source Page and otherwise falls back to the bot Page', () => {
+        expect(getChatbotKnowledgePageId({
+            page_id: 'target-page',
+            knowledge_source_page_id: 'source-page'
+        })).toBe('source-page');
+        expect(getChatbotKnowledgePageId({ page_id: 'target-page' })).toBe('target-page');
+    });
+});
 
 afterEach(() => {
     vi.unstubAllGlobals();

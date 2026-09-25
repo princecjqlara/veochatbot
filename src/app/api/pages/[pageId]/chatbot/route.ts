@@ -8,6 +8,7 @@ import {
     DEFAULT_CHATBOT_MODEL,
     generateChatbotFollowUp,
     generateChatbotResponse,
+    getChatbotKnowledgePageId,
     getOpenRouterModelContextLength,
     type ChatbotTokenUsage,
     type ChatbotConfig
@@ -19,6 +20,7 @@ import { getMissingChatbotDetails } from '@/lib/chatbot-control';
 function defaultConfig(pageId: string): ChatbotConfig {
     return {
         page_id: pageId,
+        knowledge_source_page_id: pageId,
         enabled: false,
         trial_mode_enabled: false,
         trial_contact_id: null,
@@ -172,7 +174,7 @@ export async function GET(
 
         const { data, error } = await getSupabaseAdmin()
             .from('chatbot_configs')
-            .select('page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
             .eq('page_id', pageId)
             .maybeSingle();
 
@@ -285,6 +287,18 @@ export async function PUT(
             );
         }
 
+        const requestedKnowledgePageId = typeof body.knowledge_source_page_id === 'string' && body.knowledge_source_page_id.trim()
+            ? body.knowledge_source_page_id.trim()
+            : pageId;
+        if (!await userHasPageAccess(authorization.userId, requestedKnowledgePageId)) {
+            return NextResponse.json(
+                { error: 'Forbidden', message: 'You do not have access to the selected knowledge library Page' },
+                { status: 403 }
+            );
+        }
+        const shouldShareKnowledge = body.share_knowledge_and_media === true && targetPageIds.length > 1;
+        const sharedKnowledgePageId = requestedKnowledgePageId;
+
         if (body.trial_mode_enabled === true) {
             if (!trialContactId) {
                 return NextResponse.json({ error: 'Choose one Messenger contact before enabling live trial mode' }, { status: 400 });
@@ -337,6 +351,9 @@ export async function PUT(
         const payloads = targetPageIds.map((targetPageId) => ({
             ...sharedSettings,
             page_id: targetPageId,
+            knowledge_source_page_id: shouldShareKnowledge
+                ? sharedKnowledgePageId
+                : targetPageId === pageId ? requestedKnowledgePageId : targetPageId,
             // Trial contacts are Page-specific and must never be copied to a
             // different Page. The regular bot settings are shared.
             trial_mode_enabled: targetPageId === pageId && body.trial_mode_enabled === true,
@@ -414,7 +431,7 @@ export async function POST(
         const [{ data, error }, { data: page, error: pageError }] = await Promise.all([
             supabase
                 .from('chatbot_configs')
-                .select('page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+                .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
                 .eq('page_id', pageId)
                 .maybeSingle(),
             supabase.from('pages').select('name').eq('id', pageId).maybeSingle()
@@ -423,6 +440,7 @@ export async function POST(
         if (pageError) throw pageError;
 
         const storedConfig = (data || defaultConfig(pageId)) as ChatbotConfig;
+        const knowledgePageId = getChatbotKnowledgePageId(storedConfig);
         const config = mergeDraftConfigForPreview(storedConfig, body.draft_config);
         if (testMode === 'follow_up') {
             const followUpType = body.follow_up_type === 'human_agent' ? 'human_agent' : 'quick';
@@ -444,7 +462,7 @@ export async function POST(
                     ? [followUp.media_document_id]
                     : [];
             const followUpMediaItems = await getReadyChatbotMediaForDocuments({
-                pageId,
+                pageId: knowledgePageId,
                 documentIds: followUpMediaIds
             });
             const followUpMediaPreviews = await Promise.all(followUpMediaItems.map(async (media) => ({
@@ -456,7 +474,7 @@ export async function POST(
                 target_url: createChatbotMediaPublicViewUrl(media.id)
             })));
             const followUpDriveFiles = await getReadyChatbotDriveFilesForDocuments({
-                pageId,
+                pageId: knowledgePageId,
                 documentIds: followUp.drive_file_document_ids || []
             });
             const followUpDrivePreviews = followUpDriveFiles.map((file) => ({
@@ -505,7 +523,7 @@ export async function POST(
             : result.media_document_id
                 ? [result.media_document_id]
                 : [];
-        const mediaItems = await getReadyChatbotMediaForDocuments({ pageId, documentIds: mediaIds });
+        const mediaItems = await getReadyChatbotMediaForDocuments({ pageId: knowledgePageId, documentIds: mediaIds });
         const mediaPreviews = await Promise.all(mediaItems.map(async (media) => ({
             id: media.id,
             title: media.title,
@@ -515,7 +533,7 @@ export async function POST(
             target_url: createChatbotMediaPublicViewUrl(media.id)
         })));
         const driveFiles = await getReadyChatbotDriveFilesForDocuments({
-            pageId,
+            pageId: knowledgePageId,
             documentIds: result.drive_file_document_ids || []
         });
         const drivePreviews = driveFiles.map((file) => ({
@@ -529,7 +547,7 @@ export async function POST(
         }));
         const selectedPreviews = drivePreviews.length > 0 ? drivePreviews : mediaPreviews;
         const folder = result.link_document_id
-            ? await getReadyChatbotDriveFolderForDocument({ pageId, documentId: result.link_document_id })
+            ? await getReadyChatbotDriveFolderForDocument({ pageId: knowledgePageId, documentId: result.link_document_id })
             : null;
 
         return NextResponse.json({

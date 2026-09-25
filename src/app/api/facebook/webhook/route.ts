@@ -6,7 +6,7 @@ import { getPhilippinesDayOfWeek, getPhilippinesHour } from '@/lib/philippines-t
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { handleFollowUpWorkflowContactReply, stopWorkflowAutomationsFromPageMessage } from '@/lib/workflow-automations';
 import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
-import { generateChatbotResponse, type ChatbotConfig } from '@/lib/chatbot';
+import { generateChatbotResponse, getChatbotKnowledgePageId, type ChatbotConfig } from '@/lib/chatbot';
 import { createChatbotMediaPublicViewUrl, createChatbotMediaSignedUrl, getReadyChatbotMediaForDocuments } from '@/lib/chatbot-media';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument } from '@/lib/chatbot-drive-folders';
 import { cancelPendingChatbotFollowUps, scheduleChatbotFollowUps } from '@/lib/chatbot-follow-ups';
@@ -741,7 +741,7 @@ export async function POST(request: NextRequest) {
                                     try {
                                         const { data: storedChatbotConfig, error: chatbotConfigError } = await supabase
                                             .from('chatbot_configs')
-                                            .select('page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+                                            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
                                             .eq('page_id', page.id)
                                             .maybeSingle();
 
@@ -936,12 +936,13 @@ export async function POST(request: NextRequest) {
 
                                             let lastOutboundMessageId: string | undefined;
                                             let sentMedia = false;
+                                            const knowledgePageId = getChatbotKnowledgePageId(chatbotConfig);
                                             let selectedDriveFolder = null;
                                             let selectedDriveFiles = [] as Awaited<ReturnType<typeof getReadyChatbotDriveFilesForDocuments>>;
                                             if (generatedDriveFileDocumentIds.length > 0 && !generatedStopReason) {
                                                 try {
                                                     selectedDriveFiles = await getReadyChatbotDriveFilesForDocuments({
-                                                        pageId: page.id,
+                                                        pageId: knowledgePageId,
                                                         documentIds: generatedDriveFileDocumentIds
                                                     });
                                                 } catch (driveFileError) {
@@ -956,7 +957,7 @@ export async function POST(request: NextRequest) {
                                             if (generatedLinkDocumentId && selectedDriveFiles.length === 0 && !generatedStopReason) {
                                                 try {
                                                     selectedDriveFolder = await getReadyChatbotDriveFolderForDocument({
-                                                        pageId: page.id,
+                                                        pageId: knowledgePageId,
                                                         documentId: generatedLinkDocumentId
                                                     });
                                                 } catch (folderError) {
@@ -1019,7 +1020,7 @@ export async function POST(request: NextRequest) {
                                                     lastOutboundMessageId = mediaResult.message_id;
                                                     sentMedia = true;
                                                     await recordOutboundMessageEvent(supabase, {
-                                                        pageId: page.id,
+                                                        pageId: knowledgePageId,
                                                         contactId: contact.id,
                                                         messageId: mediaResult.message_id,
                                                         sourceType: 'chatbot',
@@ -1043,7 +1044,7 @@ export async function POST(request: NextRequest) {
                                             if (generatedMediaDocumentIds.length > 0 && !generatedStopReason) {
                                                 try {
                                                     const mediaItems = await getReadyChatbotMediaForDocuments({
-                                                        pageId: page.id,
+                                                        pageId: knowledgePageId,
                                                         documentIds: generatedMediaDocumentIds
                                                     });
                                                     if (mediaItems.length > 0) {

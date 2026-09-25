@@ -19,6 +19,7 @@ export const DEFAULT_CHATBOT_FALLBACK =
 
 export type ChatbotConfig = {
     page_id: string;
+    knowledge_source_page_id?: string | null;
     enabled: boolean;
     trial_mode_enabled?: boolean;
     trial_contact_id?: string | null;
@@ -50,6 +51,10 @@ export type ChatbotConfig = {
     stop_on_converted: boolean;
     stop_on_order_created: boolean;
 };
+
+export function getChatbotKnowledgePageId(config: Pick<ChatbotConfig, 'page_id' | 'knowledge_source_page_id'>) {
+    return config.knowledge_source_page_id || config.page_id;
+}
 
 type OpenRouterContentPart = string | {
     type?: string;
@@ -610,7 +615,7 @@ export async function generateChatbotResponse(input: {
     if (input.config.rag_enabled && input.knowledge === undefined) {
         try {
             knowledge = await retrieveChatbotKnowledge({
-                pageId: input.config.page_id,
+                pageId: getChatbotKnowledgePageId(input.config),
                 query: input.inboundMessage,
                 matchCount: 5
             });
@@ -739,7 +744,7 @@ export async function generateChatbotFollowUp(input: {
     if (input.config.rag_enabled) {
         try {
             knowledge = await retrieveChatbotKnowledge({
-                pageId: input.config.page_id,
+                pageId: getChatbotKnowledgePageId(input.config),
                 query: `${retrievalConversation}\n${JSON.stringify(collectedDetails)}\n${input.config.follow_up_ai_instructions}`,
                 matchCount: 8
             });

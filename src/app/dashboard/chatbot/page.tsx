@@ -38,6 +38,7 @@ type PageSummary = {
 
 type ChatbotConfig = {
     page_id: string;
+    knowledge_source_page_id?: string | null;
     enabled: boolean;
     trial_mode_enabled: boolean;
     trial_contact_id: string | null;
@@ -373,6 +374,7 @@ export default function ChatbotPage() {
     const [pages, setPages] = useState<PageSummary[]>([]);
     const [selectedPageId, setSelectedPageId] = useState('');
     const [applyToPageIds, setApplyToPageIds] = useState<string[]>([]);
+    const [shareKnowledgeAndMedia, setShareKnowledgeAndMedia] = useState(true);
     const [config, setConfig] = useState<ChatbotConfig | null>(null);
     const [providerConfigured, setProviderConfigured] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -420,6 +422,7 @@ export default function ChatbotPage() {
     const [addingDriveFolder, setAddingDriveFolder] = useState(false);
     const [syncingDriveFolderId, setSyncingDriveFolderId] = useState('');
     const [deletingDriveFolderId, setDeletingDriveFolderId] = useState('');
+    const knowledgeLibraryPageId = config?.knowledge_source_page_id || selectedPageId;
 
     useEffect(() => {
         const input = folderMediaInputRef.current;
@@ -552,31 +555,31 @@ export default function ChatbotPage() {
     const loadKnowledge = useCallback(async () => {
         if (!selectedPageId) return;
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/knowledge');
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/knowledge');
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load chatbot knowledge');
             setKnowledgeDocuments(body.documents || []);
         } catch (loadError) {
             setError((loadError as Error).message);
         }
-    }, [selectedPageId]);
+    }, [knowledgeLibraryPageId, selectedPageId]);
 
     const loadMedia = useCallback(async () => {
         if (!selectedPageId) return;
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/media');
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/media');
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load chatbot media');
             setMediaAssets(body.assets || []);
         } catch (loadError) {
             setError((loadError as Error).message);
         }
-    }, [selectedPageId]);
+    }, [knowledgeLibraryPageId, selectedPageId]);
 
     const loadDriveFolders = useCallback(async () => {
         if (!selectedPageId) return;
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/folders');
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/folders');
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load Drive folders');
             setDriveFolders(body.folders || []);
@@ -585,7 +588,7 @@ export default function ChatbotPage() {
         } catch (loadError) {
             setError((loadError as Error).message);
         }
-    }, [selectedPageId]);
+    }, [knowledgeLibraryPageId, selectedPageId]);
 
     useEffect(() => {
         setKnowledgeDocuments([]);
@@ -623,7 +626,8 @@ export default function ChatbotPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...config,
-                    apply_to_page_ids: applyToPageIds.filter((pageId) => pageId !== selectedPageId)
+                    apply_to_page_ids: applyToPageIds.filter((pageId) => pageId !== selectedPageId),
+                    share_knowledge_and_media: shareKnowledgeAndMedia
                 })
             });
             const body = await readJsonResponse(response);
@@ -878,7 +882,7 @@ export default function ChatbotPage() {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/knowledge', {
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/knowledge', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -909,7 +913,7 @@ export default function ChatbotPage() {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/knowledge', {
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/knowledge', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ document_id: documentId })
@@ -1010,7 +1014,7 @@ export default function ChatbotPage() {
         const uploadOne = async (item: PendingMediaUpload) => {
             try {
                 updatePending(item.id, { status: 'uploading', error: undefined });
-                const prepareResponse = await fetch('/api/pages/' + selectedPageId + '/chatbot/media', {
+                const prepareResponse = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/media', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1031,7 +1035,7 @@ export default function ChatbotPage() {
                 if (uploadError) throw uploadError;
 
                 updatePending(item.id, { status: 'analyzing' });
-                const finalizeResponse = await fetch('/api/pages/' + selectedPageId + '/chatbot/media', {
+                const finalizeResponse = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/media', {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1091,7 +1095,7 @@ export default function ChatbotPage() {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/media', {
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/media', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ asset_id: assetId })
@@ -1117,7 +1121,7 @@ export default function ChatbotPage() {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/folders', {
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1151,7 +1155,7 @@ export default function ChatbotPage() {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/folders', {
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'sync', folder_id: folderId })
@@ -1174,7 +1178,7 @@ export default function ChatbotPage() {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot/folders', {
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/folders', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ folder_id: folderId })
@@ -1196,6 +1200,7 @@ export default function ChatbotPage() {
     };
 
     const selectedPageName = pages.find((page) => page.id === selectedPageId)?.name || 'this Page';
+    const knowledgeLibraryPageName = pages.find((page) => page.id === knowledgeLibraryPageId)?.name || selectedPageName;
     const selectedTrialContact = trialContacts.find((contact) => contact.id === trialContactId)
         || (liveTrialStatus?.contact?.id === trialContactId ? liveTrialStatus.contact : null);
     const latestTestAssistantMessage = [...testConversation].reverse().find((message) => message.role === 'assistant');
@@ -1260,6 +1265,22 @@ export default function ChatbotPage() {
                             </label>
                         ))}
                     </div>
+                    {applyToPageIds.some((pageId) => pageId !== selectedPageId) && (
+                        <label className="mt-3 flex items-start gap-2 border border-blue-300 bg-blue-50 px-3 py-3 text-xs cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={shareKnowledgeAndMedia}
+                                onChange={(event) => setShareKnowledgeAndMedia(event.target.checked)}
+                                className="mt-0.5 h-4 w-4"
+                            />
+                            <span>
+                                <b>Share knowledge and media library</b>
+                                <span className="mt-1 block text-[11px] text-gray-600">
+                                    Selected Pages reuse this Page&apos;s knowledge, uploaded images/videos, and Drive media without duplicating files.
+                                </span>
+                            </span>
+                        </label>
+                    )}
                 </div>
             </div>
 
@@ -1871,6 +1892,12 @@ export default function ChatbotPage() {
                                 Use knowledge in replies
                             </label>
                         </div>
+
+                        {knowledgeLibraryPageId !== selectedPageId && (
+                            <div className="mb-4 border border-blue-400 bg-blue-50 p-3 text-xs text-blue-900">
+                                This bot shares the knowledge and media library from <b>{knowledgeLibraryPageName}</b>. Changes made here update that shared library for every linked Page.
+                            </div>
+                        )}
 
                         <div className="grid sm:grid-cols-[1fr_auto] gap-2 mb-2">
                             <input
