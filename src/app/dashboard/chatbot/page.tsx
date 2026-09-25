@@ -1798,19 +1798,20 @@ export default function ChatbotPage() {
                                 ['stop_when_details_collected', 'Collection percentage target is reached'],
                                 ['stop_on_opt_out', 'Customer asks the Page to stop'],
                                 ['stop_on_refusal', 'Customer clearly refuses or is not interested'],
-                                ['stop_on_qualified', 'Meta lead stage becomes Qualified'],
-                                ['stop_on_not_qualified', 'Meta lead stage becomes Not Qualified'],
-                                ['stop_on_converted', 'Meta lead stage becomes Converted'],
-                                ['stop_on_order_created', 'An order is created in Messenger']
-                            ] as Array<[keyof ChatbotConfig, string]>).map(([key, label]) => (
+                                ['stop_on_qualified', 'Meta lead stage becomes Qualified', true],
+                                ['stop_on_not_qualified', 'Meta lead stage becomes Not Qualified', true],
+                                ['stop_on_converted', 'Meta lead stage becomes Converted', true],
+                                ['stop_on_order_created', 'An order is created in Messenger', true]
+                            ] as Array<[keyof ChatbotConfig, string, boolean?]>).map(([key, label, alwaysOn]) => (
                                 <label key={key} className="border border-gray-400 p-2 flex items-start gap-2 text-xs cursor-pointer">
                                     <input
                                         type="checkbox"
                                         checked={Boolean(config[key])}
                                         onChange={(event) => updateConfig({ [key]: event.target.checked })}
+                                        disabled={alwaysOn}
                                         className="w-4 h-4 mt-0.5"
                                     />
-                                    <span>{label}</span>
+                                    <span>{label}{alwaysOn && <span className="ml-1 font-bold text-green-700">(always on)</span>}</span>
                                 </label>
                             ))}
                         </div>

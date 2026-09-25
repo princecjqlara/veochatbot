@@ -4,7 +4,7 @@ export type MessengerSystemSignal = 'order_created' | 'qualified' | 'not_qualifi
 // The stage and order text was observed in the app's read-only Messenger audit.
 export function classifyMessengerSystemMessage(text: string): MessengerSystemSignal | null {
     const value = text.trim();
-    const stage = /^Lead stage set to (Qualified|Not Qualified|Disqualified|Converted)\.?$/i.exec(value);
+    const stage = /^Lead stage set to (Qualified|Not Qualified|Disqualified|Converted|Order Created)\.?$/i.exec(value);
     if (stage) {
         const normalized = stage[1].toLowerCase().replace(/\s+/g, '_');
         return normalized === 'disqualified' ? 'not_qualified' : normalized as MessengerSystemSignal;

@@ -7,6 +7,7 @@ describe('classifyMessengerSystemMessage', () => {
         expect(classifyMessengerSystemMessage('Lead stage set to Not Qualified')).toBe('not_qualified');
         expect(classifyMessengerSystemMessage('Lead stage set to Disqualified.')).toBe('not_qualified');
         expect(classifyMessengerSystemMessage('Lead stage set to Converted')).toBe('converted');
+        expect(classifyMessengerSystemMessage('Lead stage set to Order Created')).toBe('order_created');
     });
 
     it('accepts explicit created and requested order notifications', () => {

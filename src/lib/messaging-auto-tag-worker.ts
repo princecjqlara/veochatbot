@@ -107,11 +107,11 @@ export function choosePositiveOutcomeTag(tags: DefaultPageTag[]) {
 }
 
 function shouldStopForSignal(config: ChatbotStopConfig | null, signal: MessengerSystemSignal) {
-    if (!config) return false;
-    if (signal === 'qualified') return config.stop_on_qualified;
-    if (signal === 'not_qualified') return config.stop_on_not_qualified;
-    if (signal === 'converted') return config.stop_on_converted;
-    return config.stop_on_order_created;
+    // These are terminal Meta outcomes. They must always stop automation,
+    // including for legacy configs that had one of the old switches disabled.
+    void config;
+    void signal;
+    return true;
 }
 
 async function getMessagesSince(conversationId: string, token: string, since: string): Promise<Message[]> {
