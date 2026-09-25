@@ -372,6 +372,7 @@ export default function ChatbotPage() {
     const { data: session } = useSession();
     const [pages, setPages] = useState<PageSummary[]>([]);
     const [selectedPageId, setSelectedPageId] = useState('');
+    const [applyToPageIds, setApplyToPageIds] = useState<string[]>([]);
     const [config, setConfig] = useState<ChatbotConfig | null>(null);
     const [providerConfigured, setProviderConfigured] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -620,12 +621,18 @@ export default function ChatbotPage() {
             const response = await fetch('/api/pages/' + selectedPageId + '/chatbot', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(config)
+                body: JSON.stringify({
+                    ...config,
+                    apply_to_page_ids: applyToPageIds.filter((pageId) => pageId !== selectedPageId)
+                })
             });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to save chatbot settings');
             setConfig(body.config);
-            setStatus('Chatbot settings saved.');
+            const appliedCount = applyToPageIds.filter((pageId) => pageId !== selectedPageId).length;
+            setStatus(appliedCount > 0
+                ? `Chatbot settings saved and applied to ${appliedCount} other Page${appliedCount === 1 ? '' : 's'}.`
+                : 'Chatbot settings saved.');
         } catch (saveError) {
             setError((saveError as Error).message);
         } finally {
@@ -1233,6 +1240,27 @@ export default function ChatbotPage() {
                 >
                     {pages.map((page) => <option key={page.id} value={page.id}>{page.name}</option>)}
                 </select>
+                <div className="mt-4 border-t border-gray-200 pt-4">
+                    <p className="text-xs font-bold uppercase">Use these settings on multiple Pages</p>
+                    <p className="mt-1 text-[11px] text-gray-500 font-mono">
+                        Save once and copy this bot configuration to the selected Pages. Contacts, Facebook credentials, trials, and Page knowledge remain separate.
+                    </p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {pages.filter((page) => page.id !== selectedPageId).map((page) => (
+                            <label key={page.id} className="flex items-center gap-2 border border-gray-300 px-3 py-2 text-xs cursor-pointer hover:bg-gray-50">
+                                <input
+                                    type="checkbox"
+                                    checked={applyToPageIds.includes(page.id)}
+                                    onChange={(event) => setApplyToPageIds((current) => event.target.checked
+                                        ? [...new Set([...current, page.id])]
+                                        : current.filter((id) => id !== page.id))}
+                                    className="h-4 w-4"
+                                />
+                                <span>{page.name}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
             </div>
 
             {error && (

@@ -265,6 +265,26 @@ export async function PUT(
 
         const supabase = getSupabaseAdmin();
 
+        const requestedPageIds = Array.isArray(body.apply_to_page_ids)
+            ? body.apply_to_page_ids
+                .filter((value: unknown): value is string => typeof value === 'string')
+                .map((value: string) => value.trim())
+                .filter(Boolean)
+            : [];
+        const targetPageIds = Array.from(new Set([pageId, ...requestedPageIds]));
+        const inaccessiblePageId = (await Promise.all(
+            targetPageIds.map(async (targetPageId) => ({
+                targetPageId,
+                accessible: await userHasPageAccess(authorization.userId, targetPageId)
+            }))
+        )).find((result) => !result.accessible)?.targetPageId;
+        if (inaccessiblePageId) {
+            return NextResponse.json(
+                { error: 'Forbidden', message: 'You do not have access to every selected Page' },
+                { status: 403 }
+            );
+        }
+
         if (body.trial_mode_enabled === true) {
             if (!trialContactId) {
                 return NextResponse.json({ error: 'Choose one Messenger contact before enabling live trial mode' }, { status: 400 });
@@ -281,13 +301,8 @@ export async function PUT(
             }
         }
 
-        const { data, error } = await supabase
-            .from('chatbot_configs')
-            .upsert({
-                page_id: pageId,
+        const sharedSettings = {
                 enabled: body.enabled === true,
-                trial_mode_enabled: body.trial_mode_enabled === true,
-                trial_contact_id: trialContactId,
                 instructions,
                 fallback_reply: fallbackReply,
                 model,
@@ -318,12 +333,24 @@ export async function PUT(
                 stop_on_converted: true,
                 stop_on_order_created: true,
                 updated_at: new Date().toISOString()
-            }, { onConflict: 'page_id' })
-            .select('page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
-            .single();
+        };
+        const payloads = targetPageIds.map((targetPageId) => ({
+            ...sharedSettings,
+            page_id: targetPageId,
+            // Trial contacts are Page-specific and must never be copied to a
+            // different Page. The regular bot settings are shared.
+            trial_mode_enabled: targetPageId === pageId && body.trial_mode_enabled === true,
+            trial_contact_id: targetPageId === pageId ? trialContactId : null
+        }));
+        const { error } = await supabase
+            .from('chatbot_configs')
+            .upsert(payloads.length === 1 ? payloads[0] : payloads, { onConflict: 'page_id' });
 
         if (error) throw error;
-        return NextResponse.json({ config: data });
+        return NextResponse.json({
+            config: payloads[0],
+            applied_page_ids: targetPageIds
+        });
     } catch (error) {
         console.error('[CHATBOT_CONFIG_PUT]', error);
         return NextResponse.json(
