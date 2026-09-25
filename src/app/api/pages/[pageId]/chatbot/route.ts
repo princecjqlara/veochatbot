@@ -20,6 +20,8 @@ function defaultConfig(pageId: string): ChatbotConfig {
     return {
         page_id: pageId,
         enabled: false,
+        trial_mode_enabled: false,
+        trial_contact_id: null,
         instructions: DEFAULT_CHATBOT_INSTRUCTIONS,
         fallback_reply: DEFAULT_CHATBOT_FALLBACK,
         model: process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL,
@@ -83,6 +85,12 @@ function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): Chat
         ...stored,
         page_id: stored.page_id,
         enabled: booleanValue('enabled', stored.enabled),
+        trial_mode_enabled: booleanValue('trial_mode_enabled', stored.trial_mode_enabled === true),
+        trial_contact_id: draft.trial_contact_id === null
+            ? null
+            : typeof draft.trial_contact_id === 'string'
+                ? draft.trial_contact_id.trim() || null
+                : stored.trial_contact_id || null,
         instructions: requiredText('instructions', 5000, stored.instructions),
         fallback_reply: requiredText('fallback_reply', 1000, stored.fallback_reply),
         model: requiredText('model', 200, stored.model),
@@ -164,7 +172,7 @@ export async function GET(
 
         const { data, error } = await getSupabaseAdmin()
             .from('chatbot_configs')
-            .select('page_id, enabled, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+            .select('page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
             .eq('page_id', pageId)
             .maybeSingle();
 
@@ -229,6 +237,9 @@ export async function PUT(
         const utilityTemplateLanguage = typeof body.follow_up_utility_template_language === 'string'
             ? body.follow_up_utility_template_language.trim().slice(0, 20)
             : '';
+        const trialContactId = typeof body.trial_contact_id === 'string' && body.trial_contact_id.trim()
+            ? body.trial_contact_id.trim()
+            : null;
 
         if (!instructions || instructions.length > 5000) {
             return NextResponse.json({ error: 'Instructions must be between 1 and 5000 characters' }, { status: 400 });
@@ -254,11 +265,29 @@ export async function PUT(
 
         const supabase = getSupabaseAdmin();
 
+        if (body.trial_mode_enabled === true) {
+            if (!trialContactId) {
+                return NextResponse.json({ error: 'Choose one Messenger contact before enabling live trial mode' }, { status: 400 });
+            }
+            const { data: trialContact, error: trialContactError } = await supabase
+                .from('contacts')
+                .select('id, psid')
+                .eq('id', trialContactId)
+                .eq('page_id', pageId)
+                .maybeSingle();
+            if (trialContactError) throw trialContactError;
+            if (!trialContact?.id || !trialContact?.psid) {
+                return NextResponse.json({ error: 'The selected trial contact is unavailable or cannot receive Messenger messages' }, { status: 400 });
+            }
+        }
+
         const { data, error } = await supabase
             .from('chatbot_configs')
             .upsert({
                 page_id: pageId,
                 enabled: body.enabled === true,
+                trial_mode_enabled: body.trial_mode_enabled === true,
+                trial_contact_id: trialContactId,
                 instructions,
                 fallback_reply: fallbackReply,
                 model,
@@ -288,7 +317,7 @@ export async function PUT(
                 stop_on_order_created: body.stop_on_order_created !== false,
                 updated_at: new Date().toISOString()
             }, { onConflict: 'page_id' })
-            .select('page_id, enabled, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+            .select('page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
             .single();
 
         if (error) throw error;
@@ -356,7 +385,7 @@ export async function POST(
         const [{ data, error }, { data: page, error: pageError }] = await Promise.all([
             supabase
                 .from('chatbot_configs')
-                .select('page_id, enabled, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+                .select('page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
                 .eq('page_id', pageId)
                 .maybeSingle(),
             supabase.from('pages').select('name').eq('id', pageId).maybeSingle()

@@ -30,6 +30,14 @@ type SupabaseLike = {
     from: (table: string) => any;
 };
 
+export function isChatbotContactAllowed(
+    config: { trial_mode_enabled?: unknown; trial_contact_id?: unknown } | null | undefined,
+    contactId: string
+): boolean {
+    if (!config?.trial_mode_enabled) return true;
+    return typeof config.trial_contact_id === 'string' && config.trial_contact_id === contactId;
+}
+
 const OPT_OUT_PATTERNS = [
     /\bstop\b/i,
     /\bunsubscribe\b/i,

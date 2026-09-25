@@ -39,6 +39,8 @@ type PageSummary = {
 type ChatbotConfig = {
     page_id: string;
     enabled: boolean;
+    trial_mode_enabled: boolean;
+    trial_contact_id: string | null;
     instructions: string;
     fallback_reply: string;
     model: string;
@@ -176,6 +178,31 @@ type TestChatMessage = {
     media?: TestMedia | null;
     mediaItems?: TestMedia[];
     folder?: TestFolder | null;
+};
+
+type LiveTrialContact = {
+    id: string;
+    name: string | null;
+    psid: string | null;
+    pipeline_stage?: string | null;
+    last_interaction_at?: string | null;
+    last_inbound_at?: string | null;
+};
+
+type LiveTrialStatus = {
+    enabled: boolean;
+    chatbot_enabled: boolean;
+    trial_mode_enabled: boolean;
+    contact: LiveTrialContact | null;
+    state: {
+        status: 'active' | 'stopped';
+        collected_details: Record<string, string>;
+        missing_details: string[];
+        stop_reason: string | null;
+        window_expires_at: string;
+        last_bot_reply_at: string | null;
+    } | null;
+    pending_follow_ups: number;
 };
 
 type ChatbotAnalytics = {
@@ -364,6 +391,11 @@ export default function ChatbotPage() {
     const [testTokenUsage, setTestTokenUsage] = useState<TestTokenUsage | null>(null);
     const [testFollowUpType, setTestFollowUpType] = useState<'quick' | 'human_agent'>('quick');
     const [testFollowUpCount, setTestFollowUpCount] = useState(0);
+    const [trialContacts, setTrialContacts] = useState<LiveTrialContact[]>([]);
+    const [trialContactSearch, setTrialContactSearch] = useState('');
+    const [trialContactId, setTrialContactId] = useState('');
+    const [liveTrialStatus, setLiveTrialStatus] = useState<LiveTrialStatus | null>(null);
+    const [liveTrialLoading, setLiveTrialLoading] = useState(false);
     const testChatEndRef = useRef<HTMLDivElement | null>(null);
     const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([]);
     const [knowledgeTitle, setKnowledgeTitle] = useState('');
@@ -426,6 +458,7 @@ export default function ChatbotPage() {
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load chatbot settings');
             setConfig(body.config);
+            setTrialContactId(body.config?.trial_contact_id || '');
             setProviderConfigured(Boolean(body.provider?.configured));
         } catch (loadError) {
             setError((loadError as Error).message);
@@ -437,6 +470,56 @@ export default function ChatbotPage() {
     useEffect(() => {
         loadConfig();
     }, [loadConfig]);
+
+    const loadLiveTrialStatus = useCallback(async () => {
+        if (!selectedPageId) return;
+        try {
+            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/trial`);
+            const body = await readJsonResponse(response);
+            if (!response.ok) throw new Error(body.message || body.error || 'Failed to load live trial status');
+            const nextStatus = body.trial as LiveTrialStatus;
+            setLiveTrialStatus(nextStatus);
+            if (nextStatus?.contact?.id) {
+                setTrialContactId(nextStatus.contact.id);
+                setTrialContacts((current) => current.some((contact) => contact.id === nextStatus.contact?.id)
+                    ? current
+                    : [nextStatus.contact as LiveTrialContact, ...current]);
+            }
+        } catch (loadError) {
+            setError((loadError as Error).message);
+        }
+    }, [selectedPageId]);
+
+    useEffect(() => {
+        setTrialContacts([]);
+        setTrialContactSearch('');
+        setLiveTrialStatus(null);
+        void loadLiveTrialStatus();
+    }, [loadLiveTrialStatus]);
+
+    useEffect(() => {
+        if (!selectedPageId || activeSection !== 'test') return;
+        const timeoutId = window.setTimeout(async () => {
+            try {
+                const search = trialContactSearch.trim();
+                const response = await fetch(
+                    `/api/pages/${selectedPageId}/contacts?page=1&pageSize=25&sendable=true&includeTags=false&includeCount=false${search ? `&search=${encodeURIComponent(search)}` : ''}`
+                );
+                const body = await readJsonResponse(response);
+                if (!response.ok) throw new Error(body.message || body.error || 'Failed to load Messenger contacts');
+                const contacts = (Array.isArray(body.data) ? body.data : Array.isArray(body.items) ? body.items : []) as LiveTrialContact[];
+                setTrialContacts((current) => {
+                    const selected = current.find((contact) => contact.id === trialContactId);
+                    return selected && !contacts.some((contact) => contact.id === selected.id)
+                        ? [selected, ...contacts]
+                        : contacts;
+                });
+            } catch (loadError) {
+                setError((loadError as Error).message);
+            }
+        }, 250);
+        return () => window.clearTimeout(timeoutId);
+    }, [activeSection, selectedPageId, trialContactId, trialContactSearch]);
 
     const loadAnalytics = useCallback(async () => {
         if (!selectedPageId) return;
@@ -547,6 +630,67 @@ export default function ChatbotPage() {
             setError((saveError as Error).message);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const configureLiveTrial = async (enabled: boolean) => {
+        if (!selectedPageId || !trialContactId || liveTrialLoading) return;
+        const selectedContact = trialContacts.find((contact) => contact.id === trialContactId) || liveTrialStatus?.contact;
+        const contactLabel = selectedContact?.name || 'this contact';
+        const confirmed = enabled
+            ? window.confirm(`Enable the real Messenger chatbot only for ${contactLabel}? Their next message to this Page can receive a real AI reply.`)
+            : window.confirm('Stop the live trial and disable the chatbot?');
+        if (!confirmed) return;
+
+        setLiveTrialLoading(true);
+        setError('');
+        setStatus('');
+        try {
+            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/trial`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'configure', enabled, contact_id: trialContactId })
+            });
+            const body = await readJsonResponse(response);
+            if (!response.ok) throw new Error(body.message || body.error || 'Failed to configure live trial');
+            setConfig((current) => current ? {
+                ...current,
+                enabled: body.config?.enabled === true,
+                trial_mode_enabled: body.config?.trial_mode_enabled === true,
+                trial_contact_id: body.config?.trial_contact_id || trialContactId
+            } : current);
+            setStatus(body.message || (enabled ? 'Live Messenger trial enabled.' : 'Live Messenger trial stopped.'));
+            await loadLiveTrialStatus();
+        } catch (trialError) {
+            setError((trialError as Error).message);
+        } finally {
+            setLiveTrialLoading(false);
+        }
+    };
+
+    const resetLiveTrialContact = async () => {
+        if (!selectedPageId || !trialContactId || liveTrialLoading) return;
+        const selectedContact = trialContacts.find((contact) => contact.id === trialContactId) || liveTrialStatus?.contact;
+        const contactLabel = selectedContact?.name || 'the selected contact';
+        if (!window.confirm(`Reset ${contactLabel}'s collected details, stop state, pending chatbot follow-ups, and pipeline stage to Engaged? Messenger history will remain available to the AI.`)) return;
+
+        setLiveTrialLoading(true);
+        setError('');
+        setStatus('');
+        try {
+            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/trial`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'reset', contact_id: trialContactId })
+            });
+            const body = await readJsonResponse(response);
+            if (!response.ok) throw new Error(body.message || body.error || 'Failed to reset live trial contact');
+            setStatus(body.message || 'Live trial contact reset.');
+            await Promise.all([loadLiveTrialStatus(), loadAnalytics()]);
+        } catch (trialError) {
+            setError((trialError as Error).message);
+        } finally {
+            setLiveTrialLoading(false);
         }
     };
 
@@ -1045,6 +1189,8 @@ export default function ChatbotPage() {
     };
 
     const selectedPageName = pages.find((page) => page.id === selectedPageId)?.name || 'this Page';
+    const selectedTrialContact = trialContacts.find((contact) => contact.id === trialContactId)
+        || (liveTrialStatus?.contact?.id === trialContactId ? liveTrialStatus.contact : null);
     const latestTestAssistantMessage = [...testConversation].reverse().find((message) => message.role === 'assistant');
     const testReply = latestTestAssistantMessage?.content || '';
     const testSources = latestTestAssistantMessage?.sources || [];
@@ -1133,11 +1279,15 @@ export default function ChatbotPage() {
                                 {config.enabled ? <Power className="w-5 h-5 text-green-700" /> : <PowerOff className="w-5 h-5 text-gray-400" />}
                                 <div>
                                     <p className="font-bold text-sm">
-                                        {config.enabled ? 'Chatbot active' : 'Chatbot disabled'}
+                                        {config.enabled
+                                            ? config.trial_mode_enabled ? 'Chatbot active for one trial contact' : 'Chatbot active'
+                                            : 'Chatbot disabled'}
                                     </p>
                                     <p className="text-xs text-gray-500 font-mono">
                                         {config.enabled
-                                            ? 'Incoming text messages to ' + selectedPageName + ' receive an automatic reply.'
+                                            ? config.trial_mode_enabled
+                                                ? 'Only the selected Messenger trial contact can receive AI replies and follow-ups.'
+                                                : 'Incoming text messages to ' + selectedPageName + ' receive an automatic reply.'
                                             : 'Turn this on after testing the instructions below.'}
                                     </p>
                                 </div>
@@ -2126,6 +2276,100 @@ export default function ChatbotPage() {
                                 <p className="mt-1 text-xs text-gray-500">Try a realistic customer message and review the answer, media, and knowledge sources.</p>
                             </div>
                         </div>
+
+                        <div className="mb-5 border-2 border-black bg-white p-4">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                <div className="max-w-2xl">
+                                    <div className="flex items-center gap-2">
+                                        <ShieldCheck className="h-5 w-5" />
+                                        <h3 className="text-sm font-bold">Live Messenger trial with one contact</h3>
+                                        <span className={`border px-2 py-0.5 font-mono text-[9px] font-bold uppercase ${liveTrialStatus?.enabled ? 'border-green-700 bg-green-50 text-green-800' : 'border-gray-400 bg-gray-100 text-gray-600'}`}>
+                                            {liveTrialStatus?.enabled ? 'Active' : 'Off'}
+                                        </span>
+                                    </div>
+                                    <p className="mt-2 text-xs leading-5 text-gray-600">
+                                        Choose one real Messenger contact. While the trial is active, the AI chatbot and its follow-ups are blocked for every other contact on {selectedPageName}.
+                                    </p>
+                                </div>
+                                {liveTrialStatus?.enabled && selectedTrialContact && (
+                                    <div className="border border-green-700 bg-green-50 px-3 py-2 text-xs">
+                                        <b>{selectedTrialContact.name || 'Messenger contact'}</b>
+                                        <span className="ml-2 font-mono text-[9px] uppercase text-green-800">Only allowed contact</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                                <label>
+                                    <span className="font-mono text-[10px] font-bold uppercase text-gray-500">Find a contact</span>
+                                    <input
+                                        value={trialContactSearch}
+                                        onChange={(event) => setTrialContactSearch(event.target.value.slice(0, 120))}
+                                        disabled={liveTrialLoading}
+                                        className="input-wireframe mt-1 w-full text-sm"
+                                        placeholder="Search Messenger contact name"
+                                    />
+                                </label>
+                                <label>
+                                    <span className="font-mono text-[10px] font-bold uppercase text-gray-500">Trial contact</span>
+                                    <select
+                                        value={trialContactId}
+                                        onChange={(event) => setTrialContactId(event.target.value)}
+                                        disabled={liveTrialLoading}
+                                        className="input-wireframe mt-1 w-full bg-white text-sm"
+                                    >
+                                        <option value="">Choose one Messenger contact</option>
+                                        {trialContacts.map((contact) => (
+                                            <option key={contact.id} value={contact.id}>
+                                                {contact.name || 'Unnamed contact'}{contact.pipeline_stage ? ` · ${PIPELINE_LABELS[contact.pipeline_stage] || contact.pipeline_stage}` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+
+                            {selectedTrialContact && (
+                                <div className="mt-3 grid gap-2 border border-gray-300 bg-gray-50 p-3 text-xs sm:grid-cols-3">
+                                    <div><span className="block font-mono text-[9px] uppercase text-gray-500">Contact</span><b>{selectedTrialContact.name || 'Unnamed contact'}</b></div>
+                                    <div><span className="block font-mono text-[9px] uppercase text-gray-500">Pipeline</span><b>{PIPELINE_LABELS[selectedTrialContact.pipeline_stage || 'new'] || selectedTrialContact.pipeline_stage || 'New'}</b></div>
+                                    <div><span className="block font-mono text-[9px] uppercase text-gray-500">Pending bot follow-ups</span><b>{liveTrialStatus?.contact?.id === selectedTrialContact.id ? liveTrialStatus.pending_follow_ups : 0}</b></div>
+                                </div>
+                            )}
+
+                            <div className="mt-4 flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => void configureLiveTrial(true)}
+                                    disabled={liveTrialLoading || !trialContactId || !providerConfigured}
+                                    className="btn-wireframe flex items-center gap-2 bg-black px-4 py-2 text-xs font-bold text-white disabled:opacity-40"
+                                >
+                                    <Power className="h-4 w-4" />
+                                    {liveTrialStatus?.enabled ? 'Update allowed contact' : 'Enable one-contact trial'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => void configureLiveTrial(false)}
+                                    disabled={liveTrialLoading || !trialContactId || !liveTrialStatus?.enabled}
+                                    className="btn-wireframe flex items-center gap-2 bg-white px-4 py-2 text-xs font-bold disabled:opacity-40"
+                                >
+                                    <PowerOff className="h-4 w-4" />
+                                    Stop live trial
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => void resetLiveTrialContact()}
+                                    disabled={liveTrialLoading || !trialContactId}
+                                    className="btn-wireframe flex items-center gap-2 bg-white px-4 py-2 text-xs font-bold disabled:opacity-40"
+                                >
+                                    <RotateCcw className="h-4 w-4" />
+                                    Reset selected contact
+                                </button>
+                            </div>
+                            <p className="mt-3 text-[10px] leading-4 text-gray-500">
+                                After enabling, send a new message to {selectedPageName} from the selected contact&apos;s Messenger account. Reset clears the bot&apos;s collected details and stop state, cancels pending bot follow-ups, and returns the contact to Engaged. It does not delete Messenger history.
+                            </p>
+                        </div>
+
                         <div className="mb-3 flex flex-wrap justify-end gap-2">
                             <button
                                 type="button"

@@ -310,6 +310,8 @@
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         page_id UUID NOT NULL UNIQUE REFERENCES pages(id) ON DELETE CASCADE,
         enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        trial_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        trial_contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
         instructions TEXT NOT NULL DEFAULT 'You are a helpful customer support assistant for this Facebook Page. Be concise, friendly, accurate, and never invent prices, policies, availability, or promises.',
         fallback_reply TEXT NOT NULL DEFAULT 'Thanks for your message! A member of our team will get back to you shortly.',
         model TEXT NOT NULL DEFAULT '~deepseek/deepseek-flash-latest',

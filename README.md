@@ -115,6 +115,7 @@ Apply `supabase/migrations/202609230001_chatbot_drive_folders.sql` to add Page-s
 Apply `supabase/migrations/202609240001_chatbot_drive_files.sql` and `202609240002_disable_drive_folder_fallback.sql` to index individual Drive images/videos and prevent the bot from sending an entire folder as a fallback.
 Apply `supabase/migrations/202609240003_chatbot_media_source_paths.sql` to preserve uploaded folder/file paths for AI retrieval.
 Apply `supabase/migrations/202609240004_chatbot_drive_file_paths.sql` to preserve public Drive folder categories while indexing link-only media.
+Apply `supabase/migrations/202609250001_chatbot_live_trial.sql` to enable a safe one-contact Messenger trial mode and contact-specific reset controls.
 High-volume installations can then run `database/migration_compact_contact_interactions.sql` and its finalize migration to replace unbounded raw interaction events with compatible hourly counters.
 
 For large campaigns, deploy the compact delivery queue in this exact order:

@@ -16,6 +16,7 @@ import {
     getChatbotContactState,
     getChatbotStateStopReason,
     getMissingChatbotDetails,
+    isChatbotContactAllowed,
     saveChatbotContactState,
     type ChatbotStopReason
 } from '@/lib/chatbot-control';
@@ -741,7 +742,7 @@ export async function POST(request: NextRequest) {
                                     try {
                                         const { data: storedChatbotConfig, error: chatbotConfigError } = await supabase
                                             .from('chatbot_configs')
-                                            .select('page_id, enabled, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+                                            .select('page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
                                             .eq('page_id', page.id)
                                             .maybeSingle();
 
@@ -764,7 +765,7 @@ export async function POST(request: NextRequest) {
                                     chatbotConfigFetched = true;
                                 }
 
-                                if (chatbotConfig?.enabled) {
+                                if (chatbotConfig?.enabled && isChatbotContactAllowed(chatbotConfig, contact.id)) {
                                     let chatbotState = null;
                                     let stateStopReason: ChatbotStopReason | null = chatbotStopReasonForPipelineStage(
                                         (contact as { pipeline_stage?: unknown }).pipeline_stage

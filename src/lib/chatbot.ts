@@ -20,6 +20,8 @@ export const DEFAULT_CHATBOT_FALLBACK =
 export type ChatbotConfig = {
     page_id: string;
     enabled: boolean;
+    trial_mode_enabled?: boolean;
+    trial_contact_id?: string | null;
     instructions: string;
     fallback_reply: string;
     model: string;

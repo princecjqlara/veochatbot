@@ -5,11 +5,20 @@ import {
     getRequiredChatbotDetailCount,
     getChatbotStateStopReason,
     getMissingChatbotDetails,
+    isChatbotContactAllowed,
     normalizeDetailsToCollect,
     type ChatbotContactState
 } from '@/lib/chatbot-control';
 
 describe('chatbot conversation controls', () => {
+    it('limits live trial mode to the selected contact', () => {
+        expect(isChatbotContactAllowed(undefined, 'contact_1')).toBe(true);
+        expect(isChatbotContactAllowed({ trial_mode_enabled: false, trial_contact_id: null }, 'contact_1')).toBe(true);
+        expect(isChatbotContactAllowed({ trial_mode_enabled: true, trial_contact_id: 'contact_1' }, 'contact_1')).toBe(true);
+        expect(isChatbotContactAllowed({ trial_mode_enabled: true, trial_contact_id: 'contact_1' }, 'contact_2')).toBe(false);
+        expect(isChatbotContactAllowed({ trial_mode_enabled: true, trial_contact_id: null }, 'contact_1')).toBe(false);
+    });
+
     it('rounds percentage detail targets up to a whole required field', () => {
         expect(getRequiredChatbotDetailCount(5, 40)).toBe(2);
         expect(getRequiredChatbotDetailCount(3, 40)).toBe(2);

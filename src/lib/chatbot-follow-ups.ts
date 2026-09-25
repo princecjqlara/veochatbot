@@ -10,6 +10,7 @@ import { getPhilippinesDateParts, getPhilippinesScheduledAtIso } from '@/lib/phi
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { generateChatbotFollowUp, type ChatbotConfig } from '@/lib/chatbot';
+import { isChatbotContactAllowed } from '@/lib/chatbot-control';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument, type ChatbotDriveFile, type ChatbotDriveFolder } from '@/lib/chatbot-drive-folders';
 import { isPipelineClosedForAutomation, type ContactPipelineStage } from '@/lib/contact-pipeline';
 
@@ -249,6 +250,7 @@ export async function processDueChatbotFollowUps(input: {
                 now
             );
             if (!page?.access_token || !contact?.psid || !config?.enabled || !config?.follow_up_enabled ||
+                !isChatbotContactAllowed(config, job.contact_id) ||
                 state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage) ||
                 latestInboundTime > anchorTime ||
                 (!messagingType && job.schedule_type !== 'manual_human_agent')) {
