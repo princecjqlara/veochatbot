@@ -7,6 +7,7 @@ import {
     generateChatbotReply,
     getChatbotKnowledgePageId,
     includeKnownContactName,
+    splitChatbotMessageBubbles,
     type ChatbotConfig
 } from '@/lib/chatbot';
 import {
@@ -63,6 +64,15 @@ afterEach(() => {
 });
 
 describe('VeoBot chatbot', () => {
+    it('splits long replies into short natural Messenger bubbles without dropping text', () => {
+        const reply = 'Our standard package includes a consultation, a customized service plan, and aftercare guidance based on your needs. We can also adjust the schedule around your preferred date, subject to availability. Which date and service are you considering so I can guide you to the best option?';
+        const messages = splitChatbotMessageBubbles(reply, true);
+
+        expect(messages.length).toBeGreaterThan(2);
+        expect(messages.every((message) => message.length <= 160)).toBe(true);
+        expect(messages.join(' ')).toBe(reply);
+    });
+
     it('automatically treats the saved Messenger name as collected', () => {
         expect(includeKnownContactName(
             ['Full name', 'Mobile number', 'Pangalan'],

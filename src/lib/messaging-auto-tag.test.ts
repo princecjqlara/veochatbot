@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { classifyMessengerSystemMessage } from './messaging-auto-tag';
+import {
+    classifyMessengerSystemMessage,
+    findLatestMessengerSystemSignal
+} from './messaging-auto-tag';
 
 describe('classifyMessengerSystemMessage', () => {
     it('accepts qualified, not-qualified, and converted stage records', () => {
@@ -18,5 +21,28 @@ describe('classifyMessengerSystemMessage', () => {
     it('does not mistake payment claims or ordinary text for a qualifying event', () => {
         expect(classifyMessengerSystemMessage('I paid PHP699')).toBeNull();
         expect(classifyMessengerSystemMessage('You created an order for PHP699')).toBeNull();
+    });
+
+    it('finds the newest Lead Center stage written by the Page', () => {
+        expect(findLatestMessengerSystemSignal([
+            {
+                message: 'Lead stage set to Qualified',
+                from: { id: 'page-1' },
+                created_time: '2026-09-25T10:00:00Z'
+            },
+            {
+                message: 'Lead stage set to Converted',
+                from: { id: 'page-1' },
+                created_time: '2026-09-26T10:00:00Z'
+            }
+        ], 'page-1')).toBe('converted');
+    });
+
+    it('ignores stage-like text sent by a customer', () => {
+        expect(findLatestMessengerSystemSignal([{
+            message: 'Lead stage set to Qualified',
+            from: { id: 'customer-1' },
+            created_time: '2026-09-26T10:00:00Z'
+        }], 'page-1')).toBeNull();
     });
 });

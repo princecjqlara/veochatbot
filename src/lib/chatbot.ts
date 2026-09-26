@@ -283,7 +283,7 @@ export async function getOpenRouterModelContextLength(model: string): Promise<nu
     return Number.isFinite(match?.context_length) ? Number(match?.context_length) : null;
 }
 
-function splitNaturalMessages(content: string, enabled: boolean): string[] {
+export function splitChatbotMessageBubbles(content: string, enabled: boolean): string[] {
     const cleaned = content.trim().slice(0, 2_400);
     if (!cleaned) return [];
     if (!enabled) return [cleaned.slice(0, 600)];
@@ -293,18 +293,42 @@ function splitNaturalMessages(content: string, enabled: boolean): string[] {
         .map((segment) => segment.trim())
         .filter(Boolean);
 
-    if (segments.length === 1 && cleaned.length > 160) {
-        segments = cleaned
-            .match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g)
-            ?.map((segment) => segment.trim())
-            .filter(Boolean) || [cleaned];
+    if (cleaned.length > 120) {
+        segments = segments.flatMap((paragraph) =>
+            paragraph
+                .match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g)
+                ?.map((segment) => segment.trim())
+                .filter(Boolean) || [paragraph]
+        );
     }
 
+    const shortSegments = segments.flatMap((segment) => {
+        const chunks: string[] = [];
+        let remaining = segment;
+        while (remaining.length > 160) {
+            const window = remaining.slice(0, 161);
+            const clauseBreak = Math.max(
+                window.lastIndexOf(', '),
+                window.lastIndexOf('; '),
+                window.lastIndexOf(': ')
+            );
+            const wordBreak = window.lastIndexOf(' ');
+            const breakAt = clauseBreak >= 80
+                ? clauseBreak + 1
+                : wordBreak >= 80
+                    ? wordBreak
+                    : 160;
+            chunks.push(remaining.slice(0, breakAt).trim());
+            remaining = remaining.slice(breakAt).trim();
+        }
+        if (remaining) chunks.push(remaining);
+        return chunks;
+    });
+
     const parts: string[] = [];
-    for (const segment of segments) {
-        const candidate = segment.slice(0, 600);
+    for (const candidate of shortSegments) {
         const current = parts[parts.length - 1];
-        if (current && `${current} ${candidate}`.length <= 220) {
+        if (current && `${current} ${candidate}`.length <= 160) {
             parts[parts.length - 1] = `${current} ${candidate}`;
         } else {
             parts.push(candidate);
@@ -394,8 +418,8 @@ function parseChatbotPlan(
         ? rawMessages.join('\n\n')
         : sanitizeGeneratedMessage(content);
     const messages = rawMessages.length > 0 && config.split_messages
-        ? rawMessages.map((message) => message.trim().slice(0, 600))
-        : splitNaturalMessages(messageContent, config.split_messages);
+        ? rawMessages.flatMap((message) => splitChatbotMessageBubbles(message, true))
+        : splitChatbotMessageBubbles(messageContent, config.split_messages);
     if (messages.length === 0) throw new Error('OpenRouter returned an empty reply');
 
     const rawStopReason = parsed?.stop_reason;
@@ -518,7 +542,7 @@ export function buildChatbotMessages(input: {
     const responseFormat = '\n\nReturn only valid JSON with this shape: ' +
         '{"messages":["message bubble"],"collected_details":{"exact requested detail":"customer-provided value"},"stop_reason":null,"media_document_ids":[],"drive_file_document_ids":[],"link_document_id":null}. ' +
         (input.splitMessages
-            ? 'Choose the number of short message bubbles naturally. There is no fixed maximum: use only as many as the conversation needs, without padding or unnecessary splitting. '
+            ? 'Prefer 2 to 4 brief message bubbles for a multi-sentence reply. Keep each bubble near 160 characters or less, split at natural sentence or clause boundaries, and do not pad a reply that is already short. '
             : 'Use exactly 1 message bubble. ') +
         'Set stop_reason to "opt_out" when the customer asks not to be contacted, "refusal" when they clearly decline to buy, otherwise null. ' +
         'Set media_document_ids to exact document_ids of retrieved MEDIA ASSET entries that directly help this reply. Select one when only one is useful, or 2 to 10 only when a relevant set would be helpful as a swipeable Messenger carousel. Preserve the best display order, never pad the list, and otherwise use an empty array. ' +
@@ -858,7 +882,7 @@ export async function generateChatbotFollowUp(input: {
             const messages = limitNaturalMessageParts(
                 rawMessages.length > 1 && splitFollowUpMessages
                     ? rawMessages
-                    : splitNaturalMessages(combinedMessage, splitFollowUpMessages),
+                    : splitChatbotMessageBubbles(combinedMessage, splitFollowUpMessages),
                 followUpMaxMessageParts
             );
             const message = messages.join('\n\n').trim();

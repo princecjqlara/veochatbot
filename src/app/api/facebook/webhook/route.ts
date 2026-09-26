@@ -6,7 +6,12 @@ import { getPhilippinesDayOfWeek, getPhilippinesHour } from '@/lib/philippines-t
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { handleFollowUpWorkflowContactReply, stopWorkflowAutomationsFromPageMessage } from '@/lib/workflow-automations';
 import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
-import { generateChatbotResponse, getChatbotKnowledgePageId, type ChatbotConfig } from '@/lib/chatbot';
+import {
+    generateChatbotResponse,
+    getChatbotKnowledgePageId,
+    splitChatbotMessageBubbles,
+    type ChatbotConfig
+} from '@/lib/chatbot';
 import { createChatbotMediaPublicViewUrl, createChatbotMediaSignedUrl, getReadyChatbotMediaForDocuments } from '@/lib/chatbot-media';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument } from '@/lib/chatbot-drive-folders';
 import { cancelPendingChatbotFollowUps, scheduleChatbotFollowUps } from '@/lib/chatbot-follow-ups';
@@ -26,6 +31,7 @@ import {
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../lib/contact-names';
+import { findLatestMessengerSystemSignal } from '@/lib/messaging-auto-tag';
 
 const PROFILE_LOOKUP_FAILURE_TTL_MS = 60 * 60 * 1000;
 const CONTACT_NAME_LOOKUP_TIMEOUT_MS = 2500;
@@ -766,9 +772,45 @@ export async function POST(request: NextRequest) {
 
                                 if (chatbotConfig?.enabled && isChatbotContactAllowed(chatbotConfig, contact.id)) {
                                     let chatbotState = null;
-                                    let stateStopReason: ChatbotStopReason | null = chatbotStopReasonForPipelineStage(
-                                        (contact as { pipeline_stage?: unknown }).pipeline_stage
-                                    );
+                                    let liveStageStopReason: ChatbotStopReason | null = null;
+                                    let conversationAuditFailed = false;
+                                    try {
+                                        if (!resolvedConversation) {
+                                            resolvedConversation = await getConversationForPsid(
+                                                pageId,
+                                                senderId,
+                                                page.access_token,
+                                                { throwOnError: true, timeoutMs: 5000 }
+                                            );
+                                        }
+                                        liveStageStopReason = findLatestMessengerSystemSignal(
+                                            resolvedConversation?.messages?.data || [],
+                                            pageId
+                                        );
+                                        if (liveStageStopReason) {
+                                            await updateContactPipelineStage(supabase, {
+                                                pageId: page.id,
+                                                contactId: contact.id,
+                                                stage: liveStageStopReason,
+                                                source: 'messenger',
+                                                now: interactionTime
+                                            });
+                                        }
+                                    } catch (conversationError) {
+                                        conversationAuditFailed = true;
+                                        logWarn('Could not verify live Lead Center stage; skipping automatic reply safely', {
+                                            pageId,
+                                            senderId,
+                                            contactId: contact.id,
+                                            error: (conversationError as Error).message || String(conversationError)
+                                        });
+                                    }
+
+                                    let stateStopReason: ChatbotStopReason | null = conversationAuditFailed
+                                        ? 'manual'
+                                        : chatbotStopReasonForPipelineStage(
+                                            (contact as { pipeline_stage?: unknown }).pipeline_stage
+                                        ) || liveStageStopReason;
                                     try {
                                         chatbotState = await getChatbotContactState(supabase, page.id, contact.id);
                                         const storedStopReason = getChatbotStateStopReason(chatbotState, interactionTime);
@@ -784,7 +826,11 @@ export async function POST(request: NextRequest) {
                                                 stopOnRefusal: chatbotConfig.stop_on_refusal
                                             });
 
-                                        if (stateStopReason && chatbotState?.status !== 'stopped') {
+                                        if (
+                                            stateStopReason &&
+                                            stateStopReason !== 'manual' &&
+                                            chatbotState?.status !== 'stopped'
+                                        ) {
                                             await saveChatbotContactState(supabase, {
                                                 pageId: page.id,
                                                 contactId: contact.id,
@@ -859,17 +905,11 @@ export async function POST(request: NextRequest) {
 
                                     if (claimed) {
                                         try {
-                                            if (!resolvedConversation) {
-                                                resolvedConversation = await getConversationForPsid(
-                                                    pageId,
-                                                    senderId,
-                                                    page.access_token,
-                                                    { throwOnError: true, timeoutMs: 5000 }
-                                                );
-                                            }
-
                                             let replyMessages = chatbotConfig.fallback_reply.trim()
-                                                ? [chatbotConfig.fallback_reply.trim()]
+                                                ? splitChatbotMessageBubbles(
+                                                    chatbotConfig.fallback_reply,
+                                                    chatbotConfig.split_messages
+                                                )
                                                 : [];
                                             let collectedDetails = chatbotState?.collected_details || {};
                                             let missingDetails = getMissingChatbotDetails(
