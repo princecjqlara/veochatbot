@@ -16,6 +16,8 @@ export const DEFAULT_CHATBOT_INSTRUCTIONS =
     'You are a helpful customer support assistant for this Facebook Page. Be concise, friendly, accurate, naturally support English, Filipino, and Taglish, and never invent prices, policies, availability, or promises.';
 export const DEFAULT_CHATBOT_FALLBACK =
     'Thanks for your message! A member of our team will get back to you shortly.';
+const CHATBOT_BUBBLE_TARGET_CHARS = 110;
+const CHATBOT_BUBBLE_MIN_BREAK_CHARS = 55;
 
 export type ChatbotConfig = {
     page_id: string;
@@ -293,7 +295,7 @@ export function splitChatbotMessageBubbles(content: string, enabled: boolean): s
         .map((segment) => segment.trim())
         .filter(Boolean);
 
-    if (cleaned.length > 120) {
+    if (cleaned.length > 90) {
         segments = segments.flatMap((paragraph) =>
             paragraph
                 .match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g)
@@ -305,19 +307,19 @@ export function splitChatbotMessageBubbles(content: string, enabled: boolean): s
     const shortSegments = segments.flatMap((segment) => {
         const chunks: string[] = [];
         let remaining = segment;
-        while (remaining.length > 160) {
-            const window = remaining.slice(0, 161);
+        while (remaining.length > CHATBOT_BUBBLE_TARGET_CHARS) {
+            const window = remaining.slice(0, CHATBOT_BUBBLE_TARGET_CHARS + 1);
             const clauseBreak = Math.max(
                 window.lastIndexOf(', '),
                 window.lastIndexOf('; '),
                 window.lastIndexOf(': ')
             );
             const wordBreak = window.lastIndexOf(' ');
-            const breakAt = clauseBreak >= 80
+            const breakAt = clauseBreak >= CHATBOT_BUBBLE_MIN_BREAK_CHARS
                 ? clauseBreak + 1
-                : wordBreak >= 80
+                : wordBreak >= CHATBOT_BUBBLE_MIN_BREAK_CHARS
                     ? wordBreak
-                    : 160;
+                    : CHATBOT_BUBBLE_TARGET_CHARS;
             chunks.push(remaining.slice(0, breakAt).trim());
             remaining = remaining.slice(breakAt).trim();
         }
@@ -328,7 +330,7 @@ export function splitChatbotMessageBubbles(content: string, enabled: boolean): s
     const parts: string[] = [];
     for (const candidate of shortSegments) {
         const current = parts[parts.length - 1];
-        if (current && `${current} ${candidate}`.length <= 160) {
+        if (current && `${current} ${candidate}`.length <= CHATBOT_BUBBLE_TARGET_CHARS) {
             parts[parts.length - 1] = `${current} ${candidate}`;
         } else {
             parts.push(candidate);
@@ -338,7 +340,7 @@ export function splitChatbotMessageBubbles(content: string, enabled: boolean): s
 }
 
 function limitNaturalMessageParts(parts: string[], maxMessageParts: number): string[] {
-    const limit = Math.min(4, Math.max(1, Math.round(Number(maxMessageParts)) || 1));
+    const limit = Math.min(6, Math.max(1, Math.round(Number(maxMessageParts)) || 1));
     if (parts.length <= limit) return parts;
     if (limit === 1) return [parts.join(' ').trim().slice(0, 600)];
     return [
@@ -542,7 +544,7 @@ export function buildChatbotMessages(input: {
     const responseFormat = '\n\nReturn only valid JSON with this shape: ' +
         '{"messages":["message bubble"],"collected_details":{"exact requested detail":"customer-provided value"},"stop_reason":null,"media_document_ids":[],"drive_file_document_ids":[],"link_document_id":null}. ' +
         (input.splitMessages
-            ? 'Prefer 2 to 4 brief message bubbles for a multi-sentence reply. Keep each bubble near 160 characters or less, split at natural sentence or clause boundaries, and do not pad a reply that is already short. '
+            ? 'Prefer 3 to 6 brief message bubbles for a multi-sentence reply. Keep each bubble near 110 characters or less, split at natural sentence or clause boundaries, and do not pad a reply that is already short. '
             : 'Use exactly 1 message bubble. ') +
         'Set stop_reason to "opt_out" when the customer asks not to be contacted, "refusal" when they clearly decline to buy, otherwise null. ' +
         'Set media_document_ids to exact document_ids of retrieved MEDIA ASSET entries that directly help this reply. Select one when only one is useful, or 2 to 10 only when a relevant set would be helpful as a swipeable Messenger carousel. Preserve the best display order, never pad the list, and otherwise use an empty array. ' +
@@ -795,8 +797,8 @@ export async function generateChatbotFollowUp(input: {
     const configuredFollowUpParts = Math.round(Number(input.config.max_message_parts));
     const followUpMaxMessageParts = input.config.split_messages
         ? Number.isFinite(configuredFollowUpParts) && configuredFollowUpParts > 0
-            ? Math.min(4, configuredFollowUpParts)
-            : 4
+            ? Math.min(6, configuredFollowUpParts)
+            : 6
         : 1;
     const splitFollowUpMessages = input.config.split_messages && followUpMaxMessageParts > 1;
     const system =
@@ -880,8 +882,8 @@ export async function generateChatbotFollowUp(input: {
                 .filter(Boolean);
             const combinedMessage = rawMessages.join('\n\n').slice(0, 600);
             const messages = limitNaturalMessageParts(
-                rawMessages.length > 1 && splitFollowUpMessages
-                    ? rawMessages
+                splitFollowUpMessages
+                    ? rawMessages.flatMap((message) => splitChatbotMessageBubbles(message, true))
                     : splitChatbotMessageBubbles(combinedMessage, splitFollowUpMessages),
                 followUpMaxMessageParts
             );
