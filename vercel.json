@@ -4,6 +4,9 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "functions": {
+    "src/app/api/facebook/webhook/route.ts": {
+      "maxDuration": 300
+    },
     "src/app/api/pages/[pageId]/sync/route.ts": {
       "maxDuration": 300
     },

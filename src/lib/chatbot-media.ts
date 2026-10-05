@@ -41,11 +41,19 @@ export type ChatbotMediaAsset = {
 };
 
 type OpenRouterMultimodalResponse = {
-    choices?: Array<{ message?: { content?: string | null } }>;
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> | null } }>;
     error?: { message?: string };
 };
 
 const MAX_INBOUND_CUSTOMER_IMAGES = 4;
+
+function getMultimodalResponseText(body: OpenRouterMultimodalResponse): string {
+    const content = body.choices?.[0]?.message?.content;
+    if (typeof content === 'string') return content.trim();
+    if (!Array.isArray(content)) return '';
+    return content.filter(part => part.type === 'text' && typeof part.text === 'string')
+        .map(part => part.text).join('\n').trim();
+}
 
 export function getInboundMessengerImageUrls(message: unknown): string[] {
     if (!message || typeof message !== 'object') return [];
@@ -110,7 +118,8 @@ export async function analyzeInboundCustomerImages(input: {
             },
             body: JSON.stringify({
                 model: process.env.OPENROUTER_MULTIMODAL_MODEL || DEFAULT_MULTIMODAL_MODEL,
-                max_tokens: 600,
+                max_tokens: 1600,
+                reasoning: { effort: 'low' },
                 temperature: 0.1,
                 messages: [{
                     role: 'user',
@@ -126,7 +135,7 @@ export async function analyzeInboundCustomerImages(input: {
         if (!response.ok) {
             throw new Error(body.error?.message || `OpenRouter customer photo analysis failed (${response.status})`);
         }
-        const analysis = body.choices?.[0]?.message?.content?.trim();
+        const analysis = getMultimodalResponseText(body);
         if (!analysis) throw new Error('OpenRouter returned no customer photo analysis');
         return analysis.slice(0, 8_000);
     } finally {
@@ -239,7 +248,7 @@ export async function analyzeChatbotMedia(input: {
         if (!response.ok) {
             throw new Error(body.error?.message || `OpenRouter media analysis failed (${response.status})`);
         }
-        const analysis = body.choices?.[0]?.message?.content?.trim();
+        const analysis = getMultimodalResponseText(body);
         if (!analysis) throw new Error('OpenRouter returned no media analysis');
         return analysis.slice(0, 20_000);
     } finally {

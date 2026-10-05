@@ -80,6 +80,8 @@ describe('VeoBot media analysis', () => {
 
         const body = JSON.parse(fetchMock.mock.calls[0][1].body);
         expect(body.model).toBe(DEFAULT_MULTIMODAL_MODEL);
+        expect(body.max_tokens).toBe(1600);
+        expect(body.reasoning).toEqual({ effort: 'low' });
         expect(body.messages[0].content).toEqual([
             expect.objectContaining({
                 type: 'text',
@@ -88,6 +90,31 @@ describe('VeoBot media analysis', () => {
             { type: 'image_url', image_url: { url: 'https://cdn.example.test/receipt-front.jpg' } },
             { type: 'image_url', image_url: { url: 'https://cdn.example.test/receipt-back.jpg' } }
         ]);
+    });
+
+    it('reads photo summaries returned as text content parts', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ choices: [{ message: { content: [
+                { type: 'text', text: 'A receipt.' },
+                { type: 'text', text: 'PHP 150 paid.' }
+            ] } }] })
+        }));
+        await expect(analyzeInboundCustomerImages({
+            imageUrls: ['https://cdn.example.test/receipt.jpg']
+        })).resolves.toBe('A receipt.\nPHP 150 paid.');
+    });
+
+    it('rejects empty analysis instead of pretending the photo was read', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ choices: [{ message: { content: null } }] })
+        }));
+        await expect(analyzeInboundCustomerImages({
+            imageUrls: ['https://cdn.example.test/receipt.jpg']
+        })).rejects.toThrow('OpenRouter returned no customer photo analysis');
     });
 
     it.each([

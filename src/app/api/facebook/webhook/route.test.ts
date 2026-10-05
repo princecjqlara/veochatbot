@@ -220,7 +220,13 @@ function createSupabaseMock(options?: {
     };
 }
 
-function createPhotoChatbotSupabaseMock() {
+function createPhotoChatbotSupabaseMock(options: {
+    pipelineStage?: string;
+    pipelineSource?: string;
+    stopReason?: string;
+} = {}) {
+    const pipelineStage = options.pipelineStage || 'engaged';
+    const contactStateUpsert = vi.fn().mockResolvedValue({ error: null });
     const welcomeSelect = vi.fn(() => {
         throw new Error('Photo chatbot handling should bypass the welcome lookup');
     });
@@ -277,7 +283,7 @@ function createPhotoChatbotSupabaseMock() {
                     eq: vi.fn().mockReturnValue({
                         eq: vi.fn().mockReturnValue({
                             maybeSingle: vi.fn().mockResolvedValue({
-                                data: columns === 'pipeline_stage' ? { pipeline_stage: 'engaged' } : null,
+                                data: columns === 'pipeline_stage' ? { pipeline_stage: pipelineStage } : null,
                                 error: null
                             })
                         })
@@ -286,7 +292,11 @@ function createPhotoChatbotSupabaseMock() {
                 upsert: vi.fn().mockReturnValue({
                     select: vi.fn().mockReturnValue({
                         single: vi.fn().mockResolvedValue({
-                            data: { id: 'contact_row_1', name: 'Photo Contact', pipeline_stage: 'engaged' },
+                            data: {
+                                id: 'contact_row_1', name: 'Photo Contact',
+                                pipeline_stage: pipelineStage,
+                                pipeline_stage_source: options.pipelineSource || 'chatbot'
+                            },
                             error: null
                         })
                     })
@@ -321,11 +331,18 @@ function createPhotoChatbotSupabaseMock() {
                 select: vi.fn().mockReturnValue({
                     eq: vi.fn().mockReturnValue({
                         eq: vi.fn().mockReturnValue({
-                            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                            maybeSingle: vi.fn().mockResolvedValue({
+                                data: options.stopReason ? {
+                                    status: 'stopped', stop_reason: options.stopReason,
+                                    collected_details: { address: 'Saved address' },
+                                    missing_details: [], started_at: '2026-10-04T09:00:00Z'
+                                } : null,
+                                error: null
+                            })
                         })
                     })
                 }),
-                upsert: vi.fn().mockResolvedValue({ error: null })
+                upsert: contactStateUpsert
             };
         }
         if (table === 'chatbot_reply_events') {
@@ -351,7 +368,25 @@ function createPhotoChatbotSupabaseMock() {
         throw new Error(`Unexpected table: ${table}`);
     });
 
-    return { from, welcomeSelect };
+    return { from, welcomeSelect, contactStateUpsert };
+}
+
+function createCustomerPhotoRequest(text?: string) {
+    return createWebhookRequest({
+        object: 'page',
+        entry: [{
+            id: 'fb_page_1',
+            messaging: [{
+                sender: { id: 'contact_psid_1' },
+                recipient: { id: 'fb_page_1' },
+                timestamp: 1791108000000,
+                message: {
+                    mid: 'mid.photo', text,
+                    attachments: [{ type: 'image', payload: { url: 'https://cdn.example.test/receipt.jpg' } }]
+                }
+            }]
+        }]
+    });
 }
 
 function createSupabaseMockWithFirstInteractionColumnFailure() {
@@ -997,6 +1032,94 @@ describe('POST /api/facebook/webhook', () => {
             undefined,
             undefined
         );
+    });
+
+    it('answers a new photo after automatic intake completion and retains the stopped state', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({
+            pipelineStage: 'qualified', pipelineSource: 'chatbot', stopReason: 'details_collected'
+        });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        const response = await POST(createCustomerPhotoRequest());
+        expect(response.status).toBe(200);
+        expect(mocks.analyzeInboundCustomerImages).toHaveBeenCalledTimes(1);
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({
+            collectedDetails: { address: 'Saved address' }
+        }));
+        expect(supabase.contactStateUpsert).toHaveBeenLastCalledWith(expect.objectContaining({
+            status: 'stopped', stop_reason: 'details_collected',
+            collected_details: { address: 'Saved address' }
+        }), expect.anything());
+    });
+
+    it.each([
+        ['manual qualification', 'qualified', 'manual', 'details_collected', undefined],
+        ['Messenger qualification', 'qualified', 'messenger', 'details_collected', undefined],
+        ['manual handoff', 'engaged', 'chatbot', 'manual', undefined],
+        ['opt-out', 'engaged', 'chatbot', 'opt_out', undefined],
+        ['refusal', 'engaged', 'chatbot', 'refusal', undefined],
+        ['order created', 'order_created', 'chatbot', 'details_collected', undefined],
+        ['new opt-out caption', 'qualified', 'chatbot', 'details_collected', 'do not message me']
+    ])('keeps the photo reply blocked for %s', async (_label, pipelineStage, pipelineSource, stopReason, caption) => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({
+            pipelineStage, pipelineSource, stopReason
+        }));
+        const response = await POST(createCustomerPhotoRequest(caption));
+        expect(response.status).toBe(200);
+        expect(mocks.analyzeInboundCustomerImages).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('keeps photo failure context alongside a caption and still replies', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock());
+        mocks.analyzeInboundCustomerImages.mockRejectedValueOnce(new Error('Unreadable image'));
+        const response = await POST(createCustomerPhotoRequest('Paid na po'));
+        expect(response.status).toBe(200);
+        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({
+            inboundMessage: expect.stringContaining('Customer message: Paid na po')
+        }));
+        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({
+            inboundMessage: expect.stringContaining('Do not claim to have seen their contents')
+        }));
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps ordinary text stopped after automatic intake completion', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({
+            pipelineStage: 'qualified', pipelineSource: 'chatbot', stopReason: 'details_collected'
+        }));
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            id: 'mid.prior', message: 'Your details are saved.', from: { id: 'fb_page_1' }
+        }] } });
+        const response = await POST(createWebhookRequest());
+        expect(response.status).toBe(200);
+        expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('blocks photos when the live Messenger conversation indicates qualification', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({
+            pipelineStage: 'qualified', pipelineSource: 'chatbot', stopReason: 'details_collected'
+        }));
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            id: 'mid.stage', message: 'Lead stage set to Qualified',
+            from: { id: 'fb_page_1' }, created_time: '2026-10-04T10:00:00Z'
+        }] } });
+        const response = await POST(createCustomerPhotoRequest());
+        expect(response.status).toBe(200);
+        expect(mocks.analyzeInboundCustomerImages).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('blocks photos when the conversation audit fails', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({
+            pipelineStage: 'qualified', pipelineSource: 'chatbot', stopReason: 'details_collected'
+        }));
+        mocks.getConversationForPsid.mockRejectedValue(new Error('Conversation unavailable'));
+        const response = await POST(createCustomerPhotoRequest());
+        expect(response.status).toBe(200);
+        expect(mocks.analyzeInboundCustomerImages).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
     it('sends welcome as RESPONSE with mapped buttons when welcome config has buttons', async () => {

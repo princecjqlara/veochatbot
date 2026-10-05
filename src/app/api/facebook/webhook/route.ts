@@ -39,6 +39,8 @@ import {
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../lib/contact-names';
 import { findLatestMessengerSystemSignal } from '@/lib/messaging-auto-tag';
 
+export const maxDuration = 300;
+
 const PROFILE_LOOKUP_FAILURE_TTL_MS = 60 * 60 * 1000;
 const CONTACT_NAME_LOOKUP_TIMEOUT_MS = 2500;
 const profileLookupSuppressedUntil = new Map<string, number>();
@@ -388,7 +390,7 @@ export async function POST(request: NextRequest) {
                         // Check if contact exists BEFORE upsert (to detect new contacts)
                         const { data: existingContact, error: existingContactError } = await supabase
                             .from('contacts')
-                            .select('id, name, last_inbound_at, best_contact_hour, pipeline_stage')
+                            .select('id, name, last_inbound_at, best_contact_hour, pipeline_stage, pipeline_stage_source')
                             .eq('page_id', page.id)
                             .eq('psid', senderId)
                             .maybeSingle();
@@ -498,7 +500,7 @@ export async function POST(request: NextRequest) {
                             .upsert(contactPayload, {
                                 onConflict: 'page_id,psid'
                             })
-                            .select('id, name, best_contact_hour, pipeline_stage')
+                            .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source')
                             .single();
 
                         if (
@@ -519,7 +521,7 @@ export async function POST(request: NextRequest) {
                                 .upsert(legacyContactPayload, {
                                     onConflict: 'page_id,psid'
                                 })
-                                .select('id, name, best_contact_hour, pipeline_stage')
+                                .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source')
                                 .single();
 
                             contact = retryResult.data;
@@ -537,7 +539,7 @@ export async function POST(request: NextRequest) {
                             const insertResult = await supabase
                                 .from('contacts')
                                 .insert(insertContactPayload)
-                                .select('id, name, best_contact_hour, pipeline_stage')
+                                .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source')
                                 .single();
 
                             contact = insertResult.data;
@@ -799,6 +801,7 @@ export async function POST(request: NextRequest) {
 
                                 if (chatbotConfig?.enabled && isChatbotContactAllowed(chatbotConfig, contact.id)) {
                                     let chatbotState = null;
+                                    let replyingAfterDetailsCollected = false;
                                     let liveStageStopReason: ChatbotStopReason | null = null;
                                     let conversationAuditFailed = false;
                                     try {
@@ -841,11 +844,27 @@ export async function POST(request: NextRequest) {
                                     try {
                                         chatbotState = await getChatbotContactState(supabase, page.id, contact.id);
                                         const storedStopReason = getChatbotStateStopReason(chatbotState, interactionTime);
+                                        // A new photo is a customer request after the sales intake has
+                                        // ended. Reply once, retaining the completed intake and its stop.
+                                        // Qualification by a person or Messenger remains a hard stop.
+                                        if (
+                                            inboundImageUrls.length > 0 &&
+                                            storedStopReason === 'details_collected' &&
+                                            !conversationAuditFailed &&
+                                            !liveStageStopReason &&
+                                            (!stateStopReason || (
+                                                stateStopReason === 'qualified' &&
+                                                (contact as { pipeline_stage_source?: unknown }).pipeline_stage_source === 'chatbot'
+                                            ))
+                                        ) {
+                                            replyingAfterDetailsCollected = true;
+                                            stateStopReason = null;
+                                        }
                                         if (storedStopReason === 'window_expired') {
                                             // A fresh customer message opens a new seven-day activity window.
                                             // Other stop reasons remain durable until manually reset.
                                             chatbotState = null;
-                                        } else if (!stateStopReason) {
+                                        } else if (!stateStopReason && !replyingAfterDetailsCollected) {
                                             stateStopReason = storedStopReason;
                                         }
                                         stateStopReason = stateStopReason || classifyChatbotStopIntent(inboundMessageText, {
@@ -943,7 +962,9 @@ export async function POST(request: NextRequest) {
                                                 chatbotConfig.details_to_collect,
                                                 collectedDetails
                                             );
-                                            let generatedStopReason: ChatbotStopReason | null = null;
+                                            let generatedStopReason: ChatbotStopReason | null = replyingAfterDetailsCollected
+                                                ? 'details_collected'
+                                                : null;
                                             let detailsComplete = false;
                                             let generatedMediaDocumentIds: string[] = [];
                                             let generatedDriveFileDocumentIds: string[] = [];
@@ -969,8 +990,10 @@ export async function POST(request: NextRequest) {
                                                             imageCount: inboundImageUrls.length,
                                                             error: (photoAnalysisError as Error).message
                                                         });
-                                                        chatbotInboundMessage = inboundMessageText ||
-                                                            'The customer sent one or more photos without a text caption, but the visual content could not be read reliably. Acknowledge the photos and ask one concise clarifying question.';
+                                                        chatbotInboundMessage = [
+                                                            inboundMessageText ? `Customer message: ${inboundMessageText}` : '',
+                                                            'The customer sent one or more photos, but the visual content could not be read reliably. Do not claim to have seen their contents. Acknowledge the photos and ask one concise clarifying question.'
+                                                        ].filter(Boolean).join('\n\n');
                                                     }
                                                 }
                                                 const generated = await generateChatbotResponse({
