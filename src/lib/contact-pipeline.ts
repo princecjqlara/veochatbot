@@ -105,7 +105,7 @@ export async function updateContactPipelineStage(
 ): Promise<boolean> {
     const { data: contact, error: contactError } = await supabase
         .from('contacts')
-        .select('pipeline_stage')
+        .select('pipeline_stage,pipeline_stage_source')
         .eq('id', input.contactId)
         .eq('page_id', input.pageId)
         .maybeSingle();
@@ -113,8 +113,11 @@ export async function updateContactPipelineStage(
     if (!contact) return false;
 
     const current = isContactPipelineStage(contact.pipeline_stage) ? contact.pipeline_stage : 'new';
-    if (!input.force && !shouldAutoMovePipeline(current, input.stage)) return false;
-    if (current === input.stage && !input.force) return false;
+    // A person confirming the same stage in Messenger is still a handoff.
+    // Retain that source so later photo requests cannot reopen bot intake.
+    const messengerHandoff = current === input.stage && input.source === 'messenger' &&
+        contact.pipeline_stage_source !== 'messenger' && isPipelineClosedForAutomation(current);
+    if (!input.force && !messengerHandoff && !shouldAutoMovePipeline(current, input.stage)) return false;
 
     const { error: updateError } = await supabase
         .from('contacts')

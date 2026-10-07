@@ -1,6 +1,8 @@
 import { getPageConversationsBatch } from '@/lib/facebook';
 import {
     classifyMessengerSystemMessage,
+    findLatestMessengerSystemSignal,
+    findLatestMessengerLeadStageEvent,
     type MessengerSystemSignal
 } from '@/lib/messaging-auto-tag';
 import {
@@ -12,6 +14,7 @@ import {
     pipelineStageForMessengerSignal,
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
+import { recordChatbotInterruptionIfNeeded } from '@/lib/outbound-message-events';
 
 type Page = {
     id: string;
@@ -22,13 +25,6 @@ type Page = {
 };
 
 type Message = { id: string; message?: string; from?: { id?: string }; created_time: string };
-
-type ChatbotStopConfig = {
-    stop_on_qualified: boolean;
-    stop_on_not_qualified: boolean;
-    stop_on_converted: boolean;
-    stop_on_order_created: boolean;
-};
 
 type DefaultPageTag = {
     id: string;
@@ -106,14 +102,6 @@ export function choosePositiveOutcomeTag(tags: DefaultPageTag[]) {
     }) || tags[0] || null;
 }
 
-function shouldStopForSignal(config: ChatbotStopConfig | null, signal: MessengerSystemSignal) {
-    // These are terminal Meta outcomes. They must always stop automation,
-    // including for legacy configs that had one of the old switches disabled.
-    void config;
-    void signal;
-    return true;
-}
-
 async function getMessagesSince(conversationId: string, token: string, since: string): Promise<Message[]> {
     let next: string | null = `https://graph.facebook.com/v21.0/${encodeURIComponent(conversationId)}/messages?fields=id,message,from,created_time&limit=100`;
     const messages: Message[] = [];
@@ -160,32 +148,29 @@ export async function processOneMessagingAutoTagPage() {
             .order('created_at', { ascending: true })
             .order('id', { ascending: true })
             .limit(25);
-        if (tagError) throw tagError;
+        if (tagError) console.warn('Could not load default Page tags; lead-stage stops will still run', tagError.message);
         const tag = choosePositiveOutcomeTag((defaultTags || []) as DefaultPageTag[]);
-        if (!tag) throw new Error('Combined page tag is missing');
+        if (!tag) console.warn('Default Page tag is missing; lead-stage stops will still run', { pageId: current.id });
         if ((defaultTags || []).length > 1) {
             console.warn('Multiple default Page tags found; using the Paid / Availed Service tag', {
                 pageId: current.id,
                 count: defaultTags?.length,
-                selectedTagId: tag.id
+                selectedTagId: tag?.id
             });
         }
 
-        const rawOutcomeTags = await ensureMessengerOutcomeTags(db, current.id);
+        let rawOutcomeTags: MessengerOutcomeTag[] = [];
+        try {
+            rawOutcomeTags = await ensureMessengerOutcomeTags(db, current.id);
+        } catch (error) {
+            console.warn('Could not create outcome tags; lead-stage stops will still run', error);
+        }
         const outcomeTagIds = new Map(
             rawOutcomeTags.map(outcomeTag => [
                 outcomeTag.system_key,
                 outcomeTag.id
             ])
         );
-
-        const { data: rawChatbotConfig, error: chatbotConfigError } = await db
-            .from('chatbot_configs')
-            .select('stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
-            .eq('page_id', current.id)
-            .maybeSingle();
-        if (chatbotConfigError) throw chatbotConfigError;
-        const chatbotStopConfig = rawChatbotConfig as ChatbotStopConfig | null;
 
         const batch = await getPageConversationsBatch(current.fb_page_id, current.access_token, {
             limit: 10,
@@ -224,52 +209,69 @@ export async function processOneMessagingAutoTagPage() {
                     contact = inserted.data;
                 }
             }
-            if (signals.some(signal => signal !== 'not_qualified')) {
-                const { error: assignError } = await db.from('contact_tags').upsert({
-                    contact_id: contact.id,
-                    tag_id: tag.id
-                }, { onConflict: 'contact_id,tag_id', ignoreDuplicates: true });
-                if (assignError) throw assignError;
-                tagged++;
-            }
-            const outcomeAssignments = signals.flatMap(signal => {
-                const tagId = outcomeTagIds.get(signal);
-                return tagId ? [{ contact_id: contact.id, tag_id: tagId }] : [];
-            });
-            if (outcomeAssignments.length > 0) {
-                const { error: outcomeAssignError } = await db.from('contact_tags').upsert(
-                    outcomeAssignments,
-                    { onConflict: 'contact_id,tag_id', ignoreDuplicates: true }
-                );
-                if (outcomeAssignError) throw outcomeAssignError;
-                tagged += outcomeAssignments.length;
-            }
 
-            const pipelineSignal = (['converted', 'order_created', 'qualified', 'not_qualified'] as MessengerSystemSignal[])
-                .find(signal => signals.includes(signal));
-            if (pipelineSignal && await updateContactPipelineStage(db, {
-                pageId: current.id,
-                contactId: contact.id,
-                stage: pipelineStageForMessengerSignal(pipelineSignal),
-                source: 'messenger'
-            })) {
-                pipelineMoved++;
-            }
-
-            const stopSignal = (['order_created', 'converted', 'qualified', 'not_qualified'] as MessengerSystemSignal[])
-                .find(signal => signals.includes(signal) && shouldStopForSignal(chatbotStopConfig, signal));
+            // Stop first. Optional tags and interruption logs must never gate
+            // the durable stop or let a queued follow-up continue.
+            const stopSignal = findLatestMessengerSystemSignal(messages, current.fb_page_id);
+            const existingState = await getChatbotContactState(db, current.id, contact.id);
             if (stopSignal) {
-                const existingState = await getChatbotContactState(db, current.id, contact.id);
-                if (existingState?.status !== 'stopped') {
+                if (existingState?.status !== 'stopped' || existingState.stop_reason !== stopSignal) {
                     await saveChatbotContactState(db, {
-                        pageId: current.id,
-                        contactId: contact.id,
-                        existingState,
-                        stopReason: stopSignal,
-                        now: new Date()
+                        pageId: current.id, contactId: contact.id, existingState,
+                        stopReason: stopSignal
                     });
                     chatbotStopped++;
                 }
+                const { error: cancelError } = await db.from('chatbot_follow_up_jobs')
+                    .update({ status: 'cancelled', cancelled_at: runStartedAt, claimed_at: null, updated_at: runStartedAt })
+                    .eq('page_id', current.id).eq('contact_id', contact.id)
+                    .in('status', ['pending', 'processing', 'ready_manual']);
+                if (cancelError) throw cancelError;
+                if (await updateContactPipelineStage(db, {
+                    pageId: current.id, contactId: contact.id,
+                    stage: pipelineStageForMessengerSignal(stopSignal), source: 'messenger'
+                })) pipelineMoved++;
+            }
+
+            try {
+                const leadStageEvent = findLatestMessengerLeadStageEvent(messages, current.fb_page_id);
+                if (leadStageEvent) {
+                    await recordChatbotInterruptionIfNeeded(db, {
+                        pageId: current.id,
+                        contactId: contact.id,
+                        messageId: leadStageEvent.messageId,
+                        source: 'business_suite',
+                        interruptionType: 'lead_stage_change',
+                        leadStage: pipelineStageForMessengerSignal(leadStageEvent.signal),
+                        interruptedAt: leadStageEvent.createdTime || undefined,
+                        stateBeforeStop: existingState
+                    });
+                }
+                if (tag && signals.some(signal => signal !== 'not_qualified')) {
+                    const { error: assignError } = await db.from('contact_tags').upsert({
+                        contact_id: contact.id,
+                        tag_id: tag.id
+                    }, { onConflict: 'contact_id,tag_id', ignoreDuplicates: true });
+                    if (assignError) throw assignError;
+                    tagged++;
+                }
+                const outcomeAssignments = signals.flatMap(signal => {
+                    const tagId = outcomeTagIds.get(signal);
+                    return tagId ? [{ contact_id: contact.id, tag_id: tagId }] : [];
+                });
+                if (outcomeAssignments.length > 0) {
+                    const { error: outcomeAssignError } = await db.from('contact_tags').upsert(
+                        outcomeAssignments,
+                        { onConflict: 'contact_id,tag_id', ignoreDuplicates: true }
+                    );
+                    if (outcomeAssignError) throw outcomeAssignError;
+                    tagged += outcomeAssignments.length;
+                }
+
+            } catch (error) {
+                console.warn('Lead-stage stop saved but optional tagging or audit failed', {
+                    pageId: current.id, contactId: contact.id, error
+                });
             }
         }
 

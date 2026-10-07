@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     classifyMessengerSystemMessage,
-    findLatestMessengerSystemSignal
+    findLatestMessengerLeadStageEvent,
+    findLatestMessengerSystemSignal,
+    loadMessengerHistoryForStopCheck
 } from './messaging-auto-tag';
 
 describe('classifyMessengerSystemMessage', () => {
@@ -44,5 +46,64 @@ describe('classifyMessengerSystemMessage', () => {
             from: { id: 'customer-1' },
             created_time: '2026-09-26T10:00:00Z'
         }], 'page-1')).toBeNull();
+    });
+
+    it('returns audit metadata for the newest explicit lead-stage change', () => {
+        expect(findLatestMessengerLeadStageEvent([
+            {
+                id: 'stage-old',
+                message: 'Lead stage set to Qualified',
+                from: { id: 'page-1' },
+                created_time: '2026-09-28T10:00:00Z'
+            },
+            {
+                id: 'stage-new',
+                message: 'Lead stage set to Converted',
+                from: { id: 'page-1' },
+                created_time: '2026-09-29T10:00:00Z'
+            },
+            {
+                id: 'order-event',
+                message: 'You created an order for PHP699. View: fb-pma://payments/orderdetails/?invoice_id=12345',
+                from: { id: 'page-1' },
+                created_time: '2026-09-29T11:00:00Z'
+            }
+        ], 'page-1')).toEqual({
+            messageId: 'stage-new',
+            signal: 'converted',
+            createdTime: '2026-09-29T10:00:00Z'
+        });
+    });
+});
+
+afterEach(() => { vi.unstubAllGlobals(); });
+
+describe('Messenger lead-stage pagination', () => {
+    it('finds an older handoff outside the newest history page without sending anything', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [{
+            message: 'Lead stage set to Converted', from: { id: 'page-1' }
+        }] }) });
+        vi.stubGlobal('fetch', fetchMock);
+        const messages = await loadMessengerHistoryForStopCheck({
+            facebookPageId: 'page-1', accessToken: 'secret',
+            initialPage: { data: [{ message: 'Thanks', from: { id: 'customer' } }], paging: { next: 'https://graph.facebook.com/thread/messages?after=older&access_token=old-secret' } }
+        });
+        expect(findLatestMessengerSystemSignal(messages, 'page-1')).toBe('converted');
+        expect(fetchMock).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ headers: { Authorization: 'Bearer secret' } }));
+        expect(fetchMock.mock.calls[0][0].searchParams.has('access_token')).toBe(false);
+    });
+
+    it('fails closed if older history cannot be checked completely', async () => {
+        await expect(loadMessengerHistoryForStopCheck({
+            facebookPageId: 'page-1', accessToken: 'token', maxPages: 1,
+            initialPage: { data: [], paging: { next: 'https://graph.facebook.com/thread/messages?after=older' } }
+        })).rejects.toThrow('safe limit');
+    });
+
+    it('rejects pagination to other hosts', async () => {
+        await expect(loadMessengerHistoryForStopCheck({
+            facebookPageId: 'page-1', accessToken: 'token',
+            initialPage: { data: [], paging: { next: 'https://other.example/messages' } }
+        })).rejects.toThrow('pagination URL');
     });
 });

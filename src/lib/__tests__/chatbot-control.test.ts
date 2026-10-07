@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     CHATBOT_CONVERSATION_WINDOW_MS,
     classifyChatbotStopIntent,
@@ -7,6 +7,8 @@ import {
     getMissingChatbotDetails,
     isChatbotContactAllowed,
     normalizeDetailsToCollect,
+    normalizeCollectedChatbotDetails,
+    saveChatbotContactState,
     type ChatbotContactState
 } from '@/lib/chatbot-control';
 
@@ -31,6 +33,44 @@ describe('chatbot conversation controls', () => {
         expect(requested).toEqual(['Full name', 'Mobile number']);
         expect(getMissingChatbotDetails(requested, { 'Full name': 'CJ Lara' }))
             .toEqual(['Mobile number']);
+    });
+
+    it('does not count placeholder values as customer answers', () => {
+        expect(getMissingChatbotDetails(['Business name', 'Script', 'Deadline'], {
+            'Business name': 'unknown', Script: 'No script, please write one', Deadline: 'Not provided'
+        })).toEqual(['Business name', 'Deadline']);
+        expect(normalizeCollectedChatbotDetails({ ' BUSINESS NAME ': 'Example Shop', Script: 'pending', Extra: 'guess' }, ['Business name', 'Script']))
+            .toEqual({ 'Business name': 'Example Shop' });
+    });
+
+    it('keeps a stopped state and original handoff time when saving late answers', async () => {
+        const upsert = vi.fn().mockResolvedValue({ error: null });
+        await saveChatbotContactState({ from: () => ({ upsert }) }, {
+            pageId: 'page-1', contactId: 'contact-1',
+            existingState: {
+                status: 'stopped', stop_reason: 'qualified', stopped_at: '2026-10-01T00:00:00Z',
+                collected_details: { Script: 'No script' }, started_at: '2026-10-01T00:00:00Z'
+            } as unknown as ChatbotContactState,
+            collectedDetails: { Deadline: 'Friday' }, missingDetails: [],
+            now: new Date('2026-10-07T00:00:00Z')
+        });
+        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'stopped', stop_reason: 'qualified', stopped_at: '2026-10-01T00:00:00Z',
+            collected_details: { Script: 'No script', Deadline: 'Friday' }
+        }), expect.anything());
+    });
+
+    it('only updates active rows when saving from an older active snapshot', async () => {
+        const eq = vi.fn(() => chain);
+        const chain: any = { update: vi.fn(() => chain), eq,
+            then: (resolve: any, reject: any) => Promise.resolve({ error: null }).then(resolve, reject)
+        };
+        await saveChatbotContactState({ from: () => chain }, {
+            pageId: 'page', contactId: 'contact',
+            existingState: { status: 'active', collected_details: {}, started_at: '2026-10-01T00:00:00Z' } as ChatbotContactState,
+            collectedDetails: { Deadline: 'Friday' }
+        });
+        expect(eq).toHaveBeenCalledWith('status', 'active');
     });
 
     it('detects explicit opt-outs before softer sales refusals', () => {

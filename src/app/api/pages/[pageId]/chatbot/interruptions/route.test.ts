@@ -31,7 +31,9 @@ describe('chatbot interruption list', () => {
         mocks.userHasPageAccess.mockResolvedValue(true);
         const interruptionQuery = listQuery([{
             id: 'event_1', contact_id: 'contact_1', actor_name: 'Maria Santos',
-            source: 'veobot', interrupted_at: '2026-09-28T08:00:00.000Z'
+            source: 'veobot', interruption_type: 'manual_message', lead_stage: null,
+            collected_detail_count: 2, required_detail_count: 4,
+            interrupted_at: '2026-09-28T08:00:00.000Z'
         }]);
         const contactQuery = listQuery([{ id: 'contact_1', name: 'Customer One' }]);
         mocks.getSupabaseAdmin.mockReturnValue({
@@ -51,6 +53,8 @@ describe('chatbot interruption list', () => {
         expect(response.status).toBe(200);
         expect(body.interruptions).toEqual([{
             id: 'event_1', sent_by: 'Maria Santos', contact_name: 'Customer One',
+            interruption_type: 'manual_message', lead_stage: null,
+            collected_detail_count: 2, required_detail_count: 4,
             interrupted_at: '2026-09-28T08:00:00.000Z'
         }]);
         expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_1', 'page_1');

@@ -10,9 +10,10 @@ import { getPhilippinesDateParts, getPhilippinesScheduledAtIso } from '@/lib/phi
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { generateChatbotFollowUp, getChatbotKnowledgePageId, type ChatbotConfig } from '@/lib/chatbot';
-import { isChatbotContactAllowed } from '@/lib/chatbot-control';
+import { isChatbotContactAllowed, saveChatbotContactState, type ChatbotContactState } from '@/lib/chatbot-control';
+import { findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument, type ChatbotDriveFile, type ChatbotDriveFolder } from '@/lib/chatbot-drive-folders';
-import { isPipelineClosedForAutomation, type ContactPipelineStage } from '@/lib/contact-pipeline';
+import { isPipelineClosedForAutomation, updateContactPipelineStage, type ContactPipelineStage } from '@/lib/contact-pipeline';
 
 const RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * RESPONSE_WINDOW_MS;
@@ -236,12 +237,16 @@ export async function processDueChatbotFollowUps(input: {
         if (claimError || !claimed) continue;
 
         try {
-            const [{ data: page }, { data: contact }, { data: config }, { data: state }] = await Promise.all([
+            const eligibility = await Promise.all([
                 supabase.from('pages').select('id, name, fb_page_id, access_token').eq('id', job.page_id).maybeSingle(),
                 supabase.from('contacts').select('id, page_id, psid, name, last_interaction_at, last_inbound_at, pipeline_stage').eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_configs').select('*').eq('page_id', job.page_id).maybeSingle(),
-                supabase.from('chatbot_contact_states').select('status, collected_details, missing_details').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle()
+                supabase.from('chatbot_contact_states').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle()
             ]);
+            for (const lookup of eligibility) {
+                if (lookup.error) throw new Error(lookup.error.message || 'Could not verify follow-up eligibility');
+            }
+            const [{ data: page }, { data: contact }, { data: config }, { data: state }] = eligibility;
             const anchorTime = new Date(job.anchor_inbound_at).getTime();
             const latestInboundTime = new Date(contact?.last_inbound_at || contact?.last_interaction_at || 0).getTime();
             const messagingType = getAutomatedFollowUpMessagingType(
@@ -276,6 +281,32 @@ export async function processDueChatbotFollowUps(input: {
                 { throwOnError: true, timeoutMs: 5000 }
             );
             const conversationHistory = conversation?.messages?.data || [];
+            const stageHistory = await loadMessengerHistoryForStopCheck({
+                facebookPageId: page.fb_page_id, accessToken: page.access_token, initialPage: conversation?.messages
+            });
+            const liveStopReason = findLatestMessengerSystemSignal(stageHistory, page.fb_page_id);
+            if (liveStopReason) {
+                await saveChatbotContactState(supabase, {
+                    pageId: job.page_id,
+                    contactId: job.contact_id,
+                    existingState: state as ChatbotContactState | null,
+                    stopReason: liveStopReason,
+                    now
+                });
+                await updateContactPipelineStage(supabase, {
+                    pageId: job.page_id,
+                    contactId: job.contact_id,
+                    stage: liveStopReason,
+                    source: 'messenger',
+                    now
+                });
+                await markJob(supabase, job.id, {
+                    status: 'cancelled', cancelled_at: now.toISOString(), claimed_at: null,
+                    error_message: `Messenger lead stage: ${liveStopReason}`
+                });
+                result.cancelled += 1;
+                continue;
+            }
             const hasCustomerMessage = hasReadableCustomerConversationHistory(
                 conversationHistory,
                 page.fb_page_id
@@ -335,6 +366,29 @@ export async function processDueChatbotFollowUps(input: {
             }
 
             const selectedMedia = selectedMediaItems[0] || null;
+
+            // AI generation can take seconds. A stage change or new inbound
+            // during that time must invalidate this job before any delivery.
+            const freshEligibility = await Promise.all([
+                supabase.from('contacts').select('pipeline_stage,last_inbound_at').eq('page_id', job.page_id).eq('id', job.contact_id).maybeSingle(),
+                supabase.from('chatbot_contact_states').select('status').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle(),
+                supabase.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id').eq('page_id', job.page_id).maybeSingle()
+            ]);
+            for (const lookup of freshEligibility) {
+                if (lookup.error) throw new Error(lookup.error.message || 'Could not recheck follow-up eligibility');
+            }
+            const [freshContact, freshState, freshConfig] = freshEligibility.map(lookup => lookup.data);
+            if (!freshContact || !freshConfig?.enabled || !freshConfig.follow_up_enabled ||
+                !isChatbotContactAllowed(freshConfig, job.contact_id) || freshState?.status === 'stopped' ||
+                isPipelineClosedForAutomation(freshContact.pipeline_stage) ||
+                new Date(freshContact.last_inbound_at || 0).getTime() > anchorTime) {
+                await markJob(supabase, job.id, {
+                    status: 'cancelled', cancelled_at: now.toISOString(), claimed_at: null,
+                    error_message: 'Follow-up eligibility changed during generation'
+                });
+                result.cancelled += 1;
+                continue;
+            }
 
             if (job.schedule_type === 'manual_human_agent') {
                 await markJob(supabase, job.id, {

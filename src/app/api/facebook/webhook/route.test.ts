@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     getConversationForPsid: vi.fn(),
     analyzeInboundCustomerImages: vi.fn(),
     generateChatbotResponse: vi.fn(),
+    extractChatbotContactDetails: vi.fn(),
     handleFollowUpWorkflowContactReply: vi.fn(),
     triggerReplyWorkflowAutomations: vi.fn(),
     stopWorkflowAutomationsFromPageMessage: vi.fn()
@@ -42,7 +43,8 @@ vi.mock('@/lib/chatbot-media', async (importOriginal) => ({
 
 vi.mock('@/lib/chatbot', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/lib/chatbot')>(),
-    generateChatbotResponse: mocks.generateChatbotResponse
+    generateChatbotResponse: mocks.generateChatbotResponse,
+    extractChatbotContactDetails: mocks.extractChatbotContactDetails
 }));
 
 vi.mock('@/lib/workflow-automations', () => ({
@@ -224,6 +226,8 @@ function createPhotoChatbotSupabaseMock(options: {
     pipelineStage?: string;
     pipelineSource?: string;
     stopReason?: string;
+    detailsToCollect?: string[];
+    deliveryStage?: string;
 } = {}) {
     const pipelineStage = options.pipelineStage || 'engaged';
     const contactStateUpsert = vi.fn().mockResolvedValue({ error: null });
@@ -240,7 +244,7 @@ function createPhotoChatbotSupabaseMock(options: {
         model: 'test-model',
         rag_enabled: false,
         follow_up_prompt: '',
-        details_to_collect: [],
+        details_to_collect: options.detailsToCollect || [],
         details_completion_percent: 100,
         bot_dos: '',
         bot_donts: '',
@@ -283,7 +287,10 @@ function createPhotoChatbotSupabaseMock(options: {
                     eq: vi.fn().mockReturnValue({
                         eq: vi.fn().mockReturnValue({
                             maybeSingle: vi.fn().mockResolvedValue({
-                                data: columns === 'pipeline_stage' ? { pipeline_stage: pipelineStage } : null,
+                                data: columns.startsWith('pipeline_stage') ? {
+                                    pipeline_stage: options.deliveryStage || pipelineStage,
+                                    pipeline_stage_source: options.pipelineSource || 'chatbot'
+                                } : null,
                                 error: null
                             })
                         })
@@ -1050,6 +1057,41 @@ describe('POST /api/facebook/webhook', () => {
             status: 'stopped', stop_reason: 'details_collected',
             collected_details: { address: 'Saved address' }
         }), expect.anything());
+    });
+
+    it('saves late customer answers after handoff without replying or restarting the bot', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({
+            pipelineStage: 'qualified', pipelineSource: 'messenger', stopReason: 'qualified',
+            detailsToCollect: ['Deadline']
+        });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.extractChatbotContactDetails.mockResolvedValue({ collected_details: { Deadline: 'Friday' }, missing_details: [] });
+        await POST(createCustomerPhotoRequest('Friday please'));
+        expect(mocks.extractChatbotContactDetails).toHaveBeenCalledWith(expect.objectContaining({ inboundMessage: 'Friday please' }));
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(supabase.contactStateUpsert).toHaveBeenLastCalledWith(expect.objectContaining({
+            status: 'stopped', stop_reason: 'qualified', collected_details: { address: 'Saved address', Deadline: 'Friday' }
+        }), expect.anything());
+    });
+
+    it('retains verified details even when Messenger rejects reply delivery', async () => {
+        const supabase = createPhotoChatbotSupabaseMock();
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.generateChatbotResponse.mockResolvedValue({
+            reply: 'Friday works', messages: ['Friday works'], knowledge: [],
+            collected_details: { Deadline: 'Friday' }, missing_details: [], details_complete: false
+        });
+        mocks.sendMessage.mockRejectedValue(new Error('Messenger unavailable'));
+        await POST(createCustomerPhotoRequest('Friday please'));
+        expect(supabase.contactStateUpsert).toHaveBeenCalledWith(expect.objectContaining({ collected_details: { Deadline: 'Friday' } }), expect.anything());
+    });
+
+    it('cancels delivery when the contact is handed off during generation', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({ deliveryStage: 'qualified', pipelineSource: 'manual' });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        await POST(createCustomerPhotoRequest());
+        expect(mocks.generateChatbotResponse).toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
     it.each([

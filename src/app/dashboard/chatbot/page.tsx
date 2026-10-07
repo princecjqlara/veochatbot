@@ -261,6 +261,10 @@ type BotInterruption = {
     id: string;
     sent_by: string;
     contact_name: string;
+    interruption_type: 'manual_message' | 'lead_stage_change';
+    lead_stage: string | null;
+    collected_detail_count: number;
+    required_detail_count: number;
     interrupted_at: string;
 };
 
@@ -1621,7 +1625,7 @@ export default function ChatbotPage() {
                             <div className="mb-3 flex items-start justify-between gap-3">
                                 <div>
                                     <h3 className="text-sm font-bold">Bot interruption log</h3>
-                                    <p className="mt-1 text-xs text-gray-500">Manual VeoBot messages sent while the bot was still collecting details.</p>
+                                    <p className="mt-1 text-xs text-gray-500">Manual messages and Business Suite lead-stage changes made while the bot was still collecting details.</p>
                                 </div>
                                 <span className="font-mono text-[10px] uppercase text-gray-500">Philippine time</span>
                             </div>
@@ -1638,6 +1642,8 @@ export default function ChatbotPage() {
                                             <tr>
                                                 <th className="px-3 py-2 font-mono text-[10px] uppercase">Sent by</th>
                                                 <th className="px-3 py-2 font-mono text-[10px] uppercase">Contact interrupted</th>
+                                                <th className="px-3 py-2 font-mono text-[10px] uppercase">Interruption</th>
+                                                <th className="px-3 py-2 font-mono text-[10px] uppercase">Details</th>
                                                 <th className="px-3 py-2 font-mono text-[10px] uppercase">Timestamp</th>
                                             </tr>
                                         </thead>
@@ -1646,6 +1652,14 @@ export default function ChatbotPage() {
                                                 <tr key={interruption.id} className="border-t border-gray-300">
                                                     <td className="px-3 py-2 font-semibold">{interruption.sent_by}</td>
                                                     <td className="px-3 py-2">{interruption.contact_name}</td>
+                                                    <td className="px-3 py-2">
+                                                        {interruption.interruption_type === 'lead_stage_change'
+                                                            ? `Lead stage set to ${PIPELINE_LABELS[interruption.lead_stage || ''] || interruption.lead_stage || 'Unknown'}`
+                                                            : 'Manual message'}
+                                                    </td>
+                                                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
+                                                        {interruption.collected_detail_count} / {interruption.required_detail_count}
+                                                    </td>
                                                     <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{formatPhilippineTimestamp(interruption.interrupted_at)}</td>
                                                 </tr>
                                             ))}

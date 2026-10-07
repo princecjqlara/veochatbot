@@ -10,6 +10,10 @@ type InterruptionRow = {
     contact_id: string;
     actor_name: string | null;
     source: 'veobot' | 'business_suite';
+    interruption_type: 'manual_message' | 'lead_stage_change';
+    lead_stage: string | null;
+    collected_detail_count: number;
+    required_detail_count: number;
     interrupted_at: string;
 };
 
@@ -30,7 +34,7 @@ export async function GET(
         const db = getSupabaseAdmin();
         const { data, error } = await db
             .from('chatbot_interruption_events')
-            .select('id, contact_id, actor_name, source, interrupted_at')
+            .select('id, contact_id, actor_name, source, interruption_type, lead_stage, collected_detail_count, required_detail_count, interrupted_at')
             .eq('page_id', pageId)
             .order('interrupted_at', { ascending: false })
             .limit(100);
@@ -58,6 +62,10 @@ export async function GET(
                     ? 'Business Suite team member'
                     : 'VeoBot team member'),
                 contact_name: contactNames.get(row.contact_id) || 'Messenger contact',
+                interruption_type: row.interruption_type,
+                lead_stage: row.lead_stage,
+                collected_detail_count: row.collected_detail_count,
+                required_detail_count: row.required_detail_count,
                 interrupted_at: row.interrupted_at
             }))
         });

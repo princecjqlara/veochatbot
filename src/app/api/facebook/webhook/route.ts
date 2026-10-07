@@ -5,9 +5,10 @@ import { isExpectedFacebookProfileLookupError } from '@/lib/facebook-errors';
 import { getPhilippinesDayOfWeek, getPhilippinesHour } from '@/lib/philippines-time';
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { handleFollowUpWorkflowContactReply, stopWorkflowAutomationsFromPageMessage } from '@/lib/workflow-automations';
-import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
+import { recordChatbotInterruptionIfNeeded, recordOutboundMessageEvent } from '@/lib/outbound-message-events';
 import {
     generateChatbotResponse,
+    extractChatbotContactDetails,
     getChatbotKnowledgePageId,
     splitChatbotMessageBubbles,
     type ChatbotConfig
@@ -37,7 +38,7 @@ import {
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../lib/contact-names';
-import { findLatestMessengerSystemSignal } from '@/lib/messaging-auto-tag';
+import { findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 
 export const maxDuration = 300;
 
@@ -813,10 +814,40 @@ export async function POST(request: NextRequest) {
                                                 { throwOnError: true, timeoutMs: 5000 }
                                             );
                                         }
-                                        liveStageStopReason = findLatestMessengerSystemSignal(
-                                            resolvedConversation?.messages?.data || [],
+                                        const conversationMessages = await loadMessengerHistoryForStopCheck({
+                                            facebookPageId: pageId, accessToken: page.access_token,
+                                            initialPage: resolvedConversation?.messages
+                                        });
+                                        const liveLeadStageEvent = findLatestMessengerLeadStageEvent(
+                                            conversationMessages,
                                             pageId
                                         );
+                                        liveStageStopReason = findLatestMessengerSystemSignal(
+                                            conversationMessages,
+                                            pageId
+                                        );
+                                        if (liveLeadStageEvent) {
+                                            try {
+                                                await recordChatbotInterruptionIfNeeded(supabase, {
+                                                    pageId: page.id,
+                                                    contactId: contact.id,
+                                                    messageId: liveLeadStageEvent.messageId,
+                                                    source: 'business_suite',
+                                                    interruptionType: 'lead_stage_change',
+                                                    leadStage: pipelineStageForChatbotProgress({
+                                                        stopReason: liveLeadStageEvent.signal
+                                                    }),
+                                                    interruptedAt: liveLeadStageEvent.createdTime || undefined
+                                                });
+                                            } catch (interruptionError) {
+                                                logWarn('Could not record lead-stage bot interruption', {
+                                                    pageId,
+                                                    senderId,
+                                                    contactId: contact.id,
+                                                    error: (interruptionError as Error).message
+                                                });
+                                            }
+                                        }
                                         if (liveStageStopReason) {
                                             await updateContactPipelineStage(supabase, {
                                                 pageId: page.id,
@@ -923,6 +954,35 @@ export async function POST(request: NextRequest) {
                                     }
 
                                     if (stateStopReason) {
+                                        if (
+                                            inboundMessageText && !conversationAuditFailed &&
+                                            ['details_collected', 'qualified', 'converted', 'order_created'].includes(stateStopReason) &&
+                                            chatbotConfig.details_to_collect.length > 0
+                                        ) {
+                                            try {
+                                                const details = await extractChatbotContactDetails({
+                                                    config: chatbotConfig, pageId, pageName: page.name,
+                                                    contactName: contact.name, inboundMessage: inboundMessageText,
+                                                    history: resolvedConversation?.messages?.data || [],
+                                                    collectedDetails: chatbotState?.collected_details || {}
+                                                });
+                                                // Refresh the state before merging late answers so a
+                                                // concurrent human handoff remains stopped.
+                                                const latestState = await getChatbotContactState(supabase, page.id, contact.id);
+                                                await saveChatbotContactState(supabase, {
+                                                    pageId: page.id, contactId: contact.id,
+                                                    existingState: latestState || chatbotState,
+                                                    collectedDetails: details.collected_details,
+                                                    missingDetails: details.missing_details,
+                                                    inboundAt: interactionAt,
+                                                    stopReason: latestState?.stop_reason || stateStopReason
+                                                });
+                                            } catch (detailError) {
+                                                logWarn('Stopped bot could not update customer details', {
+                                                    pageId, contactId: contact.id, error: (detailError as Error).message
+                                                });
+                                            }
+                                        }
                                         logInfo('Chatbot reply skipped by stop rule', {
                                             pageId,
                                             senderId,
@@ -1047,6 +1107,30 @@ export async function POST(request: NextRequest) {
                                             if (replyMessages.length === 0 && !generatedStopReason) {
                                                 throw new Error('Chatbot generated no reply and no fallback is configured');
                                             }
+
+                                            const [freshContactResult, freshState] = await Promise.all([
+                                                supabase.from('contacts').select('pipeline_stage,pipeline_stage_source')
+                                                    .eq('page_id', page.id).eq('id', contact.id).maybeSingle(),
+                                                getChatbotContactState(supabase, page.id, contact.id)
+                                            ]);
+                                            if (freshContactResult.error) throw freshContactResult.error;
+                                            if (!freshContactResult.data) throw new Error('Contact unavailable before chatbot delivery');
+                                            const freshPipelineStop = chatbotStopReasonForPipelineStage(freshContactResult.data.pipeline_stage);
+                                            const freshStateStop = getChatbotStateStopReason(freshState);
+                                            const allowedCompletedPhoto = replyingAfterDetailsCollected &&
+                                                freshStateStop === 'details_collected' &&
+                                                freshPipelineStop === 'qualified' &&
+                                                freshContactResult.data.pipeline_stage_source === 'chatbot';
+                                            if (!allowedCompletedPhoto && (freshPipelineStop || (freshStateStop && freshStateStop !== 'window_expired'))) {
+                                                throw new Error('Chatbot stopped during reply generation; automatic reply cancelled');
+                                            }
+                                            chatbotState = freshState || chatbotState;
+                                            // Retain answers even if Meta subsequently rejects delivery.
+                                            await saveChatbotContactState(supabase, {
+                                                pageId: page.id, contactId: contact.id, existingState: chatbotState,
+                                                collectedDetails, missingDetails, inboundAt: interactionAt,
+                                                stopReason: generatedStopReason
+                                            });
 
                                             let lastOutboundMessageId: string | undefined;
                                             let sentMedia = false;
@@ -1204,15 +1288,18 @@ export async function POST(request: NextRequest) {
                                                 }
                                             }
 
+                                            const latestDeliveryState = await getChatbotContactState(supabase, page.id, contact.id);
                                             await saveChatbotContactState(supabase, {
                                                 pageId: page.id,
                                                 contactId: contact.id,
-                                                existingState: chatbotState,
+                                                existingState: latestDeliveryState || chatbotState,
                                                 collectedDetails,
                                                 missingDetails,
                                                 inboundAt: interactionAt,
                                                 botRepliedAt: replyMessages.length > 0 || sentMedia ? new Date().toISOString() : undefined,
-                                                stopReason: generatedStopReason
+                                                stopReason: latestDeliveryState?.status === 'stopped'
+                                                    ? latestDeliveryState.stop_reason || 'manual'
+                                                    : generatedStopReason
                                             });
 
                                             const chatbotPipelineStage = pipelineStageForChatbotProgress({
@@ -1238,6 +1325,7 @@ export async function POST(request: NextRequest) {
 
                                             if (
                                                 !generatedStopReason &&
+                                                latestDeliveryState?.status !== 'stopped' &&
                                                 !isPipelineClosedForAutomation(chatbotPipelineStage) &&
                                                 (replyMessages.length > 0 || sentMedia)
                                             ) {

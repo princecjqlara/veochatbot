@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     isPipelineClosedForAutomation,
     pipelineStageForChatbotProgress,
     pipelineStageForMessengerSignal,
-    shouldAutoMovePipeline
+    shouldAutoMovePipeline,
+    updateContactPipelineStage
 } from '@/lib/contact-pipeline';
 
 describe('contact pipeline', () => {
@@ -20,6 +21,17 @@ describe('contact pipeline', () => {
         expect(pipelineStageForMessengerSignal('order_created')).toBe('order_created');
         expect(pipelineStageForMessengerSignal('converted')).toBe('converted');
         expect(pipelineStageForMessengerSignal('not_qualified')).toBe('not_qualified');
+    });
+
+    it('records a Messenger handoff even when the bot already set the same stage', async () => {
+        const update = vi.fn();
+        const chain: any = { select: () => chain, eq: () => chain,
+            maybeSingle: async () => ({ data: { pipeline_stage: 'qualified', pipeline_stage_source: 'chatbot' }, error: null }),
+            update: (payload: unknown) => { update(payload); return chain; },
+            then: (resolve: any, reject: any) => Promise.resolve({ error: null }).then(resolve, reject)
+        };
+        expect(await updateContactPipelineStage({ from: () => chain }, { pageId: 'page', contactId: 'contact', stage: 'qualified', source: 'messenger' })).toBe(true);
+        expect(update).toHaveBeenCalledWith(expect.objectContaining({ pipeline_stage_source: 'messenger' }));
     });
 
     it('moves forward automatically without regressing successful contacts', () => {

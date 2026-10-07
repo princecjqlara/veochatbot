@@ -265,3 +265,62 @@ describe('chatbot follow-up scheduling', () => {
         }));
     });
 });
+
+describe('follow-up lead-stage checks', () => {
+    function fixture(options: { lookupError?: boolean } = {}) {
+        const updates: Array<{ table: string; payload: any }> = [];
+        const job = { id: 'job-1', page_id: 'page-1', contact_id: 'contact-1',
+            anchor_inbound_at: '2026-10-06T00:00:00Z', schedule_type: 'human_agent', sequence_index: 0, attempt_count: 0 };
+        let stage = 'engaged';
+        const supabase = { from: vi.fn((table: string) => {
+            const chain: any = {
+                select: () => chain, eq: () => chain, lt: () => chain, lte: () => chain, order: () => chain,
+                update: (payload: any) => { updates.push({ table, payload }); return chain; },
+                upsert: async (payload: any) => { updates.push({ table, payload }); return { error: null }; },
+                limit: async () => ({ data: [job], error: null }),
+                maybeSingle: async () => {
+                    if (table === 'chatbot_follow_up_jobs') return { data: { id: job.id }, error: null };
+                    if (table === 'pages') return { data: { id: 'page-1', name: 'Page', fb_page_id: 'fb-page', access_token: 'token' }, error: null };
+                    if (table === 'contacts') return { data: { id: 'contact-1', page_id: 'page-1', psid: 'customer', name: 'Customer', last_inbound_at: job.anchor_inbound_at, pipeline_stage: stage }, error: null };
+                    if (table === 'chatbot_configs') return { data: { page_id: 'page-1', enabled: true, follow_up_enabled: true }, error: null };
+                    return { data: { status: 'active', collected_details: {}, missing_details: [] }, error: options.lookupError ? { message: 'State read failed' } : null };
+                },
+                then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject)
+            };
+            return chain;
+        }) };
+        return { supabase, updates, close: () => { stage = 'qualified'; } };
+    }
+
+    it.each(['Qualified', 'Not Qualified', 'Converted', 'Order Created'])('cancels a due follow-up when Messenger has %s before the poller catches up', async (stage) => {
+        vi.clearAllMocks();
+        const { supabase, updates } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [
+            { id: 'lead-1', message: `Lead stage set to ${stage}`, from: { id: 'fb-page' }, created_time: '2026-10-06T02:00:00Z' },
+            { message: 'I need a video', from: { id: 'customer' } }
+        ] } });
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.generateChatbotFollowUp).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(updates).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: stage.toLowerCase().replace(/ /g, '_') }) });
+    });
+
+    it('cancels a job handed off while the AI is generating its follow-up', async () => {
+        vi.clearAllMocks();
+        const { supabase, close } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{ message: 'I need a video', from: { id: 'customer' } }] } });
+        mocks.generateChatbotFollowUp.mockImplementation(async () => { close(); return { message: 'A follow-up', messages: ['A follow-up'] }; });
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not send when a state lookup fails', async () => {
+        vi.clearAllMocks();
+        const { supabase } = fixture({ lookupError: true });
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, failed: 1 });
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+});

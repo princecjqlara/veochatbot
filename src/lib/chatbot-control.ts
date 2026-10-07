@@ -101,7 +101,7 @@ export function getMissingChatbotDetails(
 ): string[] {
     const collectedKeys = new Set(
         Object.entries(collectedDetails)
-            .filter(([, value]) => typeof value === 'string' && value.trim().length > 0)
+            .filter(([, value]) => isCollectedChatbotDetailValue(value))
             .map(([key]) => key.trim().toLowerCase())
     );
     return normalizeDetailsToCollect(detailsToCollect)
@@ -118,14 +118,25 @@ export function getRequiredChatbotDetailCount(totalDetails: number, targetPercen
     return Math.max(1, Math.ceil(totalDetails * normalizeChatbotDetailTargetPercent(targetPercent) / 100));
 }
 
-function normalizeCollectedDetails(value: unknown): Record<string, string> {
+export function isCollectedChatbotDetailValue(value: unknown): value is string {
+    return typeof value === 'string' && value.trim().length > 0 &&
+        !/^(?:unknown|not (?:provided|specified|stated|yet provided|yet specified)|n\/?a|null|undefined|pending|tbd|to be (?:confirmed|determined)|not sure|unsure|hindi pa alam)[.!?\s]*$/i.test(value.trim());
+}
+
+export function normalizeCollectedChatbotDetails(value: unknown, requestedDetails?: string[]): Record<string, string> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const canonicalKeys = requestedDetails
+        ? new Map(normalizeDetailsToCollect(requestedDetails).map(key => [key.toLowerCase(), key]))
+        : null;
     return Object.fromEntries(
         Object.entries(value as Record<string, unknown>)
             .filter((entry): entry is [string, string] =>
-                typeof entry[1] === 'string' && entry[1].trim().length > 0
+                isCollectedChatbotDetailValue(entry[1])
             )
-            .map(([key, detail]) => [key.trim().slice(0, 80), detail.trim().slice(0, 500)])
+            .map(([key, detail]) => [
+                canonicalKeys ? canonicalKeys.get(key.trim().toLowerCase()) || '' : key.trim().slice(0, 80),
+                detail.trim().slice(0, 500)
+            ])
             .filter(([key]) => key.length > 0)
             .slice(0, 20)
     );
@@ -146,7 +157,7 @@ export async function getChatbotContactState(
     if (!data) return null;
     return {
         ...data,
-        collected_details: normalizeCollectedDetails(data.collected_details),
+        collected_details: normalizeCollectedChatbotDetails(data.collected_details),
         missing_details: normalizeDetailsToCollect(data.missing_details)
     } as ChatbotContactState;
 }
@@ -172,27 +183,36 @@ export async function saveChatbotContactState(
     const expiresAt = Number.isFinite(activityAnchorTime)
         ? new Date(activityAnchorTime + CHATBOT_CONVERSATION_WINDOW_MS).toISOString()
         : new Date(now.getTime() + CHATBOT_CONVERSATION_WINDOW_MS).toISOString();
-    const stopReason = input.stopReason || null;
+    // Updating details must not implicitly restart a stopped conversation.
+    const stopReason = input.stopReason || (
+        input.existingState?.status === 'stopped' ? input.existingState.stop_reason || 'manual' : null
+    );
     const payload = {
         page_id: input.pageId,
         contact_id: input.contactId,
         status: stopReason ? 'stopped' : 'active',
         started_at: startedAt,
         window_expires_at: expiresAt,
-        collected_details: normalizeCollectedDetails({
+        collected_details: normalizeCollectedChatbotDetails({
             ...(input.existingState?.collected_details || {}),
             ...(input.collectedDetails || {})
         }),
         missing_details: normalizeDetailsToCollect(input.missingDetails || input.existingState?.missing_details || []),
         stop_reason: stopReason,
-        stopped_at: stopReason ? now.toISOString() : null,
+        stopped_at: stopReason ? input.existingState?.stopped_at || now.toISOString() : null,
         last_inbound_at: input.inboundAt || input.existingState?.last_inbound_at || null,
         last_bot_reply_at: input.botRepliedAt || input.existingState?.last_bot_reply_at || null,
         updated_at: now.toISOString()
     };
-    const { error } = await supabase
-        .from('chatbot_contact_states')
-        .upsert(payload, { onConflict: 'page_id,contact_id' });
+    const query = supabase.from('chatbot_contact_states');
+    const { error } = !stopReason && input.existingState
+        // A worker or a person may have stopped this row since it was read.
+        // An ordinary detail/reply update must never reactivate that row.
+        ? await query.update(payload).eq('page_id', input.pageId).eq('contact_id', input.contactId).eq('status', 'active')
+        : await query.upsert(payload, {
+            onConflict: 'page_id,contact_id',
+            ...(!stopReason && !input.existingState ? { ignoreDuplicates: true } : {})
+        });
     if (error) throw new Error(error.message || 'Could not save chatbot contact state');
 }
 
