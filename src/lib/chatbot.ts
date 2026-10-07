@@ -19,6 +19,7 @@ export const DEFAULT_CHATBOT_FALLBACK =
     'Thanks for your message! A member of our team will get back to you shortly.';
 const CHATBOT_BUBBLE_TARGET_CHARS = 110;
 const CHATBOT_BUBBLE_MIN_BREAK_CHARS = 55;
+export const CHATBOT_REPLY_MAX_CHARS = 320;
 const FOLLOW_UP_MAX_CHARS = 320;
 const FOLLOW_UP_MAX_PARTS = 2;
 
@@ -367,6 +368,17 @@ function capCombinedMessageLength(parts: string[], maxCharacters: number): strin
     return capped;
 }
 
+export function formatChatbotReplyMessages(parts: string[], config: Pick<ChatbotConfig, 'split_messages' | 'max_message_parts'>): string[] {
+    const unique = [...new Set(parts.map(part => part.trim()).filter(Boolean))];
+    const requestedParts = Math.round(Number(config.max_message_parts));
+    const maxParts = config.split_messages && Number.isFinite(requestedParts) && requestedParts > 0
+        ? Math.min(2, requestedParts) : 1;
+    const bubbles = config.split_messages
+        ? unique.flatMap(part => splitChatbotMessageBubbles(part, true))
+        : splitChatbotMessageBubbles(unique.join(' '), false);
+    return capCombinedMessageLength(limitNaturalMessageParts(bubbles, maxParts), CHATBOT_REPLY_MAX_CHARS);
+}
+
 function sanitizeGeneratedMessage(content: string): string {
     let cleaned = content.trim();
     cleaned = cleaned
@@ -429,9 +441,7 @@ function parseChatbotPlan(
     const messageContent = rawMessages.length > 0
         ? rawMessages.join('\n\n')
         : sanitizeGeneratedMessage(content);
-    const messages = rawMessages.length > 0 && config.split_messages
-        ? rawMessages.flatMap((message) => splitChatbotMessageBubbles(message, true))
-        : splitChatbotMessageBubbles(messageContent, config.split_messages);
+    const messages = formatChatbotReplyMessages(rawMessages.length > 0 ? rawMessages : [messageContent], config);
     if (messages.length === 0) throw new Error('OpenRouter returned an empty reply');
 
     const rawStopReason = parsed?.stop_reason;
@@ -558,9 +568,11 @@ export function buildChatbotMessages(input: {
     const responseFormat = '\n\nReturn only valid JSON with this shape: ' +
         '{"messages":["message bubble"],"collected_details":{"exact requested detail":"customer-provided value"},"stop_reason":null,"media_document_ids":[],"drive_file_document_ids":[],"link_document_id":null}. ' +
         (input.splitMessages
-            ? 'Prefer 3 to 6 brief message bubbles for a multi-sentence reply. Keep each bubble near 110 characters or less, split at natural sentence or clause boundaries, and do not pad a reply that is already short. '
+            ? 'Prefer one short message bubble. Use at most two bubbles only when needed for clarity. Never pad or fragment a reply to create more bubbles. '
             : 'Use exactly 1 message bubble. ') +
+        `Keep the entire customer-facing reply under ${CHATBOT_REPLY_MAX_CHARS} characters, usually one or two short sentences. Ask at most one necessary question, and do not force a question after answering. ` +
         'Set stop_reason to "opt_out" when the customer asks not to be contacted, "refusal" when they clearly decline to buy, otherwise null. ' +
+        'Send samples, media, promotions, or folder links only when the customer requests them or they answer the current inquiry. Do not add unsolicited sales pitches or repeat previously sent samples. ' +
         'Set media_document_ids to exact document_ids of retrieved MEDIA ASSET entries that directly help this reply. Select one when only one is useful, or 2 to 10 only when a relevant set would be helpful as a swipeable Messenger carousel. Preserve the best display order, never pad the list, and otherwise use an empty array. ' +
         'Set drive_file_document_ids to exact document_ids of retrieved GOOGLE DRIVE MEDIA FILE entries. Choose only the specific relevant files, up to 10 in best display order. Use one for one button card, several for a swipeable carousel, and an empty array when none helps. Never select both drive_file_document_ids and link_document_id. ' +
         'Set link_document_id to a GOOGLE DRIVE MEDIA FOLDER only when no individually indexed Drive file is available and sharing the entire folder is explicitly useful; otherwise set it to null. ' +
@@ -608,7 +620,7 @@ export function buildChatbotMessages(input: {
         'Avoid generic filler, fake enthusiasm, corporate buzzwords, repeated summaries, essay-like explanations, excessive emojis, excessive punctuation, headings, and decorative Markdown. ' +
         'Do not use em dashes, en dashes, dash-style bullet lists, or headline-style labels ending in a colon. Use ordinary conversational sentences and punctuation instead. ' +
         'Answer first, then give one useful next step or question. Vary wording naturally instead of reusing a response template. ' +
-        'Keep each message under 600 characters.';
+        `Keep the complete reply under ${CHATBOT_REPLY_MAX_CHARS} characters. Use at most one emoji, avoid repeating the customer name, and never repeat a sales question, pitch, or reminder already sent.`;
     const system = pageIdentity + 'You are replying to ' + contactName + ' in Facebook Messenger. ' + contactIdentity +
         knowledgeContext + salesFlowContext + '\n\n' + languageStyle +
         'Write naturally and avoid repetitive greetings. ' +

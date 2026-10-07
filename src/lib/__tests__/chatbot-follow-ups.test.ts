@@ -199,7 +199,7 @@ describe('chatbot follow-up scheduling', () => {
                         ? { data: [dueJob], error: null }
                         : { data: [], error: null }),
                     maybeSingle: vi.fn(async () => {
-                        if (table === 'chatbot_follow_up_jobs') return { data: { id: dueJob.id }, error: null };
+                        if (table === 'chatbot_follow_up_jobs') return { data: { id: dueJob.id, status: 'processing' }, error: null };
                         if (table === 'pages') return { data: { id: 'page-1', name: 'Test Page', fb_page_id: 'fb-page-1', access_token: 'token' }, error: null };
                         if (table === 'contacts') return { data: { id: 'contact-1', page_id: 'page-1', psid: 'psid-1', name: 'Alex', last_interaction_at: dueJob.anchor_inbound_at, last_inbound_at: dueJob.anchor_inbound_at, pipeline_stage: 'engaged' }, error: null };
                         if (table === 'chatbot_configs') return { data: { enabled: true, follow_up_enabled: true }, error: null };
@@ -272,14 +272,15 @@ describe('follow-up lead-stage checks', () => {
         const job = { id: 'job-1', page_id: 'page-1', contact_id: 'contact-1',
             anchor_inbound_at: '2026-10-06T00:00:00Z', schedule_type: 'human_agent', sequence_index: 0, attempt_count: 0 };
         let stage = 'engaged';
+        let jobStatus = 'processing';
         const supabase = { from: vi.fn((table: string) => {
             const chain: any = {
-                select: () => chain, eq: () => chain, lt: () => chain, lte: () => chain, order: () => chain,
+                select: () => chain, eq: () => chain, in: () => chain, lt: () => chain, lte: () => chain, order: () => chain,
                 update: (payload: any) => { updates.push({ table, payload }); return chain; },
                 upsert: async (payload: any) => { updates.push({ table, payload }); return { error: null }; },
                 limit: async () => ({ data: [job], error: null }),
                 maybeSingle: async () => {
-                    if (table === 'chatbot_follow_up_jobs') return { data: { id: job.id }, error: null };
+                    if (table === 'chatbot_follow_up_jobs') return { data: { id: job.id, status: jobStatus }, error: null };
                     if (table === 'pages') return { data: { id: 'page-1', name: 'Page', fb_page_id: 'fb-page', access_token: 'token' }, error: null };
                     if (table === 'contacts') return { data: { id: 'contact-1', page_id: 'page-1', psid: 'customer', name: 'Customer', last_inbound_at: job.anchor_inbound_at, pipeline_stage: stage }, error: null };
                     if (table === 'chatbot_configs') return { data: { page_id: 'page-1', enabled: true, follow_up_enabled: true }, error: null };
@@ -289,7 +290,7 @@ describe('follow-up lead-stage checks', () => {
             };
             return chain;
         }) };
-        return { supabase, updates, close: () => { stage = 'qualified'; } };
+        return { supabase, updates, close: () => { stage = 'qualified'; }, cancel: () => { jobStatus = 'cancelled'; } };
     }
 
     it.each(['Qualified', 'Not Qualified', 'Converted', 'Order Created'])('cancels a due follow-up when Messenger has %s before the poller catches up', async (stage) => {
@@ -321,6 +322,52 @@ describe('follow-up lead-stage checks', () => {
         const { supabase } = fixture({ lookupError: true });
         const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
         expect(result).toMatchObject({ sent: 0, failed: 1 });
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('cancels a stage change visible only in Messenger after generation', async () => {
+        vi.clearAllMocks();
+        const { supabase, updates } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{ message: 'I need a video', from: { id: 'customer' } }] } });
+        mocks.generateChatbotFollowUp.mockImplementationOnce(async () => {
+            mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{ message: 'Lead stage set to Qualified', from: { id: 'fb-page' } }] } });
+            return { message: 'Follow-up', messages: ['Follow-up'] };
+        });
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(updates).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: 'qualified' }) });
+    });
+
+    it('cancels remaining follow-up bubbles if the stage changes after one send', async () => {
+        vi.clearAllMocks();
+        const { supabase, close } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{ message: 'I need a video', from: { id: 'customer' } }] } });
+        mocks.generateChatbotFollowUp.mockResolvedValue({ message: 'First\n\nSecond', messages: ['First', 'Second'] });
+        mocks.sendMessage.mockImplementationOnce(async () => { close(); return { message_id: 'sent-first' }; });
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a partially delivered follow-up after a later send fails', async () => {
+        vi.clearAllMocks();
+        const { supabase, updates } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{ message: 'I need a video', from: { id: 'customer' } }] } });
+        mocks.generateChatbotFollowUp.mockResolvedValue({ message: 'First\n\nSecond', messages: ['First', 'Second'] });
+        mocks.sendMessage.mockResolvedValueOnce({ message_id: 'sent-first' }).mockRejectedValueOnce(new Error('Delivery failed'));
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, failed: 1 });
+        expect(updates).toContainEqual({ table: 'chatbot_follow_up_jobs', payload: expect.objectContaining({ status: 'failed', message_id: 'sent-first' }) });
+    });
+
+    it('honors cancellation of an already claimed follow-up before delivery', async () => {
+        vi.clearAllMocks();
+        const { supabase, cancel } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{ message: 'I need a video', from: { id: 'customer' } }] } });
+        mocks.generateChatbotFollowUp.mockImplementationOnce(async () => { cancel(); return { message: 'Reminder', messages: ['Reminder'] }; });
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
         expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 });

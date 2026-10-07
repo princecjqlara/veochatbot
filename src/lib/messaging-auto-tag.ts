@@ -36,6 +36,7 @@ export async function loadMessengerHistoryForStopCheck(input: {
         seen.add(next);
         url.searchParams.delete('access_token');
         const response = await fetch(url, {
+            cache: 'no-store',
             headers: { Authorization: `Bearer ${input.accessToken}` },
             signal: AbortSignal.timeout(Math.max(1, Math.min(5000, deadline - Date.now())))
         });

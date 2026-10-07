@@ -10,7 +10,7 @@ import {
     generateChatbotResponse,
     extractChatbotContactDetails,
     getChatbotKnowledgePageId,
-    splitChatbotMessageBubbles,
+    formatChatbotReplyMessages,
     type ChatbotConfig
 } from '@/lib/chatbot';
 import {
@@ -23,6 +23,7 @@ import {
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument } from '@/lib/chatbot-drive-folders';
 import { cancelPendingChatbotFollowUps, scheduleChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 import { claimChatbotReply, finishChatbotReply } from '@/lib/chatbot-replies';
+import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
 import {
     classifyChatbotStopIntent,
     getChatbotContactState,
@@ -38,7 +39,7 @@ import {
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../lib/contact-names';
-import { findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
+import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 
 export const maxDuration = 300;
 
@@ -312,6 +313,22 @@ export async function POST(request: NextRequest) {
                                     : '';
 
                                 if (eventType === 'message' && outboundMessageText && recipientId) {
+                                    const stageSignal = classifyMessengerSystemMessage(outboundMessageText);
+                                    if (stageSignal) {
+                                        const { data: stageContact, error } = await supabase.from('contacts').select('id')
+                                            .eq('page_id', page.id).eq('psid', recipientId).maybeSingle();
+                                        if (error) throw error;
+                                        if (stageContact) {
+                                            const state = await getChatbotContactState(supabase, page.id, stageContact.id);
+                                            await saveChatbotContactState(supabase, {
+                                                pageId: page.id, contactId: stageContact.id, existingState: state, stopReason: stageSignal
+                                            });
+                                            await cancelPendingChatbotFollowUps({ supabase, pageId: page.id,
+                                                contactId: stageContact.id, reason: `Messenger lead stage: ${stageSignal}` });
+                                            await updateContactPipelineStage(supabase, { pageId: page.id,
+                                                contactId: stageContact.id, stage: stageSignal, source: 'messenger' });
+                                        }
+                                    }
                                     try {
                                         const stopResult = await stopWorkflowAutomationsFromPageMessage({
                                             supabase,
@@ -488,7 +505,7 @@ export async function POST(request: NextRequest) {
                             ...(resolvedName ? { name: resolvedName } : existingNameShouldBeCleared ? { name: null } : {}),
                             ...(profilePic ? { profile_pic: profilePic } : {}),
                             last_interaction_at: interactionAt,
-                            ...(eventType === 'message' && (
+                            ...((eventType === 'message' || eventType === 'postback') && (
                                 !existingContact?.last_inbound_at ||
                                 new Date(existingContact.last_inbound_at).getTime() < interactionTime.getTime()
                             ) ? { last_inbound_at: interactionAt } : {}),
@@ -562,19 +579,20 @@ export async function POST(request: NextRequest) {
                         let conversationHistoryUnavailable = false;
                         const inboundMessageText = typeof event.message?.text === 'string'
                             ? event.message.text.trim()
-                            : '';
+                            : typeof event.postback?.title === 'string' && event.postback.title.trim()
+                                ? event.postback.title.trim()
+                                : typeof event.postback?.payload === 'string' ? event.postback.payload.trim() : '';
                         const inboundImageUrls = getInboundMessengerImageUrls(event.message);
 
-                        const configForInboundImages = eventType === 'message' &&
-                            inboundImageUrls.length > 0 &&
+                        const inboundChatbotConfig = (eventType === 'message' || eventType === 'postback') &&
+                            (inboundMessageText || inboundImageUrls.length > 0) &&
                             !isStandbyEvent
                             ? await loadChatbotConfig()
                             : null;
-                        const chatbotWillHandleInboundImages = Boolean(
+                        const chatbotWillHandleInboundInquiry = Boolean(
                             contact &&
-                            inboundImageUrls.length > 0 &&
-                            configForInboundImages?.enabled &&
-                            isChatbotContactAllowed(configForInboundImages, contact.id)
+                            inboundChatbotConfig?.enabled &&
+                            isChatbotContactAllowed(inboundChatbotConfig, contact.id)
                         );
 
                         // A contact can be new to our database while already having an
@@ -611,7 +629,7 @@ export async function POST(request: NextRequest) {
                             contact &&
                             !hasPriorConversation &&
                             !conversationHistoryUnavailable &&
-                            !chatbotWillHandleInboundImages
+                            !chatbotWillHandleInboundInquiry
                         ) {
                             // Lazy-load welcome config once per page per webhook batch
                             if (!welcomeConfigFetched) {
@@ -721,7 +739,7 @@ export async function POST(request: NextRequest) {
                             // Attachments are replies too. The workflow handler
                             // does not require text, so schedule/reset on every
                             // inbound message rather than text-only messages.
-                            if (eventType === 'message') {
+                            if (eventType === 'message' || eventType === 'postback') {
                                 try {
                                     await cancelPendingChatbotFollowUps({
                                         supabase,
@@ -789,10 +807,13 @@ export async function POST(request: NextRequest) {
 
                             const inboundMessageId = typeof event.message?.mid === 'string'
                                 ? event.message.mid.trim()
-                                : '';
+                                : typeof event.postback?.mid === 'string' ? event.postback.mid.trim()
+                                    : eventType === 'postback' && rawTimestamp != null
+                                        ? `postback:${pageId}:${senderId}:${rawTimestamp}:${event.postback?.payload || event.postback?.title || ''}`
+                                        : '';
 
                             if (
-                                eventType === 'message' &&
+                                (eventType === 'message' || eventType === 'postback') &&
                                 (inboundMessageText || inboundImageUrls.length > 0) &&
                                 inboundMessageId &&
                                 !isStandbyEvent &&
@@ -859,6 +880,7 @@ export async function POST(request: NextRequest) {
                                         }
                                     } catch (conversationError) {
                                         conversationAuditFailed = true;
+                                        hadCriticalFailure = true;
                                         logWarn('Could not verify live Lead Center stage; skipping automatic reply safely', {
                                             pageId,
                                             senderId,
@@ -924,6 +946,7 @@ export async function POST(request: NextRequest) {
                                         }
                                     } catch (stateError) {
                                         stateStopReason = 'manual';
+                                        hadCriticalFailure = true;
                                         logWarn('Chatbot state is unavailable; skipping automatic reply safely', {
                                             pageId,
                                             senderId,
@@ -1000,6 +1023,7 @@ export async function POST(request: NextRequest) {
                                                 contactId: contact.id
                                             });
                                         } catch (claimError) {
+                                            hadCriticalFailure = true;
                                             logWarn('Could not claim chatbot reply', {
                                                 pageId,
                                                 senderId,
@@ -1010,11 +1034,12 @@ export async function POST(request: NextRequest) {
                                     }
 
                                     if (claimed) {
+                                        let lastOutboundMessageId: string | undefined;
                                         try {
                                             let replyMessages = chatbotConfig.fallback_reply.trim()
-                                                ? splitChatbotMessageBubbles(
-                                                    chatbotConfig.fallback_reply,
-                                                    chatbotConfig.split_messages
+                                                ? formatChatbotReplyMessages(
+                                                    [chatbotConfig.fallback_reply],
+                                                    chatbotConfig
                                                 )
                                                 : [];
                                             let collectedDetails = chatbotState?.collected_details || {};
@@ -1122,17 +1147,24 @@ export async function POST(request: NextRequest) {
                                                 freshPipelineStop === 'qualified' &&
                                                 freshContactResult.data.pipeline_stage_source === 'chatbot';
                                             if (!allowedCompletedPhoto && (freshPipelineStop || (freshStateStop && freshStateStop !== 'window_expired'))) {
-                                                throw new Error('Chatbot stopped during reply generation; automatic reply cancelled');
+                                                throw new ChatbotDeliveryStoppedError('Chatbot stopped during reply generation; automatic reply cancelled');
                                             }
                                             chatbotState = freshState || chatbotState;
                                             // Retain answers even if Meta subsequently rejects delivery.
                                             await saveChatbotContactState(supabase, {
                                                 pageId: page.id, contactId: contact.id, existingState: chatbotState,
                                                 collectedDetails, missingDetails, inboundAt: interactionAt,
-                                                stopReason: generatedStopReason
+                                                // Persist answers before delivery; apply this response's
+                                                // completion stop only after its final message is sent.
+                                                stopReason: replyingAfterDetailsCollected ? 'details_collected' :
+                                                    generatedStopReason === 'details_collected' ? null : generatedStopReason
                                             });
 
-                                            let lastOutboundMessageId: string | undefined;
+                                            const checkDelivery = () => assertChatbotDeliveryAllowed({
+                                                supabase, pageId: page.id, facebookPageId: pageId,
+                                                accessToken: page.access_token, contactId: contact.id, psid: senderId,
+                                                allowCompletedPhoto: replyingAfterDetailsCollected
+                                            });
                                             let sentMedia = false;
                                             const knowledgePageId = getChatbotKnowledgePageId(chatbotConfig);
                                             let selectedDriveFolder = null;
@@ -1168,6 +1200,7 @@ export async function POST(request: NextRequest) {
                                                 }
                                             }
                                             for (const [messageIndex, replyText] of replyMessages.entries()) {
+                                                await checkDelivery();
                                                 const isFinalMessage = messageIndex === replyMessages.length - 1;
                                                 const sendResult = await sendMessage(
                                                     pageId,
@@ -1202,6 +1235,7 @@ export async function POST(request: NextRequest) {
 
                                             if (selectedDriveFiles.length > 0 && !generatedStopReason) {
                                                 try {
+                                                    await checkDelivery();
                                                     const mediaResult = await sendMessengerGenericCarousel(
                                                         pageId,
                                                         page.access_token,
@@ -1230,6 +1264,7 @@ export async function POST(request: NextRequest) {
                                                             : 'Drive media card'
                                                     });
                                                 } catch (driveCarouselError) {
+                                                    if (driveCarouselError instanceof ChatbotDeliveryStoppedError) throw driveCarouselError;
                                                     logWarn('Chatbot text sent but Drive file carousel failed', {
                                                         pageId,
                                                         senderId,
@@ -1256,6 +1291,7 @@ export async function POST(request: NextRequest) {
                                                                 buttonTitle: media.media_type === 'image' ? 'View image' : 'Watch video'
                                                             };
                                                         }));
+                                                        await checkDelivery();
                                                         const mediaResult = await sendMessengerGenericCarousel(
                                                             pageId,
                                                             page.access_token,
@@ -1279,6 +1315,7 @@ export async function POST(request: NextRequest) {
                                                         });
                                                     }
                                                 } catch (mediaError) {
+                                                    if (mediaError instanceof ChatbotDeliveryStoppedError) throw mediaError;
                                                     logWarn('Chatbot text sent but media attachment failed', {
                                                         pageId,
                                                         senderId,
@@ -1385,8 +1422,12 @@ export async function POST(request: NextRequest) {
                                                 missingDetails
                                             });
                                         } catch (chatbotError) {
+                                            if (!lastOutboundMessageId && !(chatbotError instanceof ChatbotDeliveryStoppedError)) {
+                                                hadCriticalFailure = true;
+                                            }
                                             await finishChatbotReply(supabase, inboundMessageId, {
                                                 status: 'failed',
+                                                outboundMessageId: lastOutboundMessageId,
                                                 error: (chatbotError as Error).message
                                             }).catch(() => undefined);
 
@@ -1521,7 +1562,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json(
                 {
                     error: 'Webhook processing partially failed',
-                    message: 'One or more contact upserts failed. Returning 500 so Facebook can retry delivery.'
+                    message: 'One or more webhook operations failed. Returning 500 so Facebook can retry delivery.'
                 },
                 { status: 500 }
             );

@@ -205,14 +205,22 @@ export async function saveChatbotContactState(
         updated_at: now.toISOString()
     };
     const query = supabase.from('chatbot_contact_states');
-    const { error } = !stopReason && input.existingState
+    const conditionalUpdate = input.existingState && (!stopReason || stopReason === 'details_collected');
+    let result;
+    if (conditionalUpdate) {
         // A worker or a person may have stopped this row since it was read.
-        // An ordinary detail/reply update must never reactivate that row.
-        ? await query.update(payload).eq('page_id', input.pageId).eq('contact_id', input.contactId).eq('status', 'active')
-        : await query.upsert(payload, {
+        // Intake completion and photo updates must not replace a human stop.
+        let update = query.update(payload).eq('page_id', input.pageId).eq('contact_id', input.contactId)
+            .eq('status', input.existingState!.status);
+        if (input.existingState!.status === 'stopped') update = update.eq('stop_reason', 'details_collected');
+        result = await update;
+    } else {
+        result = await query.upsert(payload, {
             onConflict: 'page_id,contact_id',
-            ...(!stopReason && !input.existingState ? { ignoreDuplicates: true } : {})
+            ...((!stopReason || stopReason === 'details_collected') && !input.existingState ? { ignoreDuplicates: true } : {})
         });
+    }
+    const { error } = result;
     if (error) throw new Error(error.message || 'Could not save chatbot contact state');
 }
 

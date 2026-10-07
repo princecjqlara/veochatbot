@@ -130,7 +130,7 @@ function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): Chat
                 ? draft.follow_up_media_asset_id.trim() || null
                 : stored.follow_up_media_asset_id,
         split_messages: booleanValue('split_messages', stored.split_messages),
-        max_message_parts: 0,
+        max_message_parts: Math.min(2, Math.max(0, Math.round(Number(draft.max_message_parts ?? stored.max_message_parts)) || 0)),
         stop_when_details_collected: booleanValue(
             'stop_when_details_collected', stored.stop_when_details_collected
         ),

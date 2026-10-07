@@ -118,7 +118,7 @@ async function fetchFacebookRead(input: string, timeoutMs: number = FACEBOOK_REA
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        return await fetch(input, { signal: controller.signal });
+        return await fetch(input, { signal: controller.signal, cache: 'no-store' });
     } catch (error) {
         if (controller.signal.aborted) {
             throw new Error(`Facebook read request timed out after ${timeoutMs / 1000} seconds`);

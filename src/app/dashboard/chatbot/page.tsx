@@ -1828,18 +1828,18 @@ export default function ChatbotPage() {
                                 <input
                                     type="checkbox"
                                     checked={config.split_messages}
-                                    onChange={(event) => updateConfig({ split_messages: event.target.checked })}
+                                    onChange={(event) => updateConfig({ split_messages: event.target.checked, max_message_parts: event.target.checked ? 2 : 1 })}
                                     className="w-4 h-4 mt-0.5"
                                 />
                                 <span>
                                     <span className="block text-sm font-bold">Natural message bubbles</span>
-                                    <span className="block text-xs text-gray-500 mt-1">Split a reply into short conversational messages.</span>
+                                    <span className="block text-xs text-gray-500 mt-1">Use short conversational messages. Replies stay brief.</span>
                                 </span>
                             </label>
                             <div className="border border-black p-3">
                                 <span className="block text-sm font-bold">Automatic bubble count</span>
                                 <span className="block text-xs text-gray-500 mt-1">
-                                    No fixed maximum. The bot uses only as many short bubbles as the reply naturally needs.
+                                    Replies use one message by default, at most two short bubbles. Follow-ups retain their configured style.
                                 </span>
                             </div>
                         </div>

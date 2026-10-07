@@ -14,6 +14,7 @@ import { isChatbotContactAllowed, saveChatbotContactState, type ChatbotContactSt
 import { findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument, type ChatbotDriveFile, type ChatbotDriveFolder } from '@/lib/chatbot-drive-folders';
 import { isPipelineClosedForAutomation, updateContactPipelineStage, type ContactPipelineStage } from '@/lib/contact-pipeline';
+import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
 
 const RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * RESPONSE_WINDOW_MS;
@@ -236,6 +237,7 @@ export async function processDueChatbotFollowUps(input: {
             .maybeSingle();
         if (claimError || !claimed) continue;
 
+        let deliveredMessageId: string | undefined;
         try {
             const eligibility = await Promise.all([
                 supabase.from('pages').select('id, name, fb_page_id, access_token').eq('id', job.page_id).maybeSingle(),
@@ -417,7 +419,12 @@ export async function processDueChatbotFollowUps(input: {
                 ? 'AI Chatbot day 2-7 follow-up'
                 : 'AI Chatbot quick follow-up';
             let lastSendResult: { message_id: string } | null = null;
+            const checkDelivery = () => assertChatbotDeliveryAllowed({
+                supabase, pageId: job.page_id, facebookPageId: page.fb_page_id, accessToken: page.access_token,
+                contactId: job.contact_id, psid: contact.psid, followUp: true, followUpJobId: job.id, anchorInboundAt: job.anchor_inbound_at
+            });
             for (const [partIndex, message] of messageParts.entries()) {
+                await checkDelivery();
                 const isFinalPart = partIndex === messageParts.length - 1;
                 const sendResult = selectedDriveFolder && isFinalPart
                     ? await sendMessage(
@@ -443,6 +450,7 @@ export async function processDueChatbotFollowUps(input: {
                         messagingType || 'RESPONSE'
                     );
                 lastSendResult = sendResult;
+                deliveredMessageId = sendResult.message_id;
                 await recordOutboundMessageEvent(supabase, {
                     pageId: job.page_id,
                     contactId: job.contact_id,
@@ -459,6 +467,7 @@ export async function processDueChatbotFollowUps(input: {
 
             if (selectedDriveFiles.length > 0) {
                 try {
+                    await checkDelivery();
                     const mediaResult = await sendMessengerGenericCarousel(
                         page.fb_page_id,
                         page.access_token,
@@ -485,6 +494,7 @@ export async function processDueChatbotFollowUps(input: {
                     });
                     result.mediaSent += 1;
                 } catch (driveCarouselError) {
+                    if (driveCarouselError instanceof ChatbotDeliveryStoppedError) throw driveCarouselError;
                     console.warn('[CHATBOT_FOLLOW_UP] Text sent but Drive carousel failed', {
                         jobId: job.id,
                         error: (driveCarouselError as Error).message
@@ -505,6 +515,7 @@ export async function processDueChatbotFollowUps(input: {
                                 buttonTitle: media.media_type === 'image' ? 'View image' : 'Watch video'
                             };
                         }));
+                        await checkDelivery();
                         const mediaResult = await sendMessengerGenericCarousel(
                             page.fb_page_id,
                             page.access_token,
@@ -528,6 +539,7 @@ export async function processDueChatbotFollowUps(input: {
                         result.mediaSent += 1;
                     }
                 } catch (mediaError) {
+                    if (mediaError instanceof ChatbotDeliveryStoppedError) throw mediaError;
                     console.warn('[CHATBOT_FOLLOW_UP] Text sent but media failed', {
                         jobId: job.id,
                         error: (mediaError as Error).message
@@ -546,9 +558,18 @@ export async function processDueChatbotFollowUps(input: {
             });
             result.sent += 1;
         } catch (sendError) {
+            if (sendError instanceof ChatbotDeliveryStoppedError) {
+                await markJob(supabase, job.id, {
+                    status: 'cancelled', cancelled_at: new Date().toISOString(), claimed_at: null,
+                    error_message: sendError.message.slice(0, 1000)
+                });
+                result.cancelled += 1;
+                continue;
+            }
             const attempts = Number(job.attempt_count || 0) + 1;
-            await markJob(supabase, job.id, attempts >= MAX_ATTEMPTS ? {
+            await markJob(supabase, job.id, deliveredMessageId || attempts >= MAX_ATTEMPTS ? {
                 status: 'failed',
+                ...(deliveredMessageId ? { message_id: deliveredMessageId } : {}),
                 attempt_count: attempts,
                 claimed_at: null,
                 error_message: (sendError as Error).message.slice(0, 1000)

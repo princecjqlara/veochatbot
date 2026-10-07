@@ -9,6 +9,7 @@ import {
     getChatbotKnowledgePageId,
     includeKnownContactName,
     splitChatbotMessageBubbles,
+    formatChatbotReplyMessages,
     type ChatbotConfig
 } from '@/lib/chatbot';
 import {
@@ -720,7 +721,7 @@ describe('VeoBot chatbot', () => {
         expect(requestBody.messages[0].content).toContain('never ask the customer for their name');
     });
 
-    it('keeps a naturally chosen bubble count without the old four-message cap', async () => {
+    it('combines excessive model bubbles into one short reply by default', async () => {
         process.env.OPENROUTER_API_KEY = 'test-key';
         const bubbles = ['One', 'Two', 'Three', 'Four', 'Five', 'Six'];
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -742,7 +743,18 @@ describe('VeoBot chatbot', () => {
             inboundMessage: 'Please explain it naturally.'
         });
 
-        expect(result.messages).toEqual(bubbles);
+        expect(result.messages).toEqual([bubbles.join(' ')]);
+    });
+
+    it('caps reply length and count even when the model produces excessive copy', () => {
+        const parts = Array.from({ length: 8 }, (_, i) => `Answer ${i}: ${'Useful customer information. '.repeat(10)}`);
+        for (const max_message_parts of [0, 1, 2, 9]) {
+            const messages = formatChatbotReplyMessages(parts, { split_messages: true, max_message_parts });
+            expect(messages.length).toBeLessThanOrEqual(max_message_parts === 0 ? 1 : Math.min(2, max_message_parts));
+            expect(messages.join('\n\n').length).toBeLessThanOrEqual(320);
+        }
+        expect(formatChatbotReplyMessages(['Thanks', 'Thanks', 'What date works?'], { split_messages: false, max_message_parts: 0 }))
+            .toEqual(['Thanks What date works?']);
     });
 
     it('reaches a percentage detail target and includes explicit dos and donts', async () => {

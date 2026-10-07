@@ -73,6 +73,27 @@ describe('chatbot conversation controls', () => {
         expect(eq).toHaveBeenCalledWith('status', 'active');
     });
 
+    it('cannot replace a concurrent human stop with automatic intake completion', async () => {
+        const chain: any = { update: vi.fn(() => chain), eq: vi.fn(() => chain),
+            then: (resolve: any) => Promise.resolve({ error: null }).then(resolve) };
+        await saveChatbotContactState({ from: () => chain }, {
+            pageId: 'page', contactId: 'contact', stopReason: 'details_collected',
+            existingState: { status: 'active', collected_details: {}, started_at: '2026-10-01T00:00:00Z' } as ChatbotContactState
+        });
+        expect(chain.eq).toHaveBeenCalledWith('status', 'active');
+    });
+
+    it('cannot replace a newer human stop while updating a completed photo conversation', async () => {
+        const chain: any = { update: vi.fn(() => chain), eq: vi.fn(() => chain),
+            then: (resolve: any) => Promise.resolve({ error: null }).then(resolve) };
+        await saveChatbotContactState({ from: () => chain }, {
+            pageId: 'page', contactId: 'contact', stopReason: 'details_collected',
+            existingState: { status: 'stopped', stop_reason: 'details_collected', collected_details: {}, started_at: '2026-10-01T00:00:00Z' } as ChatbotContactState
+        });
+        expect(chain.eq).toHaveBeenCalledWith('status', 'stopped');
+        expect(chain.eq).toHaveBeenCalledWith('stop_reason', 'details_collected');
+    });
+
     it('detects explicit opt-outs before softer sales refusals', () => {
         expect(classifyChatbotStopIntent('Please stop messaging me', {
             stopOnOptOut: true,
