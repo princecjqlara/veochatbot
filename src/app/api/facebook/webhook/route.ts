@@ -35,6 +35,8 @@ import {
 } from '@/lib/chatbot-control';
 import {
     isPipelineClosedForAutomation,
+    chatbotStopReasonForPipelineStage,
+    pipelineStageForMessengerSignal,
     pipelineStageForChatbotProgress,
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
@@ -46,15 +48,6 @@ export const maxDuration = 300;
 const PROFILE_LOOKUP_FAILURE_TTL_MS = 60 * 60 * 1000;
 const CONTACT_NAME_LOOKUP_TIMEOUT_MS = 2500;
 const profileLookupSuppressedUntil = new Map<string, number>();
-
-function chatbotStopReasonForPipelineStage(stage: unknown): ChatbotStopReason | null {
-    if (stage === 'qualified') return 'qualified';
-    if (stage === 'order_created') return 'order_created';
-    if (stage === 'converted') return 'converted';
-    if (stage === 'not_qualified') return 'not_qualified';
-    if (stage === 'opted_out') return 'opt_out';
-    return null;
-}
 
 function isProfileLookupSuppressed(pageId: string, senderId: string) {
     const key = `${pageId}:${senderId}`;
@@ -326,7 +319,7 @@ export async function POST(request: NextRequest) {
                                             await cancelPendingChatbotFollowUps({ supabase, pageId: page.id,
                                                 contactId: stageContact.id, reason: `Messenger lead stage: ${stageSignal}` });
                                             await updateContactPipelineStage(supabase, { pageId: page.id,
-                                                contactId: stageContact.id, stage: stageSignal, source: 'messenger' });
+                                                contactId: stageContact.id, stage: pipelineStageForMessengerSignal(stageSignal), source: 'messenger' });
                                         }
                                     }
                                     try {
@@ -759,7 +752,8 @@ export async function POST(request: NextRequest) {
 
                                 try {
                                     const pipelineClosed = isPipelineClosedForAutomation(
-                                        (contact as { pipeline_stage?: unknown }).pipeline_stage
+                                        (contact as { pipeline_stage?: unknown }).pipeline_stage,
+                                        (contact as { pipeline_stage_source?: unknown }).pipeline_stage_source
                                     );
                                     const workflowResult = pipelineClosed
                                         ? { scheduled: 0, continued: 0, reset: 0, stopped: 0, errors: 0 }
@@ -870,10 +864,17 @@ export async function POST(request: NextRequest) {
                                             }
                                         }
                                         if (liveStageStopReason) {
+                                            await saveChatbotContactState(supabase, {
+                                                pageId: page.id, contactId: contact.id,
+                                                existingState: await getChatbotContactState(supabase, page.id, contact.id),
+                                                stopReason: liveStageStopReason
+                                            });
+                                            await cancelPendingChatbotFollowUps({ supabase, pageId: page.id,
+                                                contactId: contact.id, reason: `Messenger lead stage: ${liveStageStopReason}` });
                                             await updateContactPipelineStage(supabase, {
                                                 pageId: page.id,
                                                 contactId: contact.id,
-                                                stage: liveStageStopReason,
+                                                stage: pipelineStageForMessengerSignal(liveStageStopReason),
                                                 source: 'messenger',
                                                 now: interactionTime
                                             });
@@ -892,7 +893,8 @@ export async function POST(request: NextRequest) {
                                     let stateStopReason: ChatbotStopReason | null = conversationAuditFailed
                                         ? 'manual'
                                         : chatbotStopReasonForPipelineStage(
-                                            (contact as { pipeline_stage?: unknown }).pipeline_stage
+                                            (contact as { pipeline_stage?: unknown }).pipeline_stage,
+                                            (contact as { pipeline_stage_source?: unknown }).pipeline_stage_source
                                         ) || liveStageStopReason;
                                     try {
                                         chatbotState = await getChatbotContactState(supabase, page.id, contact.id);
@@ -1140,7 +1142,8 @@ export async function POST(request: NextRequest) {
                                             ]);
                                             if (freshContactResult.error) throw freshContactResult.error;
                                             if (!freshContactResult.data) throw new Error('Contact unavailable before chatbot delivery');
-                                            const freshPipelineStop = chatbotStopReasonForPipelineStage(freshContactResult.data.pipeline_stage);
+                                            const freshPipelineStop = chatbotStopReasonForPipelineStage(
+                                                freshContactResult.data.pipeline_stage, freshContactResult.data.pipeline_stage_source);
                                             const freshStateStop = getChatbotStateStopReason(freshState);
                                             const allowedCompletedPhoto = replyingAfterDetailsCollected &&
                                                 freshStateStop === 'details_collected' &&

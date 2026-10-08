@@ -13,7 +13,7 @@ import { generateChatbotFollowUp, getChatbotKnowledgePageId, type ChatbotConfig 
 import { isChatbotContactAllowed, saveChatbotContactState, type ChatbotContactState } from '@/lib/chatbot-control';
 import { findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument, type ChatbotDriveFile, type ChatbotDriveFolder } from '@/lib/chatbot-drive-folders';
-import { isPipelineClosedForAutomation, updateContactPipelineStage, type ContactPipelineStage } from '@/lib/contact-pipeline';
+import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateContactPipelineStage, type ContactPipelineStage, type ContactPipelineSource } from '@/lib/contact-pipeline';
 import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
 
 const RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -33,6 +33,7 @@ type ScheduleContact = {
     last_interaction_at?: string | null;
     last_inbound_at?: string | null;
     pipeline_stage?: ContactPipelineStage | null;
+    pipeline_stage_source?: ContactPipelineSource | null;
 };
 
 type FollowUpJob = {
@@ -144,7 +145,7 @@ export async function scheduleChatbotFollowUps(input: {
     now?: Date;
 }): Promise<number> {
     if (!input.config.follow_up_enabled) return 0;
-    if (isPipelineClosedForAutomation(input.contact.pipeline_stage)) return 0;
+    if (isPipelineClosedForAutomation(input.contact.pipeline_stage, input.contact.pipeline_stage_source)) return 0;
 
     const now = input.now || new Date();
     const anchor = new Date(input.anchorInboundAt);
@@ -241,7 +242,7 @@ export async function processDueChatbotFollowUps(input: {
         try {
             const eligibility = await Promise.all([
                 supabase.from('pages').select('id, name, fb_page_id, access_token').eq('id', job.page_id).maybeSingle(),
-                supabase.from('contacts').select('id, page_id, psid, name, last_interaction_at, last_inbound_at, pipeline_stage').eq('id', job.contact_id).maybeSingle(),
+                supabase.from('contacts').select('id, page_id, psid, name, last_interaction_at, last_inbound_at, pipeline_stage,pipeline_stage_source').eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_configs').select('*').eq('page_id', job.page_id).maybeSingle(),
                 supabase.from('chatbot_contact_states').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle()
             ]);
@@ -258,7 +259,7 @@ export async function processDueChatbotFollowUps(input: {
             );
             if (!page?.access_token || !contact?.psid || !config?.enabled || !config?.follow_up_enabled ||
                 !isChatbotContactAllowed(config, job.contact_id) ||
-                state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage) ||
+                state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source) ||
                 latestInboundTime > anchorTime ||
                 (!messagingType && job.schedule_type !== 'manual_human_agent')) {
                 await markJob(supabase, job.id, {
@@ -298,7 +299,7 @@ export async function processDueChatbotFollowUps(input: {
                 await updateContactPipelineStage(supabase, {
                     pageId: job.page_id,
                     contactId: job.contact_id,
-                    stage: liveStopReason,
+                    stage: pipelineStageForMessengerSignal(liveStopReason),
                     source: 'messenger',
                     now
                 });

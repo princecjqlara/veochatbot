@@ -1,6 +1,6 @@
 import { getConversationForPsid } from '@/lib/facebook';
 import { getChatbotContactState, saveChatbotContactState, isChatbotContactAllowed } from '@/lib/chatbot-control';
-import { isPipelineClosedForAutomation, updateContactPipelineStage } from '@/lib/contact-pipeline';
+import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateContactPipelineStage } from '@/lib/contact-pipeline';
 import { findLatestMessengerSystemSignal } from '@/lib/messaging-auto-tag';
 
 export class ChatbotDeliveryStoppedError extends Error {}
@@ -39,7 +39,7 @@ export async function assertChatbotDeliveryAllowed(input: {
         if (!contact || !config?.enabled || !isChatbotContactAllowed(config, input.contactId) ||
             (input.followUpJobId && jobResult?.data?.status !== 'processing') ||
             (input.followUp && !config.follow_up_enabled) ||
-            (!completedPhoto && (state?.status === 'stopped' || isPipelineClosedForAutomation(contact.pipeline_stage))) ||
+            (!completedPhoto && (state?.status === 'stopped' || isPipelineClosedForAutomation(contact.pipeline_stage, contact.pipeline_stage_source))) ||
             (input.anchorInboundAt && new Date(contact.last_inbound_at || 0).getTime() > new Date(input.anchorInboundAt).getTime())) {
             throw new ChatbotDeliveryStoppedError('Chatbot eligibility changed; automatic delivery cancelled');
         }
@@ -62,6 +62,6 @@ export async function assertChatbotDeliveryAllowed(input: {
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), claimed_at: null })
         .eq('page_id', input.pageId).eq('contact_id', input.contactId).in('status', ['pending', 'processing', 'ready_manual']);
     if (error) throw new Error(error.message);
-    await updateContactPipelineStage(db, { pageId: input.pageId, contactId: input.contactId, stage: signal, source: 'messenger' });
+    await updateContactPipelineStage(db, { pageId: input.pageId, contactId: input.contactId, stage: pipelineStageForMessengerSignal(signal), source: 'messenger' });
     throw new ChatbotDeliveryStoppedError(`Messenger lead stage: ${signal}; automatic delivery cancelled`);
 }

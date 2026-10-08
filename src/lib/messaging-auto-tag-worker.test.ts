@@ -37,8 +37,11 @@ describe('choosePositiveOutcomeTag', () => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('durable Messenger lead-stage stops', () => {
-    it.each(['missing default tags', 'outcome tag failure', 'audit failure'])(
-        'stops and cancels queued follow-ups despite %s', async (failure) => {
+    it.each([
+        ['missing default tags', 'Qualified'], ['outcome tag failure', 'Qualified'], ['audit failure', 'Qualified'],
+        ['missing default tags', 'Contacted'], ['missing default tags', 'Intake'], ['missing default tags', 'Custom Stage']
+    ])(
+        'stops and cancels queued follow-ups despite %s for %s', async (failure, stage) => {
             vi.clearAllMocks();
             const mutations: Array<{ table: string; payload: any }> = [];
             const db = { from: vi.fn((table: string) => {
@@ -68,11 +71,11 @@ describe('durable Messenger lead-stage stops', () => {
                 if (failure === 'audit failure') throw new Error('Audit unavailable');
             });
             vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [
-                { id: 'lead-1', message: 'Lead stage set to Qualified', from: { id: 'fb-page' }, created_time: '2026-10-07T00:00:00Z' }
+                { id: 'lead-1', message: `Lead stage set to ${stage}`, from: { id: 'fb-page' }, created_time: '2026-10-07T00:00:00Z' }
             ] }) }));
             const result = await processOneMessagingAutoTagPage();
             expect(result).toMatchObject({ pages: 1, chatbotStopped: 1, pipelineMoved: 1 });
-            expect(mutations).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: 'qualified' }) });
+            expect(mutations).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: stage === 'Qualified' ? 'qualified' : 'manual' }) });
             expect(mutations).toContainEqual({ table: 'chatbot_follow_up_jobs', payload: expect.objectContaining({ status: 'cancelled' }) });
         }
     );

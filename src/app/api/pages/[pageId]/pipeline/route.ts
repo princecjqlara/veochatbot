@@ -5,9 +5,12 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import {
     CONTACT_PIPELINE_LABELS,
     CONTACT_PIPELINE_STAGES,
+    chatbotStopReasonForPipelineStage,
     isContactPipelineStage,
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
+import { getChatbotContactState, saveChatbotContactState } from '@/lib/chatbot-control';
+import { cancelPendingChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 
 export const dynamic = 'force-dynamic';
 
@@ -137,6 +140,14 @@ export async function PATCH(
         if (contactError) throw contactError;
         if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
 
+        // Save the handoff before the visible stage so in-flight bot delivery
+        // stops as soon as this edit is accepted, including nonterminal stages.
+        await saveChatbotContactState(db, {
+            pageId, contactId,
+            existingState: await getChatbotContactState(db, pageId, contactId),
+            stopReason: chatbotStopReasonForPipelineStage(body.stage, 'manual')
+        });
+        await cancelPendingChatbotFollowUps({ supabase: db, pageId, contactId, reason: 'Lead stage set by a person' });
         await updateContactPipelineStage(db, {
             pageId,
             contactId,

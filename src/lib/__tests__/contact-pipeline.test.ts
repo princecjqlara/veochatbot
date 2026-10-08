@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     isPipelineClosedForAutomation,
+    chatbotStopReasonForPipelineStage,
     pipelineStageForChatbotProgress,
     pipelineStageForMessengerSignal,
     shouldAutoMovePipeline,
@@ -52,5 +53,48 @@ describe('contact pipeline', () => {
         expect(isPipelineClosedForAutomation('converted')).toBe(true);
         expect(isPipelineClosedForAutomation('not_qualified')).toBe(true);
         expect(isPipelineClosedForAutomation('opted_out')).toBe(true);
+    });
+
+    it.each(['new', 'engaged', 'collecting_details'])(
+        'stops a human-selected %s stage while retaining automatic intake', (stage) => {
+            expect(isPipelineClosedForAutomation(stage, 'manual')).toBe(true);
+            expect(isPipelineClosedForAutomation(stage, 'messenger')).toBe(true);
+            expect(chatbotStopReasonForPipelineStage(stage, 'manual')).toBe('manual');
+            expect(isPipelineClosedForAutomation(stage, 'chatbot')).toBe(false);
+            expect(isPipelineClosedForAutomation(stage, 'system')).toBe(false);
+        }
+    );
+
+    it('prevents chatbot progress from replacing a human stage', async () => {
+        const update = vi.fn();
+        const chain: any = { select: () => chain, eq: () => chain,
+            maybeSingle: async () => ({ data: { pipeline_stage: 'engaged', pipeline_stage_source: 'manual' }, error: null }),
+            update
+        };
+        expect(await updateContactPipelineStage({ from: () => chain }, {
+            pageId: 'page', contactId: 'contact', stage: 'qualified', source: 'chatbot'
+        })).toBe(false);
+        expect(update).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite a handoff arriving after the pipeline read', async () => {
+        let contact = { pipeline_stage: 'engaged', pipeline_stage_source: 'chatbot' };
+        const filters: Record<string, string> = {};
+        let payload: typeof contact;
+        const chain: any = { select: () => chain,
+            eq: (key: string, value: string) => { filters[key] = value; return chain; },
+            maybeSingle: async () => {
+                const snapshot = { ...contact };
+                contact = { pipeline_stage: 'engaged', pipeline_stage_source: 'manual' };
+                return { data: snapshot, error: null };
+            },
+            update: (value: typeof contact) => { payload = value; return chain; },
+            then: (resolve: any) => {
+                if (filters.pipeline_stage === contact.pipeline_stage && filters.pipeline_stage_source === contact.pipeline_stage_source) contact = payload;
+                return Promise.resolve({ error: null }).then(resolve);
+            }
+        };
+        await updateContactPipelineStage({ from: () => chain }, { pageId: 'page', contactId: 'contact', stage: 'qualified', source: 'chatbot' });
+        expect(contact).toEqual({ pipeline_stage: 'engaged', pipeline_stage_source: 'manual' });
     });
 });

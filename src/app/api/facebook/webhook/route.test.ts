@@ -309,8 +309,9 @@ function createPhotoChatbotSupabaseMock(options: {
                         })
                     })
                 }),
-                update: vi.fn().mockReturnValue({
-                    eq: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+                update: vi.fn(() => {
+                    const chain: any = { eq: () => chain, then: (resolve: any) => Promise.resolve({ error: null }).then(resolve) };
+                    return chain;
                 })
             };
         }
@@ -1093,8 +1094,14 @@ describe('POST /api/facebook/webhook', () => {
     });
 
     it('cancels delivery when the contact is handed off during generation', async () => {
-        const supabase = createPhotoChatbotSupabaseMock({ deliveryStage: 'qualified', pipelineSource: 'manual' });
+        const options = { pipelineSource: 'chatbot', deliveryStage: 'engaged' };
+        const supabase = createPhotoChatbotSupabaseMock(options);
         mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.generateChatbotResponse.mockImplementationOnce(async () => {
+            options.pipelineSource = 'manual';
+            options.deliveryStage = 'qualified';
+            return { messages: ['Reply'], collected_details: {}, missing_details: [], details_complete: false };
+        });
         await POST(createCustomerPhotoRequest());
         expect(mocks.generateChatbotResponse).toHaveBeenCalled();
         expect(mocks.sendMessage).not.toHaveBeenCalled();
@@ -1151,11 +1158,12 @@ describe('POST /api/facebook/webhook', () => {
     });
 
     it('cancels delivery if a saved stage changes while the last Messenger read is in flight', async () => {
-        const options = { deliveryStage: 'engaged', pipelineSource: 'manual' };
+        const options = { deliveryStage: 'engaged', pipelineSource: 'chatbot' };
         mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock(options));
         mocks.generateChatbotResponse.mockImplementationOnce(async () => {
             mocks.getConversationForPsid.mockImplementationOnce(async () => {
                 options.deliveryStage = 'qualified';
+                options.pipelineSource = 'manual';
                 return null;
             });
             return { messages: ['Reply'], collected_details: {}, missing_details: [], details_complete: false };
@@ -1165,7 +1173,7 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
-    it.each(['Qualified', 'Not Qualified', 'Converted', 'Order Created'])('saves an immediate stop for a %s stage echo', async stage => {
+    it.each(['Qualified', 'Not Qualified', 'Converted', 'Order Created', 'Contacted', 'Intake', 'Custom Stage'])('saves an immediate stop for a %s stage echo', async stage => {
         const supabase = createPhotoChatbotSupabaseMock({ knownContact: true });
         mocks.getSupabaseAdmin.mockReturnValue(supabase);
         const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
@@ -1173,8 +1181,31 @@ describe('POST /api/facebook/webhook', () => {
             message: { mid: 'stage-event', text: `Lead stage set to ${stage}`, is_echo: true }
         }] }] }));
         expect(response.status).toBe(200);
-        expect(supabase.contactStateUpsert).toHaveBeenCalledWith(expect.objectContaining({ status: 'stopped', stop_reason: stage.toLowerCase().replace(/ /g, '_') }), expect.anything());
+        const reason = ['Contacted', 'Intake', 'Custom Stage'].includes(stage) ? 'manual' : stage.toLowerCase().replace(/ /g, '_');
+        expect(supabase.contactStateUpsert).toHaveBeenCalledWith(expect.objectContaining({ status: 'stopped', stop_reason: reason }), expect.anything());
         expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it.each(['Contacted', 'Intake', 'Custom Stage'])('stops for a %s event read from Messenger history', async stage => {
+        const supabase = createPhotoChatbotSupabaseMock();
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            id: 'human-stage', message: `Lead stage set to ${stage}`, from: { id: 'fb_page_1' }
+        }] } });
+        const response = await POST(createWebhookRequest());
+        expect(response.status).toBe(200);
+        expect(supabase.contactStateUpsert).toHaveBeenCalledWith(expect.objectContaining({ status: 'stopped', stop_reason: 'manual' }), expect.anything());
+        expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it.each(['new', 'engaged', 'collecting_details'])('blocks normal and photo replies for a manually selected %s stage', async stage => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({ pipelineStage: stage, pipelineSource: 'manual' }));
+        expect((await POST(createWebhookRequest())).status).toBe(200);
+        expect((await POST(createCustomerPhotoRequest())).status).toBe(200);
+        expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
+        expect(mocks.analyzeInboundCustomerImages).not.toHaveBeenCalled();
         expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 

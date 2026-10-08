@@ -48,12 +48,19 @@ export function isContactPipelineStage(value: unknown): value is ContactPipeline
 }
 
 /** Contacts in these stages have finished the bot qualification flow. */
-export function isPipelineClosedForAutomation(value: unknown): boolean {
-    return isContactPipelineStage(value) && AUTOMATION_CLOSED_STAGES.has(value);
+export function isPipelineClosedForAutomation(value: unknown, source?: unknown): boolean {
+    return source === 'manual' || source === 'messenger' ||
+        (isContactPipelineStage(value) && AUTOMATION_CLOSED_STAGES.has(value));
+}
+
+export function chatbotStopReasonForPipelineStage(stage: unknown, source?: unknown): ChatbotStopReason | null {
+    if (stage === 'opted_out') return 'opt_out';
+    if (stage === 'qualified' || stage === 'order_created' || stage === 'converted' || stage === 'not_qualified') return stage;
+    return source === 'manual' || source === 'messenger' ? 'manual' : null;
 }
 
 export function pipelineStageForMessengerSignal(signal: MessengerSystemSignal): ContactPipelineStage {
-    return signal;
+    return signal === 'manual' ? 'engaged' : signal;
 }
 
 export function pipelineStageForChatbotProgress(input: {
@@ -113,13 +120,15 @@ export async function updateContactPipelineStage(
     if (!contact) return false;
 
     const current = isContactPipelineStage(contact.pipeline_stage) ? contact.pipeline_stage : 'new';
+    if (input.source === 'chatbot' &&
+        (contact.pipeline_stage_source === 'manual' || contact.pipeline_stage_source === 'messenger')) return false;
     // A person confirming the same stage in Messenger is still a handoff.
     // Retain that source so later photo requests cannot reopen bot intake.
     const messengerHandoff = current === input.stage && input.source === 'messenger' &&
-        contact.pipeline_stage_source !== 'messenger' && isPipelineClosedForAutomation(current);
+        contact.pipeline_stage_source !== 'messenger';
     if (!input.force && !messengerHandoff && !shouldAutoMovePipeline(current, input.stage)) return false;
 
-    const { error: updateError } = await supabase
+    let update = supabase
         .from('contacts')
         .update({
             pipeline_stage: input.stage,
@@ -128,6 +137,12 @@ export async function updateContactPipelineStage(
         })
         .eq('id', input.contactId)
         .eq('page_id', input.pageId);
+    // A human may change the stage between the read and this update.
+    if (!input.force) {
+        update = update.eq('pipeline_stage', contact.pipeline_stage);
+        if (contact.pipeline_stage_source) update = update.eq('pipeline_stage_source', contact.pipeline_stage_source);
+    }
+    const { error: updateError } = await update;
     if (updateError) throw new Error(updateError.message || 'Could not update contact pipeline stage');
     return true;
 }

@@ -20,6 +20,19 @@ describe('classifyMessengerSystemMessage', () => {
         expect(classifyMessengerSystemMessage('You requested PHP699. View: fb-pma://payments/orderdetails/?invoice_id=12345')).toBe('order_created');
     });
 
+    it.each(['Intake', 'Contacted', 'Interested', 'Custom Stage'])(
+        'treats an explicit %s stage as a durable human handoff', (stage) => {
+            expect(classifyMessengerSystemMessage(`Lead stage set to ${stage}`)).toBe('manual');
+            expect(findLatestMessengerLeadStageEvent([{ id: 'stage-event', message: `Lead stage set to ${stage}`,
+                from: { id: 'page-1' } }], 'page-1')?.signal).toBe('manual');
+        }
+    );
+
+    it('recognizes the Unqualified alias without matching ordinary stage discussion', () => {
+        expect(classifyMessengerSystemMessage('Lead stage set to Unqualified.')).toBe('not_qualified');
+        expect(classifyMessengerSystemMessage('Please set the lead stage to Contacted')).toBeNull();
+    });
+
     it('does not mistake payment claims or ordinary text for a qualifying event', () => {
         expect(classifyMessengerSystemMessage('I paid PHP699')).toBeNull();
         expect(classifyMessengerSystemMessage('You created an order for PHP699')).toBeNull();

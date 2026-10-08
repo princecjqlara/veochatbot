@@ -1,4 +1,4 @@
-export type MessengerSystemSignal = 'order_created' | 'qualified' | 'not_qualified' | 'converted';
+export type MessengerSystemSignal = 'order_created' | 'qualified' | 'not_qualified' | 'converted' | 'manual';
 
 type MessengerHistoryMessage = {
     id?: string;
@@ -53,10 +53,13 @@ export async function loadMessengerHistoryForStopCheck(input: {
 // The stage and order text was observed in the app's read-only Messenger audit.
 export function classifyMessengerSystemMessage(text: string): MessengerSystemSignal | null {
     const value = text.trim();
-    const stage = /^Lead stage set to (Qualified|Not Qualified|Disqualified|Converted|Order Created)\.?$/i.exec(value);
+    const stage = /^Lead stage set to ([^\r\n]{1,80}?)\.?$/i.exec(value);
     if (stage) {
-        const normalized = stage[1].toLowerCase().replace(/\s+/g, '_');
-        return normalized === 'disqualified' ? 'not_qualified' : normalized as MessengerSystemSignal;
+        const normalized = stage[1].trim().toLowerCase().replace(/\s+/g, '_');
+        if (normalized === 'disqualified' || normalized === 'unqualified') return 'not_qualified';
+        if (['qualified', 'not_qualified', 'converted', 'order_created'].includes(normalized)) return normalized as MessengerSystemSignal;
+        // Intake, Contacted and custom Lead Center stages are human handoffs too.
+        return 'manual';
     }
 
     if (/^You (?:created an order for|requested) (?:PHP|\u20B1)[\d,.]+\b/i.test(value) &&

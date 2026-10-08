@@ -157,7 +157,7 @@ export async function POST(
                 .from('contacts')
                 .update({
                     pipeline_stage: 'engaged',
-                    pipeline_stage_source: 'manual',
+                    pipeline_stage_source: 'system',
                     pipeline_stage_updated_at: now
                 })
                 .eq('page_id', pageId)

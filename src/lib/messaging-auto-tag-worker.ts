@@ -37,7 +37,7 @@ type MessengerOutcomeTag = {
     system_key: MessengerSystemSignal;
 };
 
-export const MESSENGER_OUTCOME_TAGS: Record<MessengerSystemSignal, { name: string; color: string }> = {
+export const MESSENGER_OUTCOME_TAGS: Record<Exclude<MessengerSystemSignal, 'manual'>, { name: string; color: string }> = {
     qualified: { name: 'Qualified', color: '#2563eb' },
     not_qualified: { name: 'Not Qualified', color: '#dc2626' },
     converted: { name: 'Converted', color: '#7c3aed' },
@@ -247,7 +247,7 @@ export async function processOneMessagingAutoTagPage() {
                         stateBeforeStop: existingState
                     });
                 }
-                if (tag && signals.some(signal => signal !== 'not_qualified')) {
+                if (tag && signals.some(signal => signal !== 'not_qualified' && signal !== 'manual')) {
                     const { error: assignError } = await db.from('contact_tags').upsert({
                         contact_id: contact.id,
                         tag_id: tag.id

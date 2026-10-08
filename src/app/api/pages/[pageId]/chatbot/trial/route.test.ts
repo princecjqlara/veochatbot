@@ -85,4 +85,26 @@ describe('live Messenger chatbot trial controls', () => {
         expect(response.status).toBe(403);
         expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
     });
+
+    it('explicitly resets intake without leaving a human handoff source', async () => {
+        const payloads: Record<string, any> = {};
+        const db = { from: (table: string) => {
+            const chain: any = { select: () => chain, eq: () => chain, in: () => chain,
+                maybeSingle: async () => ({ data: { id: 'contact_1', psid: 'psid_1' }, error: null }),
+                delete: () => { payloads[table] = 'deleted'; return chain; },
+                update: (payload: any) => { payloads[table] = payload; return chain; },
+                then: (resolve: any) => Promise.resolve({ error: null }).then(resolve)
+            };
+            return chain;
+        } };
+        mocks.getSupabaseAdmin.mockReturnValue(db);
+        const response = await POST(new Request('http://localhost/api/pages/page_1/chatbot/trial', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'reset', contact_id: 'contact_1' })
+        }) as NextRequest, { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        expect(payloads.contacts).toEqual(expect.objectContaining({ pipeline_stage: 'engaged', pipeline_stage_source: 'system' }));
+        expect(payloads.chatbot_contact_states).toBe('deleted');
+        expect(payloads.chatbot_follow_up_jobs.status).toBe('cancelled');
+    });
 });

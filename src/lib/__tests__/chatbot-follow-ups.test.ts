@@ -272,6 +272,7 @@ describe('follow-up lead-stage checks', () => {
         const job = { id: 'job-1', page_id: 'page-1', contact_id: 'contact-1',
             anchor_inbound_at: '2026-10-06T00:00:00Z', schedule_type: 'human_agent', sequence_index: 0, attempt_count: 0 };
         let stage = 'engaged';
+        let source = 'chatbot';
         let jobStatus = 'processing';
         const supabase = { from: vi.fn((table: string) => {
             const chain: any = {
@@ -282,7 +283,7 @@ describe('follow-up lead-stage checks', () => {
                 maybeSingle: async () => {
                     if (table === 'chatbot_follow_up_jobs') return { data: { id: job.id, status: jobStatus }, error: null };
                     if (table === 'pages') return { data: { id: 'page-1', name: 'Page', fb_page_id: 'fb-page', access_token: 'token' }, error: null };
-                    if (table === 'contacts') return { data: { id: 'contact-1', page_id: 'page-1', psid: 'customer', name: 'Customer', last_inbound_at: job.anchor_inbound_at, pipeline_stage: stage }, error: null };
+                    if (table === 'contacts') return { data: { id: 'contact-1', page_id: 'page-1', psid: 'customer', name: 'Customer', last_inbound_at: job.anchor_inbound_at, pipeline_stage: stage, pipeline_stage_source: source }, error: null };
                     if (table === 'chatbot_configs') return { data: { page_id: 'page-1', enabled: true, follow_up_enabled: true }, error: null };
                     return { data: { status: 'active', collected_details: {}, missing_details: [] }, error: options.lookupError ? { message: 'State read failed' } : null };
                 },
@@ -290,10 +291,10 @@ describe('follow-up lead-stage checks', () => {
             };
             return chain;
         }) };
-        return { supabase, updates, close: () => { stage = 'qualified'; }, cancel: () => { jobStatus = 'cancelled'; } };
+        return { supabase, updates, close: () => { stage = 'qualified'; }, handoff: () => { source = 'manual'; }, cancel: () => { jobStatus = 'cancelled'; } };
     }
 
-    it.each(['Qualified', 'Not Qualified', 'Converted', 'Order Created'])('cancels a due follow-up when Messenger has %s before the poller catches up', async (stage) => {
+    it.each(['Qualified', 'Not Qualified', 'Converted', 'Order Created', 'Contacted', 'Intake', 'Custom Stage'])('cancels a due follow-up when Messenger has %s before the poller catches up', async (stage) => {
         vi.clearAllMocks();
         const { supabase, updates } = fixture();
         mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [
@@ -304,7 +305,18 @@ describe('follow-up lead-stage checks', () => {
         expect(result).toMatchObject({ sent: 0, cancelled: 1 });
         expect(mocks.generateChatbotFollowUp).not.toHaveBeenCalled();
         expect(mocks.sendMessage).not.toHaveBeenCalled();
-        expect(updates).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: stage.toLowerCase().replace(/ /g, '_') }) });
+        const reason = ['Contacted', 'Intake', 'Custom Stage'].includes(stage) ? 'manual' : stage.toLowerCase().replace(/ /g, '_');
+        expect(updates).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: reason }) });
+    });
+
+    it('cancels a Contacted handoff arriving during generation', async () => {
+        vi.clearAllMocks();
+        const { supabase, handoff } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{ message: 'I need a video', from: { id: 'customer' } }] } });
+        mocks.generateChatbotFollowUp.mockImplementation(async () => { handoff(); return { message: 'A follow-up', messages: ['A follow-up'] }; });
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
     it('cancels a job handed off while the AI is generating its follow-up', async () => {
