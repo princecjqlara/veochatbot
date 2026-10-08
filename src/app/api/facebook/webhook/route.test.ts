@@ -637,7 +637,7 @@ describe('POST /api/facebook/webhook', () => {
             stopped: 0,
             skipped: 0
         });
-        mocks.getConversationForPsid.mockResolvedValue(null);
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [] } });
         mocks.analyzeInboundCustomerImages.mockResolvedValue('A payment receipt showing PHP 150.');
         mocks.generateChatbotResponse.mockResolvedValue({
             reply: 'Thanks, I can see the PHP 150 receipt.',
@@ -1048,22 +1048,16 @@ describe('POST /api/facebook/webhook', () => {
         );
     });
 
-    it('answers a new photo after automatic intake completion and retains the stopped state', async () => {
+    it('keeps an automatically qualified contact stopped after a new photo', async () => {
         const supabase = createPhotoChatbotSupabaseMock({
             pipelineStage: 'qualified', pipelineSource: 'chatbot', stopReason: 'details_collected'
         });
         mocks.getSupabaseAdmin.mockReturnValue(supabase);
         const response = await POST(createCustomerPhotoRequest());
         expect(response.status).toBe(200);
-        expect(mocks.analyzeInboundCustomerImages).toHaveBeenCalledTimes(1);
-        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
-        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({
-            collectedDetails: { address: 'Saved address' }
-        }));
-        expect(supabase.contactStateUpsert).toHaveBeenLastCalledWith(expect.objectContaining({
-            status: 'stopped', stop_reason: 'details_collected',
-            collected_details: { address: 'Saved address' }
-        }), expect.anything());
+        expect(mocks.analyzeInboundCustomerImages).not.toHaveBeenCalled();
+        expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
     it('saves late customer answers after handoff without replying or restarting the bot', async () => {
@@ -1118,6 +1112,31 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ inboundMessage: 'How much is a video?' }));
         expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
         expect(supabase.welcomeSelect).not.toHaveBeenCalled();
+    });
+
+    it.each(['qualified', 'converted', 'not_qualified', 'order_created', 'opted_out'])(
+        'blocks text, photos and buttons for %s regardless of who set the stage', async stage => {
+            for (const source of ['chatbot', 'manual', 'messenger']) {
+                mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({ pipelineStage: stage, pipelineSource: source }));
+                expect((await POST(createWebhookRequest())).status).toBe(200);
+                expect((await POST(createCustomerPhotoRequest())).status).toBe(200);
+                expect((await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+                    sender: { id: 'contact_psid_1' }, recipient: { id: 'fb_page_1' }, timestamp: Date.now(),
+                    postback: { title: 'Samples please', payload: 'SAMPLES' }
+                }] }] }))).status).toBe(200);
+            }
+            expect(mocks.analyzeInboundCustomerImages).not.toHaveBeenCalled();
+            expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
+            expect(mocks.sendMessage).not.toHaveBeenCalled();
+        }
+    );
+
+    it('requests a safe retry when Messenger returns no conversation for a stop audit', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock());
+        mocks.getConversationForPsid.mockResolvedValue(null);
+        expect((await POST(createWebhookRequest())).status).toBe(500);
+        expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
     it('answers a first text inquiry instead of consuming it with a welcome', async () => {

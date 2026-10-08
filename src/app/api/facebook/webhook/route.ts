@@ -817,7 +817,6 @@ export async function POST(request: NextRequest) {
 
                                 if (chatbotConfig?.enabled && isChatbotContactAllowed(chatbotConfig, contact.id)) {
                                     let chatbotState = null;
-                                    let replyingAfterDetailsCollected = false;
                                     let liveStageStopReason: ChatbotStopReason | null = null;
                                     let conversationAuditFailed = false;
                                     try {
@@ -831,7 +830,7 @@ export async function POST(request: NextRequest) {
                                         }
                                         const conversationMessages = await loadMessengerHistoryForStopCheck({
                                             facebookPageId: pageId, accessToken: page.access_token,
-                                            initialPage: resolvedConversation?.messages
+                                            initialPage: resolvedConversation?.messages, requireAvailable: true
                                         });
                                         const liveLeadStageEvent = findLatestMessengerLeadStageEvent(
                                             conversationMessages,
@@ -899,27 +898,11 @@ export async function POST(request: NextRequest) {
                                     try {
                                         chatbotState = await getChatbotContactState(supabase, page.id, contact.id);
                                         const storedStopReason = getChatbotStateStopReason(chatbotState, interactionTime);
-                                        // A new photo is a customer request after the sales intake has
-                                        // ended. Reply once, retaining the completed intake and its stop.
-                                        // Qualification by a person or Messenger remains a hard stop.
-                                        if (
-                                            inboundImageUrls.length > 0 &&
-                                            storedStopReason === 'details_collected' &&
-                                            !conversationAuditFailed &&
-                                            !liveStageStopReason &&
-                                            (!stateStopReason || (
-                                                stateStopReason === 'qualified' &&
-                                                (contact as { pipeline_stage_source?: unknown }).pipeline_stage_source === 'chatbot'
-                                            ))
-                                        ) {
-                                            replyingAfterDetailsCollected = true;
-                                            stateStopReason = null;
-                                        }
                                         if (storedStopReason === 'window_expired') {
                                             // A fresh customer message opens a new seven-day activity window.
                                             // Other stop reasons remain durable until manually reset.
                                             chatbotState = null;
-                                        } else if (!stateStopReason && !replyingAfterDetailsCollected) {
+                                        } else if (!stateStopReason) {
                                             stateStopReason = storedStopReason;
                                         }
                                         stateStopReason = stateStopReason || classifyChatbotStopIntent(inboundMessageText, {
@@ -1049,9 +1032,7 @@ export async function POST(request: NextRequest) {
                                                 chatbotConfig.details_to_collect,
                                                 collectedDetails
                                             );
-                                            let generatedStopReason: ChatbotStopReason | null = replyingAfterDetailsCollected
-                                                ? 'details_collected'
-                                                : null;
+                                            let generatedStopReason: ChatbotStopReason | null = null;
                                             let detailsComplete = false;
                                             let generatedMediaDocumentIds: string[] = [];
                                             let generatedDriveFileDocumentIds: string[] = [];
@@ -1145,11 +1126,7 @@ export async function POST(request: NextRequest) {
                                             const freshPipelineStop = chatbotStopReasonForPipelineStage(
                                                 freshContactResult.data.pipeline_stage, freshContactResult.data.pipeline_stage_source);
                                             const freshStateStop = getChatbotStateStopReason(freshState);
-                                            const allowedCompletedPhoto = replyingAfterDetailsCollected &&
-                                                freshStateStop === 'details_collected' &&
-                                                freshPipelineStop === 'qualified' &&
-                                                freshContactResult.data.pipeline_stage_source === 'chatbot';
-                                            if (!allowedCompletedPhoto && (freshPipelineStop || (freshStateStop && freshStateStop !== 'window_expired'))) {
+                                            if (freshPipelineStop || (freshStateStop && freshStateStop !== 'window_expired')) {
                                                 throw new ChatbotDeliveryStoppedError('Chatbot stopped during reply generation; automatic reply cancelled');
                                             }
                                             chatbotState = freshState || chatbotState;
@@ -1159,14 +1136,12 @@ export async function POST(request: NextRequest) {
                                                 collectedDetails, missingDetails, inboundAt: interactionAt,
                                                 // Persist answers before delivery; apply this response's
                                                 // completion stop only after its final message is sent.
-                                                stopReason: replyingAfterDetailsCollected ? 'details_collected' :
-                                                    generatedStopReason === 'details_collected' ? null : generatedStopReason
+                                                stopReason: generatedStopReason === 'details_collected' ? null : generatedStopReason
                                             });
 
                                             const checkDelivery = () => assertChatbotDeliveryAllowed({
                                                 supabase, pageId: page.id, facebookPageId: pageId,
-                                                accessToken: page.access_token, contactId: contact.id, psid: senderId,
-                                                allowCompletedPhoto: replyingAfterDetailsCollected
+                                                accessToken: page.access_token, contactId: contact.id, psid: senderId
                                             });
                                             let sentMedia = false;
                                             const knowledgePageId = getChatbotKnowledgePageId(chatbotConfig);

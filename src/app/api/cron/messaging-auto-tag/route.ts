@@ -10,7 +10,8 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     try {
-        return NextResponse.json({ success: true, ...await processOneMessagingAutoTagPage() });
+        const pageId = new URL(request.url).searchParams.get('pageId') || undefined;
+        return NextResponse.json({ success: true, ...await processOneMessagingAutoTagPage({ pageId }) });
     } catch (error) {
         console.error('[MESSAGING_AUTO_TAG] Failed:', error);
         return NextResponse.json({ error: 'Messaging auto-tag sync failed' }, { status: 500 });

@@ -19,7 +19,11 @@ export async function loadMessengerHistoryForStopCheck(input: {
     accessToken: string;
     initialPage?: { data?: MessengerHistoryMessage[]; paging?: { next?: string } } | null;
     maxPages?: number;
+    requireAvailable?: boolean;
 }): Promise<MessengerHistoryMessage[]> {
+    if (input.requireAvailable && !Array.isArray(input.initialPage?.data)) {
+        throw new Error('Messenger lead-stage history is unavailable; automatic delivery blocked');
+    }
     const messages = [...(input.initialPage?.data || [])];
     let next = input.initialPage?.paging?.next;
     const seen = new Set<string>();

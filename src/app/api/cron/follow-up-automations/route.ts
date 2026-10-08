@@ -11,6 +11,15 @@ export async function GET(_request: NextRequest) {
     const startTime = Date.now();
 
     try {
+        // Sync handoffs on active chatbot Pages before queued messages. A stale
+        // token on an unrelated Page must not consume this stop-check slot.
+        let messagingAutoTag: Record<string, unknown> = { skipped: true };
+        try {
+            messagingAutoTag = await processOneMessagingAutoTagPage({ chatbotOnly: true });
+        } catch (error) {
+            messagingAutoTag = { ok: false, message: error instanceof Error ? error.message : String(error) };
+            console.warn('Messaging lead-stage sync failed; delivery still verifies each contact:', error);
+        }
         // Follow-ups are this route's primary job. Run them before the nested
         // campaign worker, which can consume almost the entire external cron
         // request timeout when campaign delivery is slow.
@@ -47,16 +56,6 @@ export async function GET(_request: NextRequest) {
                 message: campaignError instanceof Error ? campaignError.message : String(campaignError)
             };
             console.warn('Campaign continuation from follow-up cron failed:', campaignError);
-        }
-
-        // The existing minute scheduler also advances one Messenger page per run.
-        // Keep this isolated so an unavailable Meta token cannot delay follow-ups.
-        let messagingAutoTag: Record<string, unknown> = { skipped: true };
-        try {
-            messagingAutoTag = await processOneMessagingAutoTagPage();
-        } catch (error) {
-            messagingAutoTag = { ok: false, message: error instanceof Error ? error.message : String(error) };
-            console.warn('Messaging auto-tag continuation failed:', error);
         }
 
         return NextResponse.json({

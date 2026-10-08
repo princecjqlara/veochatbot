@@ -113,6 +113,7 @@ async function getMessagesSince(conversationId: string, token: string, since: st
         seen.add(next);
         url.searchParams.delete('access_token');
         const response: Response = await fetch(url, {
+            cache: 'no-store',
             headers: { Authorization: `Bearer ${token}` },
             signal: AbortSignal.timeout(15_000)
         });
@@ -127,11 +128,17 @@ async function getMessagesSince(conversationId: string, token: string, since: st
     return messages;
 }
 
-export async function processOneMessagingAutoTagPage() {
+export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: boolean; pageId?: string } = {}) {
     const db = getSupabaseAdmin();
-    const { data: page, error: pageError } = await db.from('pages')
-        .select('id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor')
-        .eq('messaging_auto_tag_enabled', true)
+    const fields = input.chatbotOnly
+        ? 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,chatbot_configs!chatbot_configs_page_id_fkey!inner(enabled)'
+        : 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor';
+    let pageQuery = db.from('pages')
+        .select<typeof fields, Page>(fields)
+        .eq('messaging_auto_tag_enabled', true);
+    if (input.chatbotOnly) pageQuery = pageQuery.eq('chatbot_configs.enabled', true);
+    if (input.pageId) pageQuery = pageQuery.eq('id', input.pageId);
+    const { data: page, error: pageError } = await pageQuery
         .order('messaging_auto_tag_attempted_at', { ascending: true })
         .limit(1).maybeSingle();
     if (pageError) throw pageError;

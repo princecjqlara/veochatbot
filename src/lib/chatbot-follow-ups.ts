@@ -285,7 +285,7 @@ export async function processDueChatbotFollowUps(input: {
             );
             const conversationHistory = conversation?.messages?.data || [];
             const stageHistory = await loadMessengerHistoryForStopCheck({
-                facebookPageId: page.fb_page_id, accessToken: page.access_token, initialPage: conversation?.messages
+                facebookPageId: page.fb_page_id, accessToken: page.access_token, initialPage: conversation?.messages, requireAvailable: true
             });
             const liveStopReason = findLatestMessengerSystemSignal(stageHistory, page.fb_page_id);
             if (liveStopReason) {

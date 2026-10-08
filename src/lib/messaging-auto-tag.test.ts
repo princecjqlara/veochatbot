@@ -92,6 +92,10 @@ describe('classifyMessengerSystemMessage', () => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('Messenger lead-stage pagination', () => {
+    it('rejects an unavailable initial history page when checking automatic delivery', async () => {
+        await expect(loadMessengerHistoryForStopCheck({ facebookPageId: 'page-1', accessToken: 'token',
+            initialPage: null, requireAvailable: true })).rejects.toThrow('history is unavailable');
+    });
     it('finds an older handoff outside the newest history page without sending anything', async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [{
             message: 'Lead stage set to Converted', from: { id: 'page-1' }

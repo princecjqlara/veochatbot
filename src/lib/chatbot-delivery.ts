@@ -1,7 +1,7 @@
 import { getConversationForPsid } from '@/lib/facebook';
 import { getChatbotContactState, saveChatbotContactState, isChatbotContactAllowed } from '@/lib/chatbot-control';
 import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateContactPipelineStage } from '@/lib/contact-pipeline';
-import { findLatestMessengerSystemSignal } from '@/lib/messaging-auto-tag';
+import { findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 
 export class ChatbotDeliveryStoppedError extends Error {}
 
@@ -13,7 +13,6 @@ export async function assertChatbotDeliveryAllowed(input: {
     accessToken: string;
     contactId: string;
     psid: string;
-    allowCompletedPhoto?: boolean;
     anchorInboundAt?: string;
     followUp?: boolean;
     followUpJobId?: string;
@@ -34,12 +33,10 @@ export async function assertChatbotDeliveryAllowed(input: {
         if (jobResult?.error) throw new Error(jobResult.error.message);
         const contact = contactResult.data;
         const config = configResult.data;
-        const completedPhoto = input.allowCompletedPhoto && state?.stop_reason === 'details_collected' &&
-            contact?.pipeline_stage === 'qualified' && contact.pipeline_stage_source === 'chatbot';
         if (!contact || !config?.enabled || !isChatbotContactAllowed(config, input.contactId) ||
             (input.followUpJobId && jobResult?.data?.status !== 'processing') ||
             (input.followUp && !config.follow_up_enabled) ||
-            (!completedPhoto && (state?.status === 'stopped' || isPipelineClosedForAutomation(contact.pipeline_stage, contact.pipeline_stage_source))) ||
+            state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source) ||
             (input.anchorInboundAt && new Date(contact.last_inbound_at || 0).getTime() > new Date(input.anchorInboundAt).getTime())) {
             throw new ChatbotDeliveryStoppedError('Chatbot eligibility changed; automatic delivery cancelled');
         }
@@ -47,11 +44,18 @@ export async function assertChatbotDeliveryAllowed(input: {
     };
     const state = await checkSavedEligibility();
 
-    // The initial eligibility check has already scanned older history. This fresh
-    // page detects handoffs made while the AI or a previous bubble was running.
+    // Refresh the complete bounded audit, including changes during generation.
     const conversation = await getConversationForPsid(input.facebookPageId, input.psid, input.accessToken,
         { throwOnError: true, timeoutMs: 5000 });
-    const signal = findLatestMessengerSystemSignal(conversation?.messages?.data || [], input.facebookPageId);
+    let history;
+    try {
+        history = await loadMessengerHistoryForStopCheck({ facebookPageId: input.facebookPageId,
+            accessToken: input.accessToken, initialPage: conversation?.messages, requireAvailable: true });
+    } catch (error) {
+        await checkSavedEligibility();
+        throw error;
+    }
+    const signal = findLatestMessengerSystemSignal(history, input.facebookPageId);
     if (!signal) {
         // A stop can also arrive while the Graph read is in flight.
         await checkSavedEligibility();

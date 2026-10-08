@@ -73,7 +73,7 @@ describe('durable Messenger lead-stage stops', () => {
             vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [
                 { id: 'lead-1', message: `Lead stage set to ${stage}`, from: { id: 'fb-page' }, created_time: '2026-10-07T00:00:00Z' }
             ] }) }));
-            const result = await processOneMessagingAutoTagPage();
+            const result = await processOneMessagingAutoTagPage({ chatbotOnly: true });
             expect(result).toMatchObject({ pages: 1, chatbotStopped: 1, pipelineMoved: 1 });
             expect(mutations).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: stage === 'Qualified' ? 'qualified' : 'manual' }) });
             expect(mutations).toContainEqual({ table: 'chatbot_follow_up_jobs', payload: expect.objectContaining({ status: 'cancelled' }) });

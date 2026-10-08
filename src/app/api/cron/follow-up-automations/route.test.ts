@@ -61,6 +61,10 @@ describe('GET /api/cron/follow-up-automations', () => {
 
     it('processes follow-ups before invoking the potentially slow campaign worker', async () => {
         const callOrder: string[] = [];
+        mocks.processOneMessagingAutoTagPage.mockImplementation(async () => {
+            callOrder.push('stages');
+            return { pages: 1 };
+        });
         mocks.processDueFollowUpAutomationSteps.mockImplementation(async () => {
             callOrder.push('follow-ups');
             return { processed: 1 };
@@ -77,7 +81,8 @@ describe('GET /api/cron/follow-up-automations', () => {
             'https://veobot.vercel.app/api/cron/follow-up-automations'
         ) as NextRequest);
 
-        expect(callOrder).toEqual(['follow-ups', 'campaigns']);
+        expect(callOrder).toEqual(['stages', 'follow-ups', 'campaigns']);
+        expect(mocks.processOneMessagingAutoTagPage).toHaveBeenCalledWith({ chatbotOnly: true });
     });
 
     it('still processes follow-ups when campaign continuation temporarily fails', async () => {
