@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     buildChatbotMessages,
+    buildChatbotKnowledgeQuery,
     DEFAULT_CHATBOT_MODEL,
     generateChatbotFollowUp,
     generateChatbotResponse,
@@ -17,6 +18,7 @@ import {
     EMBEDDING_DIMENSIONS,
     generateEmbeddings
 } from '@/lib/chatbot-knowledge';
+import * as chatbotKnowledge from '@/lib/chatbot-knowledge';
 
 const config: ChatbotConfig = {
     page_id: 'page-db-id',
@@ -61,6 +63,7 @@ describe('shared chatbot knowledge library', () => {
 });
 
 afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     delete process.env.OPENROUTER_API_KEY;
 });
@@ -123,6 +126,60 @@ describe('VeoBot chatbot', () => {
             'user'
         ]);
         expect(messages.at(-1)?.content).toBe('Are you open today?');
+    });
+
+    it('keeps quotes and package choices chronological when history pages overlap or arrive out of order', () => {
+        const quote = { id: 'quote', message: 'The 24-second video is PHP899, with a PHP150 deposit.', from: { id: 'page', name: 'Page' }, created_time: '2026-10-08T10:00:00Z' };
+        const choice = { id: 'choice', message: 'Yung 24s po', from: { id: 'customer', name: 'Customer' }, created_time: '2026-10-08T10:01:00Z' };
+        const messages = buildChatbotMessages({ instructions: 'Help', pageId: 'page', inboundMessage: 'magkano na nga po', history: [quote, choice, quote] });
+        expect(messages.slice(1)).toEqual([
+            { role: 'assistant', content: quote.message }, { role: 'user', content: choice.message },
+            { role: 'user', content: 'magkano na nga po' }
+        ]);
+        expect(messages[0].content).toContain('Repeat an earlier answer when the customer asks for a reminder');
+        expect(messages[0].content).toContain('Distinguish the full price, deposit, and remaining balance');
+    });
+
+    it('retains an earlier quote past the first hundred messages in a long conversation', () => {
+        const history = Array.from({ length: 120 }, (_, index) => ({
+            id: `m-${index}`, message: index === 119 ? '24s was quoted at PHP899.' : `Message ${index}`,
+            from: { id: index === 119 ? 'page' : 'customer', name: 'Sender' },
+            created_time: new Date(1_000_000 - index * 1000).toISOString()
+        }));
+        const messages = buildChatbotMessages({ instructions: 'Help', pageId: 'page', inboundMessage: 'how much again?', history });
+        expect(messages[1]).toEqual({ role: 'assistant', content: '24s was quoted at PHP899.' });
+        expect(messages.at(-1)?.content).toBe('how much again?');
+    });
+
+    it('retrieves pricing knowledge using the package choice behind a short reminder', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const retrieve = vi.spyOn(chatbotKnowledge, 'retrieveChatbotKnowledge').mockResolvedValue([{
+            chunk_id: 'price-chunk', document_id: 'prices', title: 'Video prices',
+            content: '24-second AI commercial video: PHP899 total. Deposit: PHP150.', similarity: 0.9
+        }]);
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+            messages: ['PHP899 po ang 24-second video. PHP150 ang deposit, hindi ang full price.'], collected_details: {}
+        }) } }] }) });
+        vi.stubGlobal('fetch', fetchMock);
+        const result = await generateChatbotResponse({ config: { ...config, rag_enabled: true }, pageId: 'page', inboundMessage: 'magkano na nga po', history: [
+            { id: 'choice', message: 'Yung 24s po para sa commercial video', from: { id: 'customer', name: 'Customer' }, created_time: '2026-10-08T10:00:00Z' }
+        ] });
+        expect(retrieve).toHaveBeenCalledWith(expect.objectContaining({ query: expect.stringContaining('Yung 24s po para sa commercial video') }));
+        expect(retrieve.mock.calls[0][0].query).toContain('magkano na nga po');
+        const request = JSON.parse(fetchMock.mock.calls[0][1].body);
+        expect(request.messages[0].content).toContain('24-second AI commercial video: PHP899 total');
+        expect(request.messages.at(-1)).toEqual({ role: 'user', content: 'magkano na nga po' });
+        expect(result.reply).toContain('PHP899');
+    });
+
+    it('uses known customer details for a short question and bounds retrieval context', () => {
+        const query = buildChatbotKnowledgeQuery({ pageId: 'page', inboundMessage: 'kasama ba yun?', collectedDetails: { Package: '24s commercial' }, history: [
+            { id: 'long', message: 'A'.repeat(20_000), from: { id: 'page', name: 'Page' }, created_time: '2026-10-08T10:00:00Z' }
+        ] });
+        expect(query).toContain('24s commercial');
+        expect(query).toContain('kasama ba yun?');
+        expect(query.length).toBeLessThan(2000);
+        expect(buildChatbotKnowledgeQuery({ pageId: 'page', inboundMessage: 'How much?' })).toBe('How much?');
     });
 
     it('adds retrieved knowledge as guarded context', () => {
@@ -642,7 +699,7 @@ describe('VeoBot chatbot', () => {
         expect(JSON.parse(fetchMock.mock.calls[1][1].body).max_completion_tokens).toBe(900);
     });
 
-    it('uses the configured fallback instead of failing when both completions are empty', async () => {
+    it('keeps the inquiry retryable instead of using a generic fallback when both completions are empty', async () => {
         process.env.OPENROUTER_API_KEY = 'test-key';
         const fetchMock = vi.fn().mockResolvedValue({
             ok: true,
@@ -651,15 +708,38 @@ describe('VeoBot chatbot', () => {
         });
         vi.stubGlobal('fetch', fetchMock);
 
-        const result = await generateChatbotResponse({
+        await expect(generateChatbotResponse({
             config,
             pageId: 'page-facebook-id',
             inboundMessage: 'Hello'
-        });
-
-        expect(result.reply).toBe(config.fallback_reply);
-        expect(result.generation_warning).toContain('fallback was used');
+        })).rejects.toThrow('no generic fallback was sent');
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['{"messages":[],"collected_details":{}}', '{"messages":', '{}'])(
+        'does not leak unusable JSON into a customer reply: %s', async content => {
+            process.env.OPENROUTER_API_KEY = 'test-key';
+            const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content } }] }) });
+            vi.stubGlobal('fetch', fetchMock);
+            await expect(generateChatbotResponse({ config, pageId: 'page', inboundMessage: 'magkano na nga po' })).rejects.toThrow('no generic fallback was sent');
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        }
+    );
+
+    it.each([false, true])('preserves provider credit errors instead of answering with the saved fallback (ok=%s)', async ok => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok, status: ok ? 200 : 402, json: async () => ({ error: { message: 'Insufficient credits' } }) }));
+        await expect(generateChatbotResponse({ config, pageId: 'page', inboundMessage: 'magkano na nga po' })).rejects.toThrow('Insufficient credits');
+    });
+
+    it.each(['opt_out', 'refusal'])('accepts a silent %s decision without substituting a fallback', async stopReason => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ messages: [], stop_reason: stopReason }) } }] }) });
+        vi.stubGlobal('fetch', fetchMock);
+        const result = await generateChatbotResponse({ config, pageId: 'page', inboundMessage: 'Please leave this conversation.' });
+        expect(result.messages).toEqual([]);
+        expect(result.detected_stop_reason).toBe(stopReason);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('parses collected details and split message bubbles from structured output', async () => {

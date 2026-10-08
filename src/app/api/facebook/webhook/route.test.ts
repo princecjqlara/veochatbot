@@ -232,6 +232,7 @@ function createPhotoChatbotSupabaseMock(options: {
 } = {}) {
     const pipelineStage = options.pipelineStage || 'engaged';
     const contactStateUpsert = vi.fn().mockResolvedValue({ error: null });
+    const replyEventUpdate = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
     const welcomeSelect = vi.fn(() => {
         throw new Error('Photo chatbot handling should bypass the welcome lookup');
     });
@@ -362,7 +363,7 @@ function createPhotoChatbotSupabaseMock(options: {
         if (table === 'chatbot_reply_events') {
             return {
                 insert: vi.fn().mockResolvedValue({ error: null }),
-                update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+                update: replyEventUpdate
             };
         }
         if (table === 'outbound_message_events') {
@@ -382,7 +383,7 @@ function createPhotoChatbotSupabaseMock(options: {
         throw new Error(`Unexpected table: ${table}`);
     });
 
-    return { from, welcomeSelect, contactStateUpsert };
+    return { from, welcomeSelect, contactStateUpsert, replyEventUpdate };
 }
 
 function createCustomerPhotoRequest(text?: string) {
@@ -1147,6 +1148,32 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ inboundMessage: 'hello there' }));
         expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
         expect(supabase.welcomeSelect).not.toHaveBeenCalled();
+    });
+
+    it('records a credit failure without sending the fallback or marking the inquiry answered', async () => {
+        const supabase = createPhotoChatbotSupabaseMock();
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.generateChatbotResponse.mockRejectedValueOnce(new Error('Insufficient credits'));
+        const response = await POST(createWebhookRequest());
+        expect(response.status).toBe(500);
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(mocks.sendMessengerMediaAttachment).not.toHaveBeenCalled();
+        expect(supabase.replyEventUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'failed', outbound_message_id: null, error_message: 'Insufficient credits'
+        }));
+        expect(supabase.contactStateUpsert).not.toHaveBeenCalled();
+    });
+
+    it('uses an earlier price quote from the second history page for a repeat inquiry', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock());
+        const next = 'https://graph.facebook.com/v21.0/thread/messages?after=older';
+        const quote = { id: 'quote', message: 'The 24-second video is PHP899.', from: { id: 'fb_page_1', name: 'Page' }, created_time: '2026-10-08T09:00:00Z' };
+        const current = { id: 'current', message: 'magkano na nga po', from: { id: 'contact_psid_1', name: 'Customer' }, created_time: '2026-10-08T10:00:00Z' };
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [current], paging: { next } } });
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [quote] }) }));
+        const response = await POST(createWebhookRequest());
+        expect(response.status).toBe(200);
+        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ history: [current, quote] }));
     });
 
     it('cancels a reply when Messenger sets the stage during AI generation', async () => {

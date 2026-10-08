@@ -10,9 +10,9 @@ import {
     generateChatbotResponse,
     extractChatbotContactDetails,
     getChatbotKnowledgePageId,
-    formatChatbotReplyMessages,
     type ChatbotConfig
 } from '@/lib/chatbot';
+import type { FacebookMessage } from '@/types';
 import {
     analyzeInboundCustomerImages,
     createChatbotMediaPublicViewUrl,
@@ -817,6 +817,7 @@ export async function POST(request: NextRequest) {
 
                                 if (chatbotConfig?.enabled && isChatbotContactAllowed(chatbotConfig, contact.id)) {
                                     let chatbotState = null;
+                                    let chatbotConversationHistory: FacebookMessage[] = [];
                                     let liveStageStopReason: ChatbotStopReason | null = null;
                                     let conversationAuditFailed = false;
                                     try {
@@ -832,6 +833,10 @@ export async function POST(request: NextRequest) {
                                             facebookPageId: pageId, accessToken: page.access_token,
                                             initialPage: resolvedConversation?.messages, requireAvailable: true
                                         });
+                                        chatbotConversationHistory = conversationMessages.filter((message): message is FacebookMessage =>
+                                            typeof message.id === 'string' && typeof message.message === 'string' &&
+                                            typeof message.from?.id === 'string' && typeof message.created_time === 'string'
+                                        );
                                         const liveLeadStageEvent = findLatestMessengerLeadStageEvent(
                                             conversationMessages,
                                             pageId
@@ -971,7 +976,7 @@ export async function POST(request: NextRequest) {
                                                 const details = await extractChatbotContactDetails({
                                                     config: chatbotConfig, pageId, pageName: page.name,
                                                     contactName: contact.name, inboundMessage: inboundMessageText,
-                                                    history: resolvedConversation?.messages?.data || [],
+                                                    history: chatbotConversationHistory,
                                                     collectedDetails: chatbotState?.collected_details || {}
                                                 });
                                                 // Refresh the state before merging late answers so a
@@ -1021,12 +1026,7 @@ export async function POST(request: NextRequest) {
                                     if (claimed) {
                                         let lastOutboundMessageId: string | undefined;
                                         try {
-                                            let replyMessages = chatbotConfig.fallback_reply.trim()
-                                                ? formatChatbotReplyMessages(
-                                                    [chatbotConfig.fallback_reply],
-                                                    chatbotConfig
-                                                )
-                                                : [];
+                                            let replyMessages: string[] = [];
                                             let collectedDetails = chatbotState?.collected_details || {};
                                             let missingDetails = getMissingChatbotDetails(
                                                 chatbotConfig.details_to_collect,
@@ -1070,7 +1070,7 @@ export async function POST(request: NextRequest) {
                                                     pageName: page.name,
                                                     pageId,
                                                     inboundMessage: chatbotInboundMessage,
-                                                    history: resolvedConversation?.messages?.data || [],
+                                                    history: chatbotConversationHistory,
                                                     collectedDetails
                                                 });
                                                 replyMessages = generated.messages;
@@ -1101,11 +1101,12 @@ export async function POST(request: NextRequest) {
                                                     generatedStopReason = 'details_collected';
                                                 }
                                             } catch (generationError) {
-                                                logWarn('AI reply generation failed; using chatbot fallback', {
+                                                logWarn('AI reply generation failed; retaining inquiry for retry', {
                                                     pageId,
                                                     senderId,
                                                     error: (generationError as Error).message
                                                 });
+                                                throw generationError;
                                             }
 
                                             if (generatedStopReason === 'opt_out' || generatedStopReason === 'refusal') {
@@ -1113,7 +1114,7 @@ export async function POST(request: NextRequest) {
                                             }
 
                                             if (replyMessages.length === 0 && !generatedStopReason) {
-                                                throw new Error('Chatbot generated no reply and no fallback is configured');
+                                                throw new Error('Chatbot generated no reply; inquiry retained for retry');
                                             }
 
                                             const [freshContactResult, freshState] = await Promise.all([

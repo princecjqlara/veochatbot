@@ -1727,17 +1727,16 @@ export default function ChatbotPage() {
 
                     <div className={`grid md:grid-cols-2 gap-4 mb-4 ${activeSection !== 'behavior' ? 'hidden' : ''}`}>
                         <div className="border-2 border-black p-5 bg-white">
-                            <label className="font-mono text-xs font-bold uppercase text-gray-500 mb-2 block">
-                                Fallback reply
-                            </label>
-                            <textarea
-                                value={config.fallback_reply}
-                                onChange={(event) => updateConfig({ fallback_reply: event.target.value })}
-                                rows={6}
-                                maxLength={1000}
-                                className="input-wireframe min-h-[150px] w-full resize-y px-4 py-3 text-sm leading-6"
-                            />
-                            <p className="mt-2 text-xs text-gray-500">Sent if AI generation fails.</p>
+                            <p className="font-mono text-xs font-bold uppercase text-gray-500 mb-2">
+                                Reply failures
+                            </p>
+                            <p className="text-sm leading-6">
+                                If the reply service is unavailable, the inquiry is saved for retry.
+                                Your team can answer it from Messenger while service is restored.
+                            </p>
+                            <p className="mt-2 text-xs text-gray-500">
+                                Resolve any connection or credit issue to resume replies. Reply failures are counted in Analytics.
+                            </p>
                         </div>
                         <div className="border-2 border-black p-5 bg-white">
                             <label className="font-mono text-xs font-bold uppercase text-gray-500 mb-2 block">
