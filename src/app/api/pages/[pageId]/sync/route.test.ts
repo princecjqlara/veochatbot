@@ -138,6 +138,19 @@ describe('POST /api/pages/[pageId]/sync', () => {
         });
     });
 
+    it('preserves staff message echoes when contact sync replaces Page subscriptions', async () => {
+        const { POST } = await loadRoute();
+        mocks.getSupabaseAdmin.mockReturnValue(createSupabaseMock());
+        let subscribedFields = new Set(['messages', 'messaging_postbacks', 'message_echoes']);
+        // Facebook replaces the subscribed field list on this POST.
+        mocks.subscribePageToAppWebhook.mockImplementation(async (_pageId, _token, fields: string[]) => {
+            subscribedFields = new Set(fields);
+        });
+        const response = await POST(createRequest(), { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        expect(subscribedFields.has('message_echoes')).toBe(true);
+    });
+
     it('persists participant names in the first basic contact upsert without mixing nameless rows', async () => {
         const { POST } = await loadRoute();
         const supabase = createSupabaseMock();

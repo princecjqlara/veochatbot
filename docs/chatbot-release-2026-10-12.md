@@ -8,7 +8,7 @@ The release review also corrected two edge cases. The stage worker now applies t
 
 The seven enabled Pages are Commercial Mo Media Agency, Onset Media Agency, Azshinari, Manawari Studios, Loki Media, Vista Media Agency, and SAMA KANA MEDIA. All 31 configuration fields match Azshinari after excluding row and Page IDs and timestamps. All seven use its shared library of 478 ready knowledge documents; trial mode is off. First-day follow-ups are enabled and later-day automatic schedules remain empty.
 
-Message-echo subscriptions were restored on the six older Pages while preserving their existing fields and other app subscriptions. Commercial Mo already had echoes enabled. Read-back verified `messages`, `messaging_postbacks`, and `message_echoes` on all seven. Both primary and partner app callbacks and signed routing probes passed. No current Page stage-sync errors were present.
+Message-echo subscriptions were restored on the six older Pages while preserving their existing fields and other app subscriptions. Commercial Mo already had echoes enabled. Read-back verified `messages`, `messaging_postbacks`, and `message_echoes` on all seven. The contact-sync route previously refreshed subscriptions with only messages and postbacks, removing echoes again; it now includes echoes, matching connection and webhook-refresh routes. Both primary and partner app callbacks and signed routing probes passed. No current Page stage-sync errors were present.
 
 Subscriptions and chatbot settings are persisted outside Git. Backups and verification reports are in the parent workspace's ignored `data/` folder. Commercial Mo has no Messenger conversations yet; its reply, sample-media, follow-up, and opt-out previews passed, but actual customer delivery remains unverified. No customer test messages were sent.
 
@@ -22,6 +22,6 @@ The final audit found all 38 tracked versions recorded, with no missing checked 
 
 ## Validation
 
-All 542 tests across 76 files passed, including current-intake worker boundaries and schema-compatible takeover audits. TypeScript validation passed. Full lint passed with 15 existing dashboard warnings; targeted checks on the final changed handoff files passed. Production build and deployment records, post-release checks, migration audit, and subscription read-backs are retained in the ignored release artifacts.
+All 542 tests across 76 files passed for the handoff changes, including current-intake worker boundaries and schema-compatible takeover audits. The subsequent contact-sync subscription fix adds coverage for preserving echoes. TypeScript validation passed. Full lint passed with 15 existing dashboard warnings; targeted checks on the final changed handoff files passed. Production build and deployment records, post-release checks, migration audit, and subscription read-backs are retained in the ignored release artifacts.
 
 The existing limitation remains: stage-only Business Suite edits that Meta does not expose cannot be inferred reliably. VeoBot stage changes persist the bot stop directly, and staff echoes and mobile-message history provide additional protection.
