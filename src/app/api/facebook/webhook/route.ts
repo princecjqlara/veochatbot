@@ -35,6 +35,7 @@ import {
 } from '@/lib/chatbot-control';
 import {
     isPipelineClosedForAutomation,
+    isContactPipelineStage,
     chatbotStopReasonForPipelineStage,
     pipelineStageForMessengerSignal,
     pipelineStageForChatbotProgress,
@@ -265,6 +266,11 @@ export async function POST(request: NextRequest) {
 
                 // Process inbound events from both messaging and standby arrays
                 if (inboundEvents.length > 0) {
+                    const failedHandoffContacts = new Set<string>();
+                    // A Meta batch can list the customer's message before a
+                    // staff handoff. Apply outbound stops before generating replies.
+                    inboundEvents.sort((left, right) =>
+                        Number(right.sender?.id === pageId) - Number(left.sender?.id === pageId));
                     for (const event of inboundEvents) {
                         processedEvents += 1;
                         try {
@@ -297,6 +303,10 @@ export async function POST(request: NextRequest) {
                             }
 
                             const isFromContact = senderId !== pageId;
+                            if (isFromContact && failedHandoffContacts.has(senderId)) {
+                                skippedEvents += 1;
+                                continue;
+                            }
 
                             // Page echoes can carry the manual workflow stop code.
                             if (!isFromContact) {
@@ -305,23 +315,70 @@ export async function POST(request: NextRequest) {
                                     ? event.message.text.trim()
                                     : '';
 
-                                if (eventType === 'message' && outboundMessageText && recipientId) {
+                                if (eventType === 'message' && recipientId) {
                                     const stageSignal = classifyMessengerSystemMessage(outboundMessageText);
-                                    if (stageSignal) {
-                                        const { data: stageContact, error } = await supabase.from('contacts').select('id')
+                                    // API echoes include app_id even before the send's
+                                    // attribution has been saved. Do not stop on our own echo.
+                                    let humanReply = event.message?.is_echo === true && !event.message.app_id;
+                                    const echoMessageId = typeof event.message?.mid === 'string' ? event.message.mid.trim() : '';
+                                    if (humanReply && echoMessageId) {
+                                        const { data: attribution, error } = await supabase.from('outbound_message_events')
+                                            .select('source_type').eq('page_id', page.id).eq('message_id', echoMessageId).maybeSingle();
+                                        if (error) throw error;
+                                        humanReply = !attribution || attribution.source_type === 'manual';
+                                    }
+                                    if (stageSignal || humanReply) {
+                                        let { data: stageContact, error } = await supabase.from('contacts').select('id,pipeline_stage')
                                             .eq('page_id', page.id).eq('psid', recipientId).maybeSingle();
                                         if (error) throw error;
+                                        if (!stageContact) {
+                                            const inserted = await supabase.from('contacts')
+                                                .upsert({ page_id: page.id, psid: recipientId },
+                                                    { onConflict: 'page_id,psid', ignoreDuplicates: true })
+                                                .select('id,pipeline_stage').maybeSingle();
+                                            if (inserted.error) throw inserted.error;
+                                            stageContact = inserted.data;
+                                            if (!stageContact) {
+                                                const found = await supabase.from('contacts').select('id,pipeline_stage')
+                                                    .eq('page_id', page.id).eq('psid', recipientId).maybeSingle();
+                                                if (found.error) throw found.error;
+                                                stageContact = found.data;
+                                            }
+                                            if (!stageContact) throw new Error('Could not save Messenger handoff contact');
+                                        }
                                         if (stageContact) {
                                             const state = await getChatbotContactState(supabase, page.id, stageContact.id);
+                                            const stopReason = stageSignal ||
+                                                (state?.status === 'stopped' ? state.stop_reason : null) || 'manual';
                                             await saveChatbotContactState(supabase, {
-                                                pageId: page.id, contactId: stageContact.id, existingState: state, stopReason: stageSignal
+                                                pageId: page.id, contactId: stageContact.id, existingState: state, stopReason
                                             });
                                             await cancelPendingChatbotFollowUps({ supabase, pageId: page.id,
-                                                contactId: stageContact.id, reason: `Messenger lead stage: ${stageSignal}` });
+                                                contactId: stageContact.id, reason: `Messenger handoff: ${stopReason}` });
                                             await updateContactPipelineStage(supabase, { pageId: page.id,
-                                                contactId: stageContact.id, stage: pipelineStageForMessengerSignal(stageSignal), source: 'messenger' });
+                                                contactId: stageContact.id,
+                                                stage: stageSignal && stageSignal !== 'manual'
+                                                    ? pipelineStageForMessengerSignal(stageSignal)
+                                                    : isContactPipelineStage(stageContact.pipeline_stage) ? stageContact.pipeline_stage : 'engaged',
+                                                source: 'messenger' });
+                                            try {
+                                                await recordChatbotInterruptionIfNeeded(supabase, {
+                                                    pageId: page.id, contactId: stageContact.id, messageId: echoMessageId,
+                                                    source: 'business_suite', stateBeforeStop: state,
+                                                    interruptionType: /^Lead stage set to /i.test(outboundMessageText)
+                                                        ? 'lead_stage_change' : 'manual_message',
+                                                    leadStage: stageSignal && stageSignal !== 'manual'
+                                                        ? pipelineStageForMessengerSignal(stageSignal) : null
+                                                });
+                                            } catch (auditError) {
+                                                logWarn('Messenger handoff saved but interruption audit failed', {
+                                                    pageId, recipientId, error: (auditError as Error).message
+                                                });
+                                            }
                                         }
                                     }
+                                }
+                                if (eventType === 'message' && outboundMessageText && recipientId) {
                                     try {
                                         const stopResult = await stopWorkflowAutomationsFromPageMessage({
                                             supabase,
@@ -821,6 +878,7 @@ export async function POST(request: NextRequest) {
                                     let liveStageStopReason: ChatbotStopReason | null = null;
                                     let conversationAuditFailed = false;
                                     try {
+                                        chatbotState = await getChatbotContactState(supabase, page.id, contact.id);
                                         if (!resolvedConversation) {
                                             resolvedConversation = await getConversationForPsid(
                                                 pageId,
@@ -831,7 +889,8 @@ export async function POST(request: NextRequest) {
                                         }
                                         const conversationMessages = await loadMessengerHistoryForStopCheck({
                                             facebookPageId: pageId, accessToken: page.access_token,
-                                            initialPage: resolvedConversation?.messages, requireAvailable: true
+                                            initialPage: resolvedConversation?.messages, requireAvailable: true,
+                                            humanHandoffSince: chatbotState?.started_at
                                         });
                                         chatbotConversationHistory = conversationMessages.filter((message): message is FacebookMessage =>
                                             typeof message.id === 'string' && typeof message.message === 'string' &&
@@ -843,7 +902,8 @@ export async function POST(request: NextRequest) {
                                         );
                                         liveStageStopReason = findLatestMessengerSystemSignal(
                                             conversationMessages,
-                                            pageId
+                                            pageId,
+                                            { humanHandoffSince: chatbotState?.started_at }
                                         );
                                         if (liveLeadStageEvent) {
                                             try {
@@ -853,7 +913,7 @@ export async function POST(request: NextRequest) {
                                                     messageId: liveLeadStageEvent.messageId,
                                                     source: 'business_suite',
                                                     interruptionType: 'lead_stage_change',
-                                                    leadStage: pipelineStageForChatbotProgress({
+                                                    leadStage: liveLeadStageEvent.signal === 'manual' ? null : pipelineStageForChatbotProgress({
                                                         stopReason: liveLeadStageEvent.signal
                                                     }),
                                                     interruptedAt: liveLeadStageEvent.createdTime || undefined
@@ -1231,7 +1291,7 @@ export async function POST(request: NextRequest) {
                                                     lastOutboundMessageId = mediaResult.message_id;
                                                     sentMedia = true;
                                                     await recordOutboundMessageEvent(supabase, {
-                                                        pageId: knowledgePageId,
+                                                        pageId: page.id,
                                                         contactId: contact.id,
                                                         messageId: mediaResult.message_id,
                                                         sourceType: 'chatbot',
@@ -1514,6 +1574,9 @@ export async function POST(request: NextRequest) {
                         } catch (eventError) {
                             skippedEvents += 1;
                             hadCriticalFailure = true;
+                            if (event.sender?.id === pageId && event.recipient?.id && event.message) {
+                                failedHandoffContacts.add(event.recipient.id);
+                            }
                             logError('Unhandled exception while processing inbound webhook event', {
                                 pageId,
                                 senderId: event?.sender?.id ?? null,

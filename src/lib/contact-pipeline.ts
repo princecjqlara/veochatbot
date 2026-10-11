@@ -107,6 +107,7 @@ export async function updateContactPipelineStage(
         stage: ContactPipelineStage;
         source: ContactPipelineSource;
         force?: boolean;
+        preserveStage?: boolean;
         now?: Date;
     }
 ): Promise<boolean> {
@@ -120,18 +121,21 @@ export async function updateContactPipelineStage(
     if (!contact) return false;
 
     const current = isContactPipelineStage(contact.pipeline_stage) ? contact.pipeline_stage : 'new';
+    // A generic staff handoff has no replacement lead stage. Keep the stage,
+    // but mark Messenger ownership so every automation honors the handoff.
+    const nextStage = input.preserveStage || (input.source === 'messenger' && input.stage === 'engaged') ? current : input.stage;
     if (input.source === 'chatbot' &&
         (contact.pipeline_stage_source === 'manual' || contact.pipeline_stage_source === 'messenger')) return false;
     // A person confirming the same stage in Messenger is still a handoff.
     // Retain that source so later photo requests cannot reopen bot intake.
-    const messengerHandoff = current === input.stage && input.source === 'messenger' &&
-        contact.pipeline_stage_source !== 'messenger';
-    if (!input.force && !messengerHandoff && !shouldAutoMovePipeline(current, input.stage)) return false;
+    const humanHandoff = current === nextStage && (input.source === 'messenger' || input.source === 'manual') &&
+        contact.pipeline_stage_source !== input.source;
+    if (!input.force && !humanHandoff && !shouldAutoMovePipeline(current, nextStage)) return false;
 
     let update = supabase
         .from('contacts')
         .update({
-            pipeline_stage: input.stage,
+            pipeline_stage: nextStage,
             pipeline_stage_source: input.source,
             pipeline_stage_updated_at: (input.now || new Date()).toISOString()
         })

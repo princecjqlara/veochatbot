@@ -54,4 +54,21 @@ describe('terminal delivery stops', () => {
         expect(writes).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: 'converted' }) });
         expect(writes).toContainEqual({ table: 'chatbot_follow_up_jobs', payload: expect.objectContaining({ status: 'cancelled' }) });
     });
+
+    it('blocks a staff mobile handoff appearing during generation without a stage message', async () => {
+        const { input, writes } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            id: 'staff-reply', from: { id: 'fb-page' }, tags: { data: [{ name: 'source:mobile' }] }
+        }] } });
+        await expect(assertChatbotDeliveryAllowed(input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+        expect(writes).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: 'manual' }) });
+        expect(writes).toContainEqual({ table: 'chatbot_follow_up_jobs', payload: expect.objectContaining({ status: 'cancelled' }) });
+    });
+
+    it('continues normal automation when history contains only our API web replies', async () => {
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            id: 'bot-reply', message: 'How can we help?', from: { id: 'fb-page' }, tags: { data: [{ name: 'source:web' }] }
+        }] } });
+        await expect(assertChatbotDeliveryAllowed(fixture().input)).resolves.toBeUndefined();
+    });
 });

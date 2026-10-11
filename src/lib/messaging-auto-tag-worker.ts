@@ -1,9 +1,10 @@
 import { getPageConversationsBatch } from '@/lib/facebook';
 import {
-    classifyMessengerSystemMessage,
+    classifyMessengerHistoryMessage,
     findLatestMessengerSystemSignal,
     findLatestMessengerLeadStageEvent,
-    type MessengerSystemSignal
+    type MessengerSystemSignal,
+    type MessengerHistoryMessage
 } from '@/lib/messaging-auto-tag';
 import {
     getChatbotContactState,
@@ -24,7 +25,7 @@ type Page = {
     messaging_auto_tag_cursor: string | null;
 };
 
-type Message = { id: string; message?: string; from?: { id?: string }; created_time: string };
+type Message = MessengerHistoryMessage & { id: string; created_time: string };
 
 type DefaultPageTag = {
     id: string;
@@ -103,7 +104,7 @@ export function choosePositiveOutcomeTag(tags: DefaultPageTag[]) {
 }
 
 async function getMessagesSince(conversationId: string, token: string, since: string): Promise<Message[]> {
-    let next: string | null = `https://graph.facebook.com/v21.0/${encodeURIComponent(conversationId)}/messages?fields=id,message,from,created_time&limit=100`;
+    let next: string | null = `https://graph.facebook.com/v21.0/${encodeURIComponent(conversationId)}/messages?fields=id,message,from,created_time,tags&limit=100`;
     const messages: Message[] = [];
     const seen = new Set<string>();
 
@@ -191,9 +192,8 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
             const participant = conversation.participants?.data?.find(p => p.id !== current.fb_page_id);
             if (!participant) continue;
             const messages = await getMessagesSince(conversation.id, current.access_token, current.messaging_auto_tag_checked_at);
-            const signals = [...new Set(messages
-                .filter(message => message.from?.id === current.fb_page_id)
-                .map(message => classifyMessengerSystemMessage(message.message || ''))
+            let signals = [...new Set(messages
+                .map(message => classifyMessengerHistoryMessage(message, current.fb_page_id))
                 .filter((signal): signal is MessengerSystemSignal => signal !== null))];
             if (signals.length === 0) continue;
 
@@ -219,8 +219,13 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
 
             // Stop first. Optional tags and interruption logs must never gate
             // the durable stop or let a queued follow-up continue.
-            const stopSignal = findLatestMessengerSystemSignal(messages, current.fb_page_id);
             const existingState = await getChatbotContactState(db, current.id, contact.id);
+            const handoffOptions = { humanHandoffSince: existingState?.started_at };
+            signals = [...new Set(messages
+                .map(message => classifyMessengerHistoryMessage(message, current.fb_page_id, handoffOptions))
+                .filter((signal): signal is MessengerSystemSignal => signal !== null))];
+            if (signals.length === 0) continue;
+            const stopSignal = findLatestMessengerSystemSignal(messages, current.fb_page_id, handoffOptions);
             if (stopSignal) {
                 if (existingState?.status !== 'stopped' || existingState.stop_reason !== stopSignal) {
                     await saveChatbotContactState(db, {
@@ -249,7 +254,8 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                         messageId: leadStageEvent.messageId,
                         source: 'business_suite',
                         interruptionType: 'lead_stage_change',
-                        leadStage: pipelineStageForMessengerSignal(leadStageEvent.signal),
+                        leadStage: leadStageEvent.signal === 'manual'
+                            ? null : pipelineStageForMessengerSignal(leadStageEvent.signal),
                         interruptedAt: leadStageEvent.createdTime || undefined,
                         stateBeforeStop: existingState
                     });

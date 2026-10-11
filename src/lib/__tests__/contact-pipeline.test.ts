@@ -35,6 +35,21 @@ describe('contact pipeline', () => {
         expect(update).toHaveBeenCalledWith(expect.objectContaining({ pipeline_stage_source: 'messenger' }));
     });
 
+    it('retains the current stage while making a generic staff handoff visible to every automation', async () => {
+        const update = vi.fn();
+        const chain: any = { select: () => chain, eq: () => chain,
+            maybeSingle: async () => ({ data: { pipeline_stage: 'collecting_details', pipeline_stage_source: 'chatbot' }, error: null }),
+            update: (payload: unknown) => { update(payload); return chain; },
+            then: (resolve: any) => Promise.resolve({ error: null }).then(resolve)
+        };
+        expect(await updateContactPipelineStage({ from: () => chain }, {
+            pageId: 'page', contactId: 'contact', stage: 'engaged', source: 'messenger'
+        })).toBe(true);
+        expect(update).toHaveBeenCalledWith(expect.objectContaining({
+            pipeline_stage: 'collecting_details', pipeline_stage_source: 'messenger'
+        }));
+    });
+
     it('moves forward automatically without regressing successful contacts', () => {
         expect(shouldAutoMovePipeline('new', 'engaged')).toBe(true);
         expect(shouldAutoMovePipeline('qualified', 'collecting_details')).toBe(false);

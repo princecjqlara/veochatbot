@@ -335,6 +335,21 @@ describe('workflow automations', () => {
         });
     });
 
+    it.each(['manual', 'messenger'])('stops workflow follow-ups for a nonterminal %s handoff', async source => {
+        const { supabase, stateUpdates } = createWorkflowSupabaseMock({ states: [{
+            id: 'state_1', automation_id: 'automation_1', contact_id: 'contact_1', status: 'active',
+            current_step_index: 0, next_step_at: '2026-07-29T02:30:00.000Z',
+            workflow_automations: { ...automation, pages: { fb_page_id: 'fb_page_1', access_token: 'token_1' } },
+            contacts: { id: 'contact_1', page_id: 'page_1', psid: 'psid_1', name: 'Juan',
+                last_interaction_at: '2026-07-29T02:00:00.000Z', pipeline_stage: 'collecting_details', pipeline_stage_source: source }
+        }] });
+        const result = await processDueFollowUpAutomationSteps({ supabase, now: new Date('2026-07-29T02:30:00.000Z') });
+        expect(result).toMatchObject({ sent: 0, stopped: 1 });
+        expect(stateUpdates[0]).toMatchObject({ status: 'stopped', stopped_reason: 'pipeline_stage_closed' });
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(mocks.sendMessengerMediaAttachment).not.toHaveBeenCalled();
+    });
+
     it('sends follow-up step media as a standard response attachment after text', async () => {
         const { supabase, stateUpdates } = createWorkflowSupabaseMock({
             states: [{

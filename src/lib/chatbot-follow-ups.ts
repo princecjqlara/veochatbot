@@ -119,9 +119,10 @@ export async function cancelPendingChatbotFollowUps(input: {
     contactId: string;
     reason?: string;
     now?: Date;
+    exceptJobId?: string;
 }) {
     const now = input.now || new Date();
-    const { error } = await input.supabase
+    let query = input.supabase
         .from('chatbot_follow_up_jobs')
         .update({
             status: 'cancelled',
@@ -133,6 +134,8 @@ export async function cancelPendingChatbotFollowUps(input: {
         .eq('page_id', input.pageId)
         .eq('contact_id', input.contactId)
         .in('status', ['pending', 'processing', 'ready_manual']);
+    if (input.exceptJobId) query = query.neq('id', input.exceptJobId);
+    const { error } = await query;
     if (error) throw new Error(error.message || 'Could not cancel chatbot follow-ups');
 }
 
@@ -285,9 +288,10 @@ export async function processDueChatbotFollowUps(input: {
             );
             const conversationHistory = conversation?.messages?.data || [];
             const stageHistory = await loadMessengerHistoryForStopCheck({
-                facebookPageId: page.fb_page_id, accessToken: page.access_token, initialPage: conversation?.messages, requireAvailable: true
+                facebookPageId: page.fb_page_id, accessToken: page.access_token, initialPage: conversation?.messages, requireAvailable: true,
+                humanHandoffSince: state?.started_at
             });
-            const liveStopReason = findLatestMessengerSystemSignal(stageHistory, page.fb_page_id);
+            const liveStopReason = findLatestMessengerSystemSignal(stageHistory, page.fb_page_id, { humanHandoffSince: state?.started_at });
             if (liveStopReason) {
                 await saveChatbotContactState(supabase, {
                     pageId: job.page_id,
@@ -373,7 +377,7 @@ export async function processDueChatbotFollowUps(input: {
             // AI generation can take seconds. A stage change or new inbound
             // during that time must invalidate this job before any delivery.
             const freshEligibility = await Promise.all([
-                supabase.from('contacts').select('pipeline_stage,last_inbound_at').eq('page_id', job.page_id).eq('id', job.contact_id).maybeSingle(),
+                supabase.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at').eq('page_id', job.page_id).eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_contact_states').select('status').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id').eq('page_id', job.page_id).maybeSingle()
             ]);
@@ -383,7 +387,7 @@ export async function processDueChatbotFollowUps(input: {
             const [freshContact, freshState, freshConfig] = freshEligibility.map(lookup => lookup.data);
             if (!freshContact || !freshConfig?.enabled || !freshConfig.follow_up_enabled ||
                 !isChatbotContactAllowed(freshConfig, job.contact_id) || freshState?.status === 'stopped' ||
-                isPipelineClosedForAutomation(freshContact.pipeline_stage) ||
+                isPipelineClosedForAutomation(freshContact.pipeline_stage, freshContact.pipeline_stage_source) ||
                 new Date(freshContact.last_inbound_at || 0).getTime() > anchorTime) {
                 await markJob(supabase, job.id, {
                     status: 'cancelled', cancelled_at: now.toISOString(), claimed_at: null,

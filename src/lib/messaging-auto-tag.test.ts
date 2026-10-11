@@ -38,6 +38,40 @@ describe('classifyMessengerSystemMessage', () => {
         expect(classifyMessengerSystemMessage('You created an order for PHP699')).toBeNull();
     });
 
+    it('recognizes the actual Business Suite AI takeover notification', () => {
+        expect(classifyMessengerSystemMessage('You took over this chat from your AI agent.')).toBe('manual');
+        expect(classifyMessengerSystemMessage('Can you take over this chat?')).toBeNull();
+    });
+
+    it('detects a staff reply from Messenger mobile even without a lead-stage notification', () => {
+        expect(findLatestMessengerSystemSignal([{
+            id: 'staff-reply', message: 'We will handle your order from here.',
+            from: { id: 'page-1' }, tags: { data: [{ name: 'source:mobile' }] }
+        }], 'page-1')).toBe('manual');
+    });
+
+    it('does not mistake customer mobile messages or API web messages for a staff handoff', () => {
+        expect(findLatestMessengerSystemSignal([
+            { id: 'customer', message: 'Hello', from: { id: 'customer-1' }, tags: { data: [{ name: 'source:mobile' }] } },
+            { id: 'bot', message: 'How can we help?', from: { id: 'page-1' }, tags: { data: [{ name: 'source:web' }] } }
+        ], 'page-1')).toBeNull();
+    });
+
+    it('ignores ordinary staff replies before the current intake or explicit reset', () => {
+        const options = { humanHandoffSince: '2026-10-10T00:00:00Z' };
+        expect(findLatestMessengerSystemSignal([{
+            id: 'old-staff', message: 'We will help.', from: { id: 'page-1' }, created_time: '2026-09-01T00:00:00Z',
+            tags: { data: [{ name: 'source:mobile' }] }
+        }], 'page-1', options)).toBeNull();
+        expect(findLatestMessengerSystemSignal([{
+            id: 'recent-staff', message: '', from: { id: 'page-1' }, created_time: '2026-10-10T01:00:00Z',
+            tags: { data: [{ name: 'source:mobile' }] }
+        }], 'page-1', options)).toBe('manual');
+        expect(findLatestMessengerSystemSignal([{
+            id: 'qualified', message: 'Lead stage set to Qualified', from: { id: 'page-1' }, created_time: '2026-09-01T00:00:00Z'
+        }], 'page-1', options)).toBe('qualified');
+    });
+
     it('finds the newest Lead Center stage written by the Page', () => {
         expect(findLatestMessengerSystemSignal([
             {

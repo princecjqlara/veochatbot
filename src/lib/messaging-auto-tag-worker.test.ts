@@ -108,3 +108,43 @@ describe('Messenger outcome tags', () => {
         expect(buildMessengerOutcomeTagRows('page-1')).toHaveLength(4);
     });
 });
+
+describe('worker handoffs after an intake reset', () => {
+    it.each([
+        ['old mobile reply', 'We will handle this.', '2026-10-06T00:00:00Z', true, false],
+        ['old takeover', 'You took over this chat from your AI agent.', '2026-10-06T00:00:00Z', false, false],
+        ['recent mobile reply', 'We will handle this.', '2026-10-08T00:00:00Z', true, true],
+        ['durable qualified stage', 'Lead stage set to Qualified', '2026-10-06T00:00:00Z', false, true]
+    ])('%s respects the current intake boundary', async (_label, text, sentAt, mobile, shouldStop) => {
+        vi.clearAllMocks();
+        const mutations: Array<{ table: string; payload: any }> = [];
+        const db = { from: vi.fn((table: string) => {
+            let payload: any;
+            const lookup = () => {
+                if (table === 'pages') return { data: { id: 'page-1', fb_page_id: 'fb-page', access_token: 'token', messaging_auto_tag_checked_at: '2026-10-01T00:00:00Z', messaging_auto_tag_cursor: null }, error: null };
+                if (table === 'contacts') return { data: { id: 'contact-1', pipeline_stage: 'engaged', pipeline_stage_source: 'chatbot' }, error: null };
+                if (table === 'chatbot_contact_states') return { data: { status: 'active', started_at: '2026-10-07T00:00:00Z', collected_details: {} }, error: null };
+                return { data: [], error: null };
+            };
+            const chain: any = {
+                select: vi.fn(() => chain), eq: vi.fn(() => chain), order: vi.fn(() => chain), limit: vi.fn(() => chain), in: vi.fn(() => chain),
+                maybeSingle: vi.fn(async () => lookup()),
+                update: vi.fn((value: any) => { payload = value; mutations.push({ table, payload }); return chain; }),
+                upsert: vi.fn(async (value: any) => { mutations.push({ table, payload: value }); return { error: null }; }),
+                then: (resolve: any, reject: any) => Promise.resolve(payload ? { error: null } : lookup()).then(resolve, reject)
+            };
+            return chain;
+        }) };
+        mocks.getSupabaseAdmin.mockReturnValue(db);
+        mocks.getPageConversationsBatch.mockResolvedValue({ conversations: [{ id: 'thread-1', participants: { data: [{ id: 'customer' }] } }], nextCursor: null });
+        mocks.recordChatbotInterruptionIfNeeded.mockResolvedValue(undefined);
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [{
+            id: 'history-1', message: text, from: { id: 'fb-page' }, created_time: sentAt,
+            tags: mobile ? { data: [{ name: 'source:mobile' }] } : undefined
+        }] }) }));
+        const result = await processOneMessagingAutoTagPage({ chatbotOnly: true });
+        expect(result.chatbotStopped).toBe(shouldStop ? 1 : 0);
+        expect(mutations.some(m => m.table === 'chatbot_follow_up_jobs')).toBe(shouldStop);
+        expect(mutations.some(m => m.table === 'chatbot_contact_states' && m.payload.status === 'stopped')).toBe(shouldStop);
+    });
+});

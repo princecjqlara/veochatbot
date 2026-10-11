@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { recordChatbotInterruptionIfNeeded } from '@/lib/outbound-message-events';
+import { recordChatbotInterruptionIfNeeded, recordOutboundMessageEvent } from '@/lib/outbound-message-events';
 
 function queryResult(data: unknown) {
     const query: any = {
@@ -11,6 +11,22 @@ function queryResult(data: unknown) {
 }
 
 describe('chatbot interruption attribution', () => {
+    it('retains the pre-stop staff interruption audit after a manual reply has stopped the bot', async () => {
+        const interruptionUpsert = vi.fn().mockResolvedValue({ error: null });
+        const supabase = { from: (table: string) => {
+            if (table === 'outbound_message_events') return { upsert: vi.fn().mockResolvedValue({ error: null }) };
+            if (table === 'chatbot_configs') return queryResult({ details_to_collect: ['Name', 'Budget'], details_completion_percent: 100 });
+            if (table === 'chatbot_interruption_events') return { upsert: interruptionUpsert };
+            throw new Error('The pre-stop snapshot should avoid reading stopped state');
+        } };
+        await recordOutboundMessageEvent(supabase, {
+            pageId: 'page', contactId: 'contact', messageId: 'manual-reply', sourceType: 'manual',
+            actorName: 'Agent', stateBeforeStop: { status: 'active', collected_details: { Name: 'Customer' } }
+        });
+        expect(interruptionUpsert).toHaveBeenCalledWith(expect.objectContaining({
+            interruption_type: 'manual_message', actor_name: 'Agent', collected_detail_count: 1
+        }), expect.anything());
+    });
     it('records the staff sender when a manual message interrupts active detail collection', async () => {
         const configQuery = queryResult({
             details_to_collect: ['Name', 'Budget', 'Schedule', 'Service'],

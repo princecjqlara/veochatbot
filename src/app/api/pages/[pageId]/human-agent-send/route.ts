@@ -9,6 +9,7 @@ import {
     MESSENGER_MEDIA_MIME_TYPES
 } from '@/lib/messenger-media';
 import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
+import { stopChatbotForManualReply } from '@/lib/chatbot-handoff';
 import { recordPageActivity } from '@/lib/activity-history';
 import { createChatbotMediaSignedUrl, type ChatbotMediaAsset } from '@/lib/chatbot-media';
 
@@ -160,6 +161,7 @@ export async function POST(
         }
 
         const sent: Array<{ kind: string; partId: string; messageId: string }> = [];
+        const stateBeforeStop = await stopChatbotForManualReply({ supabase: db, pageId, contactId, followUpJobId });
         try {
             for (const media of preparedMedia) {
                 const result = await sendMessengerMediaAttachment(
@@ -168,7 +170,7 @@ export async function POST(
                 );
                 sent.push({ kind: media.type, partId: media.partId, messageId: result.message_id });
                 await recordOutboundMessageEvent(db, {
-                    pageId, contactId, messageId: result.message_id, sourceType: 'manual',
+                    pageId, contactId, messageId: result.message_id, sourceType: 'manual', stateBeforeStop,
                     actorUserId: session.user.id, actorName: session.user.name || session.user.email || null,
                     messageKind: `${media.type} attachment`
                 });
@@ -177,7 +179,7 @@ export async function POST(
                 const result = await sendMessage(page.fb_page_id, page.access_token, contact.psid, text, messagingType);
                 sent.push({ kind: 'text', partId: 'text', messageId: result.message_id });
                 await recordOutboundMessageEvent(db, {
-                    pageId, contactId, messageId: result.message_id, sourceType: 'manual',
+                    pageId, contactId, messageId: result.message_id, sourceType: 'manual', stateBeforeStop,
                     actorUserId: session.user.id, actorName: session.user.name || session.user.email || null,
                     messageKind: messagingType
                 });

@@ -50,12 +50,13 @@ export async function assertChatbotDeliveryAllowed(input: {
     let history;
     try {
         history = await loadMessengerHistoryForStopCheck({ facebookPageId: input.facebookPageId,
-            accessToken: input.accessToken, initialPage: conversation?.messages, requireAvailable: true });
+            accessToken: input.accessToken, initialPage: conversation?.messages, requireAvailable: true,
+            humanHandoffSince: state?.started_at });
     } catch (error) {
         await checkSavedEligibility();
         throw error;
     }
-    const signal = findLatestMessengerSystemSignal(history, input.facebookPageId);
+    const signal = findLatestMessengerSystemSignal(history, input.facebookPageId, { humanHandoffSince: state?.started_at });
     if (!signal) {
         // A stop can also arrive while the Graph read is in flight.
         await checkSavedEligibility();

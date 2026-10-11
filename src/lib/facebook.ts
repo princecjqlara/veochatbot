@@ -903,7 +903,7 @@ export async function getConversationForPsid(
     options: { throwOnError?: boolean; timeoutMs?: number } = {}
 ): Promise<FacebookConversation | null> {
     try {
-        const fields = 'id,participants,updated_time,messages.limit(100){id,message,from,created_time}';
+        const fields = 'id,participants,updated_time,messages.limit(100){id,message,from,created_time,tags}';
         const url = new URL(`${FACEBOOK_GRAPH_URL}/${pageId}/conversations`);
         url.searchParams.set('user_id', psid);
         url.searchParams.set('fields', fields);

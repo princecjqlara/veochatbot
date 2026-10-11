@@ -2798,8 +2798,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.pause_campaign_delivery(UUID) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.cancel_campaign_delivery(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.pause_campaign_delivery(UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.cancel_campaign_delivery(UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.pause_campaign_delivery(UUID) TO postgres, service_role;
 GRANT EXECUTE ON FUNCTION public.cancel_campaign_delivery(UUID) TO postgres, service_role;
 

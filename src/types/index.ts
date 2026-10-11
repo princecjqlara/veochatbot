@@ -253,4 +253,5 @@ export interface FacebookMessage {
     name: string;
   };
   created_time: string;
+  tags?: { data?: Array<{ name?: string }> };
 }

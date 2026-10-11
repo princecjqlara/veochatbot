@@ -468,7 +468,7 @@ export async function processDueFollowUpAutomationSteps(params: {
                 reply_action,
                 pages(fb_page_id, access_token)
             ),
-            contacts(id, psid, page_id, name, last_interaction_at, pipeline_stage)
+            contacts(id, psid, page_id, name, last_interaction_at, pipeline_stage, pipeline_stage_source)
         `)
         .eq('status', 'active')
         .lte('next_step_at', now.toISOString())
@@ -496,7 +496,7 @@ export async function processDueFollowUpAutomationSteps(params: {
                 continue;
             }
 
-            if (isPipelineClosedForAutomation(contact.pipeline_stage)) {
+            if (isPipelineClosedForAutomation(contact.pipeline_stage, contact.pipeline_stage_source)) {
                 await updateAutomationState(supabase, state.id, {
                     status: 'stopped',
                     stopped_at: now.toISOString(),

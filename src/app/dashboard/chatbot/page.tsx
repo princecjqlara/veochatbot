@@ -1959,7 +1959,8 @@ export default function ChatbotPage() {
                             ))}
                         </div>
                         <p className="mt-2 text-[11px] text-gray-500 font-mono">
-                            Meta lead-stage and order stops are detected by the existing Messenger history synchronization job.
+                            Changing a lead stage in VeoBot saves the bot stop directly. Meta Business Suite does not consistently share stage-only edits,
+                            so also set the stage in VeoBot when handing a lead to a person. Staff message echoes and recent mobile replies provide additional handoff protection.
                         </p>
                     </section>
 

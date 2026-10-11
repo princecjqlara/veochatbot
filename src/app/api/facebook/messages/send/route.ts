@@ -14,6 +14,7 @@ import { replaceTemplateVariablesForParts, ContactRecord } from '@/lib/placehold
 import { stopWorkflowAutomationsFromPageMessage } from '@/lib/workflow-automations';
 import { recordPageActivity } from '@/lib/activity-history';
 import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
+import { stopChatbotForManualReply } from '@/lib/chatbot-handoff';
 import { SUPABASE_IN_FILTER_BATCH_SIZE } from '@/lib/supabase-pagination';
 import {
     applyDynamicButtonValue,
@@ -1182,6 +1183,7 @@ export async function POST(request: NextRequest) {
                             })
                             : undefined;
 
+                    const stateBeforeStop = await stopChatbotForManualReply({ supabase, pageId, contactId: contact.id });
                     const sendResult = await sendMessage(
                         page.fb_page_id,
                         page.access_token,
@@ -1199,6 +1201,7 @@ export async function POST(request: NextRequest) {
                         contactId: contact.id,
                         messageId: sendResult.message_id,
                         sourceType: 'manual',
+                        stateBeforeStop,
                         sourceName: 'VeoBot manual send',
                         actorUserId: userId,
                         actorName: session.user?.name || session.user?.email || null,

@@ -15,6 +15,7 @@ export type OutboundMessageEventInput = {
     actorName?: string | null;
     messageKind?: string | null;
     sentAt?: string;
+    stateBeforeStop?: ChatbotInterruptionState | null;
 };
 
 export type ChatbotInterruptionInput = {
@@ -182,7 +183,8 @@ export async function recordOutboundMessageEvent(
                 interruptionType: 'manual_message',
                 actorUserId: event.actorUserId,
                 actorName: event.actorName,
-                interruptedAt: event.sentAt
+                interruptedAt: event.sentAt,
+                stateBeforeStop: event.stateBeforeStop
             });
         }
     } catch (error) {

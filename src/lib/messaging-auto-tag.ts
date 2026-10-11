@@ -1,10 +1,11 @@
 export type MessengerSystemSignal = 'order_created' | 'qualified' | 'not_qualified' | 'converted' | 'manual';
 
-type MessengerHistoryMessage = {
+export type MessengerHistoryMessage = {
     id?: string;
     message?: string;
     from?: { id?: string };
     created_time?: string;
+    tags?: { data?: Array<{ name?: string }> };
 };
 
 export type MessengerLeadStageEvent = {
@@ -20,6 +21,7 @@ export async function loadMessengerHistoryForStopCheck(input: {
     initialPage?: { data?: MessengerHistoryMessage[]; paging?: { next?: string } } | null;
     maxPages?: number;
     requireAvailable?: boolean;
+    humanHandoffSince?: string | null;
 }): Promise<MessengerHistoryMessage[]> {
     if (input.requireAvailable && !Array.isArray(input.initialPage?.data)) {
         throw new Error('Messenger lead-stage history is unavailable; automatic delivery blocked');
@@ -29,7 +31,7 @@ export async function loadMessengerHistoryForStopCheck(input: {
     const seen = new Set<string>();
     const deadline = Date.now() + 20_000;
     const maxPages = input.maxPages ?? 10;
-    for (let page = 1; next && !findLatestMessengerSystemSignal(messages, input.facebookPageId); page++) {
+    for (let page = 1; next && !findLatestMessengerSystemSignal(messages, input.facebookPageId, input); page++) {
         if (page >= maxPages || Date.now() >= deadline) {
             throw new Error('Messenger lead-stage history check exceeded its safe limit');
         }
@@ -39,6 +41,7 @@ export async function loadMessengerHistoryForStopCheck(input: {
         }
         seen.add(next);
         url.searchParams.delete('access_token');
+        url.searchParams.set('fields', 'id,message,from,created_time,tags');
         const response = await fetch(url, {
             cache: 'no-store',
             headers: { Authorization: `Bearer ${input.accessToken}` },
@@ -66,6 +69,9 @@ export function classifyMessengerSystemMessage(text: string): MessengerSystemSig
         return 'manual';
     }
 
+    // Observed in live Onset history when a person takes over in Business Suite.
+    if (/^You took over this chat from your AI agent\.?$/i.test(value)) return 'manual';
+
     if (/^You (?:created an order for|requested) (?:PHP|\u20B1)[\d,.]+\b/i.test(value) &&
         /fb-pma:\/\/payments\/orderdetails\/\?[^\s]*invoice_id=\d+/i.test(value)) {
         return 'order_created';
@@ -74,14 +80,34 @@ export function classifyMessengerSystemMessage(text: string): MessengerSystemSig
     return null;
 }
 
-/** Find the newest terminal Lead Center event written into a Messenger thread. */
+export function classifyMessengerHistoryMessage(
+    message: MessengerHistoryMessage,
+    facebookPageId: string,
+    options: { humanHandoffSince?: string | null } = {}
+): MessengerSystemSignal | null {
+    if (message.from?.id !== facebookPageId) return null;
+    const signal = typeof message.message === 'string' ? classifyMessengerSystemMessage(message.message) : null;
+    // Explicit lead stages/orders remain durable. Ordinary staff replies belong
+    // to the current intake, so an old chat does not undo an explicit bot reset.
+    const isHumanHandoff = signal === 'manual' && !/^Lead stage set to /i.test(message.message?.trim() || '');
+    if (signal && !isHumanHandoff) return signal;
+    const since = new Date(options.humanHandoffSince || '').getTime();
+    const sentAt = new Date(message.created_time || '').getTime();
+    if (Number.isFinite(since) && Number.isFinite(sentAt) && sentAt < since) return null;
+    if (signal) return signal;
+    // Live Meta reads mark staff mobile replies source:mobile, including photos.
+    // VeoBot API messages are source:web; source:web alone is not a handoff.
+    return message.tags?.data?.some(tag => tag.name === 'source:mobile') ? 'manual' : null;
+}
+
+/** Find the newest lead-stage or human-handoff event in a Messenger thread. */
 export function findLatestMessengerSystemSignal(
     messages: MessengerHistoryMessage[],
-    facebookPageId: string
+    facebookPageId: string,
+    options: { humanHandoffSince?: string | null } = {}
 ): MessengerSystemSignal | null {
     const matches = messages.flatMap((message, index) => {
-        if (message.from?.id !== facebookPageId || typeof message.message !== 'string') return [];
-        const signal = classifyMessengerSystemMessage(message.message);
+        const signal = classifyMessengerHistoryMessage(message, facebookPageId, options);
         if (!signal) return [];
         const timestamp = typeof message.created_time === 'string'
             ? new Date(message.created_time).getTime()

@@ -319,6 +319,21 @@ describe('follow-up lead-stage checks', () => {
         expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
+    it('cancels a due follow-up for a staff mobile reply without lead-stage text', async () => {
+        vi.clearAllMocks();
+        const { supabase, updates } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [
+            { id: 'staff-1', message: 'We will handle your order.', from: { id: 'fb-page' },
+                tags: { data: [{ name: 'source:mobile' }] } },
+            { message: 'I need a video', from: { id: 'customer' } }
+        ] } });
+        const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.generateChatbotFollowUp).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(updates).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: 'manual' }) });
+    });
+
     it('cancels a job handed off while the AI is generating its follow-up', async () => {
         vi.clearAllMocks();
         const { supabase, close } = fixture();

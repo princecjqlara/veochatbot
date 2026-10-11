@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { sendUtilityMessage } from '@/lib/facebook';
 import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
+import { stopChatbotForManualReply } from '@/lib/chatbot-handoff';
 
 export async function POST(request: NextRequest) {
     try {
@@ -55,6 +56,24 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        let { data: contact, error: contactError } = await supabase
+            .from('contacts').select('id').eq('page_id', pageId).eq('psid', recipientPsid).maybeSingle();
+        if (contactError) throw contactError;
+        if (!contact) {
+            const inserted = await supabase.from('contacts')
+                .upsert({ page_id: pageId, psid: recipientPsid }, { onConflict: 'page_id,psid', ignoreDuplicates: true })
+                .select('id').maybeSingle();
+            if (inserted.error) throw inserted.error;
+            contact = inserted.data;
+            if (!contact) {
+                const found = await supabase.from('contacts').select('id')
+                    .eq('page_id', pageId).eq('psid', recipientPsid).maybeSingle();
+                if (found.error) throw found.error;
+                contact = found.data;
+            }
+            if (!contact) throw new Error('Could not save contact before manual reply');
+        }
+        const stateBeforeStop = await stopChatbotForManualReply({ supabase, pageId, contactId: contact.id });
         const result = await sendUtilityMessage(
             page.fb_page_id,
             page.access_token,
@@ -63,17 +82,12 @@ export async function POST(request: NextRequest) {
             language,
             messageText
         );
-        const { data: contact } = await supabase
-            .from('contacts')
-            .select('id')
-            .eq('page_id', pageId)
-            .eq('psid', recipientPsid)
-            .maybeSingle();
         await recordOutboundMessageEvent(supabase, {
             pageId,
             contactId: contact?.id || null,
             messageId: result.message_id,
             sourceType: 'manual',
+            stateBeforeStop,
             sourceName: 'VeoBot template send',
             actorUserId: session.user.id,
             actorName: session.user.name || session.user.email || null,

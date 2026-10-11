@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
     sendMessage: vi.fn(),
     sendMessengerMediaAttachment: vi.fn(),
     recordOutboundMessageEvent: vi.fn(),
-    recordPageActivity: vi.fn()
+    recordPageActivity: vi.fn(),
+    stopChatbotForManualReply: vi.fn()
 }));
 
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: mocks.getSessionFromRequest }));
@@ -20,6 +21,7 @@ vi.mock('@/lib/facebook', () => ({
 }));
 vi.mock('@/lib/outbound-message-events', () => ({ recordOutboundMessageEvent: mocks.recordOutboundMessageEvent }));
 vi.mock('@/lib/activity-history', () => ({ recordPageActivity: mocks.recordPageActivity }));
+vi.mock('@/lib/chatbot-handoff', () => ({ stopChatbotForManualReply: mocks.stopChatbotForManualReply }));
 
 import { POST } from './route';
 
@@ -64,6 +66,7 @@ describe('manual Human Agent reply', () => {
         mocks.sendMessengerMediaAttachment.mockResolvedValue({ message_id: 'media-message' });
         mocks.recordOutboundMessageEvent.mockResolvedValue(undefined);
         mocks.recordPageActivity.mockResolvedValue(true);
+        mocks.stopChatbotForManualReply.mockResolvedValue({ status: 'active', collected_details: {} });
     });
 
     it('rejects a contact whose most recent customer message is outside 7 days', async () => {
@@ -139,5 +142,24 @@ describe('manual Human Agent reply', () => {
         expect(body.partial).toBe(true);
         expect(body.sent).toEqual([{ kind: 'image', partId: 'media:0', messageId: 'media-message' }]);
         expect(mocks.sendMessengerMediaAttachment).toHaveBeenCalledTimes(1);
+    });
+
+    it('saves the human handoff before sending the first message or attachment', async () => {
+        const calls: string[] = [];
+        mocks.stopChatbotForManualReply.mockImplementationOnce(async () => { calls.push('stop'); return null; });
+        mocks.sendMessengerMediaAttachment.mockImplementationOnce(async () => { calls.push('media'); return { message_id: 'media' }; });
+        mocks.sendMessage.mockImplementationOnce(async () => { calls.push('text'); return { message_id: 'text' }; });
+        const response = await POST(request({ contactId: 'contact-1', text: 'Hello', mediaPath, mediaType: 'image' }),
+            { params: Promise.resolve({ pageId: 'page-1' }) });
+        expect(response.status).toBe(200);
+        expect(calls).toEqual(['stop', 'media', 'text']);
+    });
+
+    it('does not send when the handoff cannot be saved', async () => {
+        mocks.stopChatbotForManualReply.mockRejectedValueOnce(new Error('Database unavailable'));
+        const response = await POST(request({ contactId: 'contact-1', text: 'Hello' }),
+            { params: Promise.resolve({ pageId: 'page-1' }) });
+        expect(response.status).toBe(500);
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 });
