@@ -42,7 +42,7 @@ import {
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../lib/contact-names';
-import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
+import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, isMessengerAutomaticNotice, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 
 export const maxDuration = 300;
 
@@ -319,7 +319,8 @@ export async function POST(request: NextRequest) {
                                     const stageSignal = classifyMessengerSystemMessage(outboundMessageText);
                                     // API echoes include app_id even before the send's
                                     // attribution has been saved. Do not stop on our own echo.
-                                    let humanReply = event.message?.is_echo === true && !event.message.app_id;
+                                    let humanReply = event.message?.is_echo === true && !event.message.app_id &&
+                                        !isMessengerAutomaticNotice(outboundMessageText);
                                     const echoMessageId = typeof event.message?.mid === 'string' ? event.message.mid.trim() : '';
                                     if (humanReply && echoMessageId) {
                                         const { data: attribution, error } = await supabase.from('outbound_message_events')
@@ -890,7 +891,7 @@ export async function POST(request: NextRequest) {
                                         const conversationMessages = await loadMessengerHistoryForStopCheck({
                                             facebookPageId: pageId, accessToken: page.access_token,
                                             initialPage: resolvedConversation?.messages, requireAvailable: true,
-                                            humanHandoffSince: chatbotState?.started_at
+                                            humanHandoffSince: chatbotState?.started_at || interactionAt
                                         });
                                         chatbotConversationHistory = conversationMessages.filter((message): message is FacebookMessage =>
                                             typeof message.id === 'string' && typeof message.message === 'string' &&
@@ -903,7 +904,7 @@ export async function POST(request: NextRequest) {
                                         liveStageStopReason = findLatestMessengerSystemSignal(
                                             conversationMessages,
                                             pageId,
-                                            { humanHandoffSince: chatbotState?.started_at }
+                                            { humanHandoffSince: chatbotState?.started_at || interactionAt }
                                         );
                                         if (liveLeadStageEvent) {
                                             try {
@@ -1202,7 +1203,8 @@ export async function POST(request: NextRequest) {
 
                                             const checkDelivery = () => assertChatbotDeliveryAllowed({
                                                 supabase, pageId: page.id, facebookPageId: pageId,
-                                                accessToken: page.access_token, contactId: contact.id, psid: senderId
+                                                accessToken: page.access_token, contactId: contact.id, psid: senderId,
+                                                anchorInboundAt: interactionAt
                                             });
                                             let sentMedia = false;
                                             const knowledgePageId = getChatbotKnowledgePageId(chatbotConfig);

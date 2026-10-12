@@ -1306,6 +1306,34 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
+    it('does not treat Meta automatic spam notices as a staff handoff', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({ knownContact: true });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+            sender: { id: 'fb_page_1' }, recipient: { id: 'contact_psid_1' },
+            message: { mid: 'spam-notice', text: 'This message was automatically moved to spam.', is_echo: true }
+        }] }] }));
+        expect(response.status).toBe(200);
+        expect(supabase.contactStateUpsert).not.toHaveBeenCalled();
+    });
+
+    it('starts a first intake despite staff messages from before the new inquiry', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({ knownContact: true });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            id: 'old-staff-history', message: 'I will handle this.', from: { id: 'fb_page_1' },
+            created_time: '2026-01-01T00:00:00Z', tags: { data: [{ name: 'source:mobile' }] }
+        }] } });
+        const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+            sender: { id: 'contact_psid_1' }, recipient: { id: 'fb_page_1' }, timestamp: Date.now(),
+            message: { mid: 'new-inquiry', text: 'What packages are available?' }
+        }] }] }));
+        expect(response.status).toBe(200);
+        expect(mocks.generateChatbotResponse).toHaveBeenCalled();
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(supabase.contactStateUpsert).not.toHaveBeenCalledWith(expect.objectContaining({ stop_reason: 'manual' }), expect.anything());
+    });
+
     it('records a takeover without a terminal lead stage in the interruption audit', async () => {
         const supabase = createPhotoChatbotSupabaseMock({ knownContact: true, activeState: true, detailsToCollect: ['Name', 'Budget'] });
         mocks.getSupabaseAdmin.mockReturnValue(supabase);

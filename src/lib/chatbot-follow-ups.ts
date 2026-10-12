@@ -289,9 +289,9 @@ export async function processDueChatbotFollowUps(input: {
             const conversationHistory = conversation?.messages?.data || [];
             const stageHistory = await loadMessengerHistoryForStopCheck({
                 facebookPageId: page.fb_page_id, accessToken: page.access_token, initialPage: conversation?.messages, requireAvailable: true,
-                humanHandoffSince: state?.started_at
+                humanHandoffSince: state?.started_at || job.anchor_inbound_at
             });
-            const liveStopReason = findLatestMessengerSystemSignal(stageHistory, page.fb_page_id, { humanHandoffSince: state?.started_at });
+            const liveStopReason = findLatestMessengerSystemSignal(stageHistory, page.fb_page_id, { humanHandoffSince: state?.started_at || job.anchor_inbound_at });
             if (liveStopReason) {
                 await saveChatbotContactState(supabase, {
                     pageId: job.page_id,

@@ -197,7 +197,7 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                 .filter((signal): signal is MessengerSystemSignal => signal !== null))];
             if (signals.length === 0) continue;
 
-            let { data: contact, error: contactError } = await db.from('contacts').select('id')
+            let { data: contact, error: contactError } = await db.from('contacts').select('id,last_inbound_at')
                 .eq('page_id', current.id).eq('psid', participant.id).maybeSingle();
             if (contactError) throw contactError;
             if (!contact) {
@@ -205,10 +205,10 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                     page_id: current.id,
                     psid: participant.id,
                     name: participant.name?.trim() || null
-                }).select('id').single();
+                }).select('id,last_inbound_at').single();
                 if (inserted.error) {
                     // Another worker may have created the contact first.
-                    const found = await db.from('contacts').select('id')
+                    const found = await db.from('contacts').select('id,last_inbound_at')
                         .eq('page_id', current.id).eq('psid', participant.id).single();
                     if (found.error) throw inserted.error;
                     contact = found.data;
@@ -220,7 +220,7 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
             // Stop first. Optional tags and interruption logs must never gate
             // the durable stop or let a queued follow-up continue.
             const existingState = await getChatbotContactState(db, current.id, contact.id);
-            const handoffOptions = { humanHandoffSince: existingState?.started_at };
+            const handoffOptions = { humanHandoffSince: existingState?.started_at || contact.last_inbound_at || runStartedAt };
             signals = [...new Set(messages
                 .map(message => classifyMessengerHistoryMessage(message, current.fb_page_id, handoffOptions))
                 .filter((signal): signal is MessengerSystemSignal => signal !== null))];

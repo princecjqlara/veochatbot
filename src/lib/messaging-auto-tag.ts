@@ -14,6 +14,11 @@ export type MessengerLeadStageEvent = {
     createdTime: string | null;
 };
 
+/** Meta emits this administrative event as a Page echo; it is not a staff reply. */
+export function isMessengerAutomaticNotice(text: string): boolean {
+    return /^This message was automatically moved to spam\.?$/i.test(text.trim());
+}
+
 /** Look past the first 100 messages so old handoffs remain effective. */
 export async function loadMessengerHistoryForStopCheck(input: {
     facebookPageId: string;
@@ -86,6 +91,7 @@ export function classifyMessengerHistoryMessage(
     options: { humanHandoffSince?: string | null } = {}
 ): MessengerSystemSignal | null {
     if (message.from?.id !== facebookPageId) return null;
+    if (isMessengerAutomaticNotice(message.message || '')) return null;
     const signal = typeof message.message === 'string' ? classifyMessengerSystemMessage(message.message) : null;
     // Explicit lead stages/orders remain durable. Ordinary staff replies belong
     // to the current intake, so an old chat does not undo an explicit bot reset.
