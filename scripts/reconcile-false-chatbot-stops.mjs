@@ -11,6 +11,7 @@ const checked=r=>{if(r.error)throw new Error(r.error.message);return r.data;};
 const configs=checked(await db.from('chatbot_configs').select('page_id').eq('enabled',true));
 const pages=checked(await db.from('pages').select('id,name,fb_page_id,access_token').in('id',configs.map(c=>c.page_id)));
 const pool=new pg.Pool({connectionString:process.env.DATABASE_POOLER_URL_5432||process.env.DATABASE_URL,ssl:{rejectUnauthorized:false},max:1,connectionTimeoutMillis:15000});
+pool.on('error',()=>console.warn('An idle database connection was lost; completed changes remain committed.'));
 const apply=process.argv.includes('--apply');const at=new Date().toISOString();const stamp=at.replaceAll(':','-');const rows=[];let candidates;
 try{
  candidates=(await pool.query(`SELECT to_jsonb(s) AS state,to_jsonb(c) AS contact FROM chatbot_contact_states s JOIN contacts c ON c.id=s.contact_id AND c.page_id=s.page_id WHERE s.page_id=ANY($1::uuid[]) AND s.status='stopped' AND s.stop_reason='manual' AND s.last_bot_reply_at IS NULL AND c.pipeline_stage='new' AND c.pipeline_stage_source='messenger' AND s.created_at>NOW()-INTERVAL '48 hours' ORDER BY s.created_at DESC`,[pages.map(p=>p.id)])).rows;
@@ -48,13 +49,24 @@ try{
  const restored=[];
  if(apply){
   await writeFile(new URL(`../../data/reply-gap-restoration-backup-${stamp}.json`,import.meta.url),JSON.stringify({at,records:eligible.map(r=>({state:r.state,contact:r.contact,reason:r.reason}))},null,2),{flag:'wx'});
-  for(const row of eligible){const client=await pool.connect();try{
-   await client.query('BEGIN');await client.query("SET LOCAL lock_timeout='3s'");
-   const contact=await client.query(`UPDATE contacts SET pipeline_stage_source='system',pipeline_stage_updated_at=NOW() WHERE id=$1 AND page_id=$2 AND pipeline_stage='new' AND pipeline_stage_source='messenger' AND pipeline_stage_updated_at IS NOT DISTINCT FROM $3::timestamptz RETURNING id`,[row.contactId,row.pageId,row.contact.pipeline_stage_updated_at]);
-   const state=await client.query(`UPDATE chatbot_contact_states SET status='active',stop_reason=NULL,stopped_at=NULL,updated_at=NOW() WHERE id=$1 AND status='stopped' AND stop_reason='manual' AND last_bot_reply_at IS NULL AND updated_at=$2::timestamptz AND started_at=$3::timestamptz RETURNING id`,[row.state.id,row.state.updated_at,row.state.started_at]);
-   if(contact.rowCount!==1||state.rowCount!==1){await client.query('ROLLBACK');row.concurrentChange=true;continue;}
-   await client.query('COMMIT');restored.push({page:row.page,contactId:row.contactId,reason:row.reason});
-  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}}
+  for(const row of eligible){
+   // One atomic statement locks both snapshots and avoids an idle checked-out connection.
+   const result=await pool.query(`WITH eligible AS (
+    SELECT c.id AS contact_id,s.id AS state_id FROM contacts c JOIN chatbot_contact_states s ON s.contact_id=c.id AND s.page_id=c.page_id
+    WHERE c.id=$1 AND c.page_id=$2 AND c.pipeline_stage='new' AND c.pipeline_stage_source='messenger'
+     AND c.pipeline_stage_updated_at IS NOT DISTINCT FROM $3::timestamptz AND c.last_inbound_at IS NOT DISTINCT FROM $7::timestamptz
+     AND s.id=$4 AND s.status='stopped' AND s.stop_reason='manual' AND s.last_bot_reply_at IS NULL AND s.updated_at=$5::timestamptz AND s.started_at=$6::timestamptz
+    FOR UPDATE OF c,s
+   ), restored_state AS (
+    UPDATE chatbot_contact_states s SET status='active',stop_reason=NULL,stopped_at=NULL,updated_at=NOW()
+    FROM eligible e WHERE s.id=e.state_id RETURNING s.contact_id,s.page_id
+   ) UPDATE contacts c SET pipeline_stage_source='system',pipeline_stage_updated_at=NOW()
+    FROM restored_state s WHERE c.id=s.contact_id AND c.page_id=s.page_id RETURNING c.id`,
+    [row.contactId,row.pageId,row.contact.pipeline_stage_updated_at,row.state.id,row.state.updated_at,row.state.started_at,row.contact.last_inbound_at]);
+   if(result.rowCount!==1){row.concurrentChange=true;continue;}
+   restored.push({page:row.page,contactId:row.contactId,reason:row.reason});
+   await writeFile(new URL('../../data/reply-gap-restoration-progress.json',import.meta.url),JSON.stringify({at,restoredContacts:restored},null,2));
+  }
  }
  const reasons={};for(const r of rows)reasons[r.reason]=(reasons[r.reason]||0)+1;
  const report={at,apply,candidates:candidates.length,eligible:eligible.length,restored:restored.length,restoredContacts:restored,reasons,noMessengerMessagesSent:true};await writeFile(new URL(`../../data/reply-gap-reconcile-${apply?'result':'summary'}.json`,import.meta.url),JSON.stringify(report,null,2));console.log('SUMMARY',JSON.stringify({...report,restoredContacts:undefined}));

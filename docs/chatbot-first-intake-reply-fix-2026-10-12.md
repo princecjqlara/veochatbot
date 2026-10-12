@@ -14,4 +14,8 @@ The read-only scan examined 574 contacts and identified 220 whose only staff rep
 
 Eligible records are rechecked before restoration, backed up in the parent workspace's ignored `data/` folder, and updated with timestamp conditions in a transaction. Concurrently changed records are skipped. Restoration clears the false stop and returns the new-stage contact to system ownership, without sending Messenger messages or replaying old inquiries.
 
+Production read-back confirmed more than 190 of the original false-stopped contacts active again or completing bot intake. A resumed scan restored 68 additional verified contacts after a database connection interrupted the first repair; 19 remaining scoped records retained current/unattributed Page messages or refusal evidence. Seven transient Messenger read failures were retried successfully and preserved their current Page-message or opt-out protection. The repair now updates both locked snapshots in one atomic SQL statement, also compares the latest inbound timestamp, and saves progress after each successful change.
+
+The deployed bot recorded more than 1,000 successful replies after release. Historical delivery records also retain eligibility cancellations and a Meta thread-control rejection; the repair does not force ownership of another application's conversation.
+
 Regression checks cover old staff messages before the first inquiry, current staff handoffs, durable terminal stages, automatic spam notices, and delivery eligibility. All 546 tests across 76 files pass, plus TypeScript and targeted lint checks. The full test run used a 20-second test timeout to avoid a cold module import timing out and contaminating the following test. No database schema migration is needed for these changes.
