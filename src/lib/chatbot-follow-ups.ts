@@ -265,6 +265,10 @@ export async function processDueChatbotFollowUps(input: {
                 state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source) ||
                 latestInboundTime > anchorTime ||
                 (!messagingType && job.schedule_type !== 'manual_human_agent')) {
+                if (state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source)) {
+                    await cancelPendingChatbotFollowUps({ supabase, pageId: job.page_id, contactId: job.contact_id,
+                        reason: 'Contact stopped or handed off', now });
+                }
                 await markJob(supabase, job.id, {
                     status: 'cancelled',
                     cancelled_at: now.toISOString(),
@@ -299,6 +303,10 @@ export async function processDueChatbotFollowUps(input: {
                     existingState: state as ChatbotContactState | null,
                     stopReason: liveStopReason,
                     now
+                });
+                await cancelPendingChatbotFollowUps({
+                    supabase, pageId: job.page_id, contactId: job.contact_id,
+                    reason: `Messenger lead stage: ${liveStopReason}`, now
                 });
                 await updateContactPipelineStage(supabase, {
                     pageId: job.page_id,
@@ -389,6 +397,10 @@ export async function processDueChatbotFollowUps(input: {
                 !isChatbotContactAllowed(freshConfig, job.contact_id) || freshState?.status === 'stopped' ||
                 isPipelineClosedForAutomation(freshContact.pipeline_stage, freshContact.pipeline_stage_source) ||
                 new Date(freshContact.last_inbound_at || 0).getTime() > anchorTime) {
+                if (freshState?.status === 'stopped' || isPipelineClosedForAutomation(freshContact?.pipeline_stage, freshContact?.pipeline_stage_source)) {
+                    await cancelPendingChatbotFollowUps({ supabase, pageId: job.page_id, contactId: job.contact_id,
+                        reason: 'Contact stopped or handed off during generation', now });
+                }
                 await markJob(supabase, job.id, {
                     status: 'cancelled', cancelled_at: now.toISOString(), claimed_at: null,
                     error_message: 'Follow-up eligibility changed during generation'

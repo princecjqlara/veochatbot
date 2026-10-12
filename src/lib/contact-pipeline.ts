@@ -1,5 +1,6 @@
 import type { ChatbotStopReason } from '@/lib/chatbot-control';
 import type { MessengerSystemSignal } from '@/lib/messaging-auto-tag';
+import { assignMessengerOutcomeTags } from '@/lib/messenger-outcome-tags';
 
 export const CONTACT_PIPELINE_STAGES = [
     'new',
@@ -120,6 +121,16 @@ export async function updateContactPipelineStage(
     if (contactError) throw new Error(contactError.message || 'Could not load contact pipeline stage');
     if (!contact) return false;
 
+    const assignOutcome = async () => {
+        if (input.source !== 'messenger' || input.preserveStage) return;
+        try {
+            await assignMessengerOutcomeTags(supabase, input.pageId, input.contactId, input.stage);
+        } catch (error) {
+            // Optional tags must not undo a saved stop or human ownership.
+            console.warn('Messenger stage saved but outcome tagging failed', { pageId: input.pageId, contactId: input.contactId, error });
+        }
+    };
+
     const current = isContactPipelineStage(contact.pipeline_stage) ? contact.pipeline_stage : 'new';
     // A generic staff handoff has no replacement lead stage. Keep the stage,
     // but mark Messenger ownership so every automation honors the handoff.
@@ -130,7 +141,10 @@ export async function updateContactPipelineStage(
     // Retain that source so later photo requests cannot reopen bot intake.
     const humanHandoff = current === nextStage && (input.source === 'messenger' || input.source === 'manual') &&
         contact.pipeline_stage_source !== input.source;
-    if (!input.force && !humanHandoff && !shouldAutoMovePipeline(current, nextStage)) return false;
+    if (!input.force && !humanHandoff && !shouldAutoMovePipeline(current, nextStage)) {
+        await assignOutcome();
+        return false;
+    }
 
     let update = supabase
         .from('contacts')
@@ -148,5 +162,6 @@ export async function updateContactPipelineStage(
     }
     const { error: updateError } = await update;
     if (updateError) throw new Error(updateError.message || 'Could not update contact pipeline stage');
+    await assignOutcome();
     return true;
 }

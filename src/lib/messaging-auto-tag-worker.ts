@@ -16,6 +16,8 @@ import {
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
 import { recordChatbotInterruptionIfNeeded } from '@/lib/outbound-message-events';
+import { choosePositiveOutcomeTag, ensureMessengerOutcomeTags } from '@/lib/messenger-outcome-tags';
+export { MESSENGER_OUTCOME_TAGS, buildMessengerOutcomeTagRows, choosePositiveOutcomeTag } from '@/lib/messenger-outcome-tags';
 
 type Page = {
     id: string;
@@ -37,71 +39,6 @@ type MessengerOutcomeTag = {
     id: string;
     system_key: MessengerSystemSignal;
 };
-
-export const MESSENGER_OUTCOME_TAGS: Record<Exclude<MessengerSystemSignal, 'manual'>, { name: string; color: string }> = {
-    qualified: { name: 'Qualified', color: '#2563eb' },
-    not_qualified: { name: 'Not Qualified', color: '#dc2626' },
-    converted: { name: 'Converted', color: '#7c3aed' },
-    order_created: { name: 'Order Created', color: '#f59e0b' }
-};
-
-export function buildMessengerOutcomeTagRows(pageId: string) {
-    return (Object.entries(MESSENGER_OUTCOME_TAGS) as Array<[
-        MessengerSystemSignal,
-        { name: string; color: string }
-    ]>).map(([systemKey, tag]) => ({
-        name: tag.name,
-        color: tag.color,
-        owner_type: 'page' as const,
-        owner_id: pageId,
-        page_id: pageId,
-        is_default: false,
-        system_key: systemKey
-    }));
-}
-
-async function ensureMessengerOutcomeTags(db: ReturnType<typeof getSupabaseAdmin>, pageId: string) {
-    const systemKeys = Object.keys(MESSENGER_OUTCOME_TAGS) as MessengerSystemSignal[];
-    const { data: existingRows, error: existingError } = await db.from('tags')
-        .select('id,system_key')
-        .eq('owner_type', 'page')
-        .eq('owner_id', pageId)
-        .in('system_key', systemKeys);
-    if (existingError) throw existingError;
-
-    const existingKeys = new Set(
-        ((existingRows || []) as MessengerOutcomeTag[]).map(row => row.system_key)
-    );
-    const missingRows = buildMessengerOutcomeTagRows(pageId)
-        .filter(row => !existingKeys.has(row.system_key));
-
-    if (missingRows.length > 0) {
-        const { error: insertError } = await db.from('tags').upsert(missingRows, {
-            onConflict: 'owner_id,system_key'
-        });
-        if (insertError) throw insertError;
-    }
-
-    const { data: outcomeTags, error: outcomeTagError } = await db.from('tags')
-        .select('id,system_key')
-        .eq('owner_type', 'page')
-        .eq('owner_id', pageId)
-        .in('system_key', systemKeys);
-    if (outcomeTagError) throw outcomeTagError;
-
-    return (outcomeTags || []) as MessengerOutcomeTag[];
-}
-
-function normalizeTagName(name: string) {
-    return name.toLowerCase().replace(/[^a-z]/g, '');
-}
-
-export function choosePositiveOutcomeTag(tags: DefaultPageTag[]) {
-    return tags.find(tag => {
-        const normalized = normalizeTagName(tag.name);
-        return normalized === 'paidavailedservice' || normalized === 'paidavailedservices';
-    }) || tags[0] || null;
-}
 
 async function getMessagesSince(conversationId: string, token: string, since: string): Promise<Message[]> {
     let next: string | null = `https://graph.facebook.com/v21.0/${encodeURIComponent(conversationId)}/messages?fields=id,message,from,created_time,tags&limit=100`;

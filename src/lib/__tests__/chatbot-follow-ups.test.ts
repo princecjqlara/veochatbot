@@ -269,15 +269,22 @@ describe('chatbot follow-up scheduling', () => {
 describe('follow-up lead-stage checks', () => {
     function fixture(options: { lookupError?: boolean } = {}) {
         const updates: Array<{ table: string; payload: any }> = [];
+        const cancellations: Array<{ filters: Record<string, unknown> }> = [];
         const job = { id: 'job-1', page_id: 'page-1', contact_id: 'contact-1',
             anchor_inbound_at: '2026-10-06T00:00:00Z', schedule_type: 'human_agent', sequence_index: 0, attempt_count: 0 };
         let stage = 'engaged';
         let source = 'chatbot';
         let jobStatus = 'processing';
         const supabase = { from: vi.fn((table: string) => {
+            const filters: Record<string, unknown> = {};
             const chain: any = {
-                select: () => chain, eq: () => chain, in: () => chain, lt: () => chain, lte: () => chain, order: () => chain,
-                update: (payload: any) => { updates.push({ table, payload }); return chain; },
+                select: () => chain, eq: (key: string, value: unknown) => { filters[key] = value; return chain; },
+                in: (key: string, value: unknown) => { filters[key] = value; return chain; }, lt: () => chain, lte: () => chain, order: () => chain,
+                update: (payload: any) => {
+                    updates.push({ table, payload });
+                    if (table === 'chatbot_follow_up_jobs' && payload.status === 'cancelled') cancellations.push({ filters });
+                    return chain;
+                },
                 upsert: async (payload: any) => { updates.push({ table, payload }); return { error: null }; },
                 limit: async () => ({ data: [job], error: null }),
                 maybeSingle: async () => {
@@ -291,7 +298,7 @@ describe('follow-up lead-stage checks', () => {
             };
             return chain;
         }) };
-        return { supabase, updates, close: () => { stage = 'qualified'; }, handoff: () => { source = 'manual'; }, cancel: () => { jobStatus = 'cancelled'; } };
+        return { supabase, updates, cancellations, close: () => { stage = 'qualified'; }, handoff: () => { source = 'manual'; }, cancel: () => { jobStatus = 'cancelled'; } };
     }
 
     it.each(['Qualified', 'Not Qualified', 'Converted', 'Order Created', 'Contacted', 'Intake', 'Custom Stage'])('cancels a due follow-up when Messenger has %s before the poller catches up', async (stage) => {
@@ -321,7 +328,7 @@ describe('follow-up lead-stage checks', () => {
 
     it('cancels a due follow-up for a staff mobile reply without lead-stage text', async () => {
         vi.clearAllMocks();
-        const { supabase, updates } = fixture();
+        const { supabase, updates, cancellations } = fixture();
         mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [
             { id: 'staff-1', message: 'We will handle your order.', from: { id: 'fb-page' },
                 tags: { data: [{ name: 'source:mobile' }] } },
@@ -332,6 +339,9 @@ describe('follow-up lead-stage checks', () => {
         expect(mocks.generateChatbotFollowUp).not.toHaveBeenCalled();
         expect(mocks.sendMessage).not.toHaveBeenCalled();
         expect(updates).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: 'manual' }) });
+        expect(cancellations).toContainEqual({ filters: {
+            page_id: 'page-1', contact_id: 'contact-1', status: ['pending', 'processing', 'ready_manual']
+        } });
     });
 
     it('cancels a job handed off while the AI is generating its follow-up', async () => {

@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+const tagMocks = vi.hoisted(() => ({ assign: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/messenger-outcome-tags', () => ({ assignMessengerOutcomeTags: tagMocks.assign }));
 import {
     isPipelineClosedForAutomation,
     chatbotStopReasonForPipelineStage,
@@ -9,6 +11,7 @@ import {
 } from '@/lib/contact-pipeline';
 
 describe('contact pipeline', () => {
+    beforeEach(() => tagMocks.assign.mockReset().mockResolvedValue(undefined));
     it('maps bot progress to the appropriate stage', () => {
         expect(pipelineStageForChatbotProgress({})).toBe('engaged');
         expect(pipelineStageForChatbotProgress({ collectedDetails: { email: 'a@example.com' } })).toBe('collecting_details');
@@ -33,6 +36,29 @@ describe('contact pipeline', () => {
         };
         expect(await updateContactPipelineStage({ from: () => chain }, { pageId: 'page', contactId: 'contact', stage: 'qualified', source: 'messenger' })).toBe(true);
         expect(update).toHaveBeenCalledWith(expect.objectContaining({ pipeline_stage_source: 'messenger' }));
+        expect(tagMocks.assign).toHaveBeenCalledWith(expect.anything(), 'page', 'contact', 'qualified');
+    });
+
+    it('repairs missing tags when Messenger confirms an unchanged stage', async () => {
+        const chain: any = { select: () => chain, eq: () => chain,
+            maybeSingle: async () => ({ data: { pipeline_stage: 'qualified', pipeline_stage_source: 'messenger' }, error: null }) };
+        expect(await updateContactPipelineStage({ from: () => chain }, {
+            pageId: 'page', contactId: 'contact', stage: 'qualified', source: 'messenger'
+        })).toBe(false);
+        expect(tagMocks.assign).toHaveBeenCalledWith(expect.anything(), 'page', 'contact', 'qualified');
+    });
+
+    it('retains human ownership when optional outcome tagging fails', async () => {
+        tagMocks.assign.mockRejectedValueOnce(new Error('Tag write failed'));
+        const update = vi.fn();
+        const chain: any = { select: () => chain, eq: () => chain,
+            maybeSingle: async () => ({ data: { pipeline_stage: 'engaged', pipeline_stage_source: 'chatbot' }, error: null }),
+            update: (payload: unknown) => { update(payload); return chain; },
+            then: (resolve: any) => Promise.resolve({ error: null }).then(resolve) };
+        expect(await updateContactPipelineStage({ from: () => chain }, {
+            pageId: 'page', contactId: 'contact', stage: 'qualified', source: 'messenger'
+        })).toBe(true);
+        expect(update).toHaveBeenCalledWith(expect.objectContaining({ pipeline_stage_source: 'messenger', pipeline_stage: 'qualified' }));
     });
 
     it('retains the current stage while making a generic staff handoff visible to every automation', async () => {
