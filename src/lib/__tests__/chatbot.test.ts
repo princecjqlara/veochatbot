@@ -346,6 +346,78 @@ describe('VeoBot chatbot', () => {
         expect(result.messages.length).toBeLessThanOrEqual(2);
     });
 
+    it.each([31, 100, 205])('retains the customer request behind %i newer Page messages', async pageCount => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200,
+            json: async () => ({ choices: [{ message: { content: JSON.stringify({
+                message: 'Would you like a restaurant video sample?',
+                personalization_basis: 'Customer requested a restaurant video sample.'
+            }) } }] }) });
+        vi.stubGlobal('fetch', fetchMock);
+        const newest = Date.parse('2026-10-14T12:00:00Z');
+        const pageMessages = Array.from({ length: pageCount }, (_, index) => ({
+            id: `page-${index}`, message: `Previous Page offer ${index}`,
+            from: { id: 'page-facebook-id', name: 'Page' }, created_time: new Date(newest - index * 1000).toISOString()
+        }));
+        const customer = { id: 'customer-request', message: 'May sample kayo para sa restaurant?',
+            from: { id: 'customer-id', name: 'Customer' }, created_time: new Date(newest - pageCount * 1000).toISOString() };
+        await expect(generateChatbotFollowUp({ config, pageId: 'page-facebook-id', sequenceNumber: 2,
+            scheduleLabel: 'first 24 hours', history: [...pageMessages, customer] })).resolves.toMatchObject({
+                message: 'Would you like a restaurant video sample?'
+            });
+        const request = JSON.parse(fetchMock.mock.calls[0][1].body);
+        expect(request.messages[0].content).toContain('LATEST CUSTOMER MESSAGE:\nMay sample kayo para sa restaurant?');
+        const context = request.messages.slice(1, -1);
+        expect(context).toHaveLength(30);
+        expect(context[0]).toEqual({ role: 'user', content: customer.message });
+        expect(context.at(-1)).toEqual({ role: 'assistant', content: pageMessages[0].message });
+    });
+
+    it('keeps recent customer turns and Page replies in time order within the follow-up budget', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200,
+            json: async () => ({ choices: [{ message: { content: JSON.stringify({
+                message: 'Would next Friday work for your restaurant video?',
+                personalization_basis: 'The customer needs a restaurant video.'
+            }) } }] }) });
+        vi.stubGlobal('fetch', fetchMock);
+        const newest = Date.parse('2026-10-14T12:00:00Z');
+        const history = Array.from({ length: 48 }, (_, index) => ({ id: `message-${index}`,
+            message: index < 40 ? `Previous Page reply ${index}` : `Customer detail ${index}`,
+            from: { id: index < 40 ? 'page-facebook-id' : 'customer-id', name: index < 40 ? 'Page' : 'Customer' },
+            created_time: new Date(newest - index * 1000).toISOString() }));
+        // Callers may supply chronological history or duplicated merged pages.
+        await generateChatbotFollowUp({ config, pageId: 'page-facebook-id', sequenceNumber: 2,
+            scheduleLabel: 'first 24 hours', history: [...history.slice().reverse(), history[0]] });
+        const request = JSON.parse(fetchMock.mock.calls[0][1].body);
+        const context = request.messages.slice(1, -1);
+        expect(context).toHaveLength(30);
+        expect(context.filter((m: { role: string }) => m.role === 'user').map((m: { content: string }) => m.content))
+            .toEqual([45, 44, 43, 42, 41, 40].map(index => `Customer detail ${index}`));
+        expect(context.at(-1)).toEqual({ role: 'assistant', content: 'Previous Page reply 0' });
+        expect(request.messages[0].content).toContain('LATEST CUSTOMER MESSAGE:\nCustomer detail 40');
+    });
+
+    it('rejects a repeated Page message omitted from the compact follow-up prompt', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const repeated = 'Would you like a sample for your restaurant?';
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200,
+            json: async () => ({ choices: [{ message: { content: JSON.stringify({
+                message: repeated, personalization_basis: 'Customer requested a restaurant video.'
+            }) } }] }) });
+        vi.stubGlobal('fetch', fetchMock);
+        const history = Array.from({ length: 40 }, (_, index) => ({ id: `page-${index}`,
+            message: `Newer Page reply ${index}`, from: { id: 'page-facebook-id', name: 'Page' }, created_time: '' }));
+        await expect(generateChatbotFollowUp({ config, pageId: 'page-facebook-id', sequenceNumber: 2,
+            scheduleLabel: 'first 24 hours', history: [...history,
+                { id: 'old-offer', message: repeated, from: { id: 'page-facebook-id', name: 'Page' }, created_time: '' },
+                { id: 'customer-request', message: 'I need a restaurant video.', from: { id: 'customer-id', name: 'Customer' }, created_time: '' }
+            ] })).rejects.toThrow('no generic fallback was sent');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const request = JSON.parse(fetchMock.mock.calls[0][1].body);
+        expect(request.messages.slice(1, -1).some((message: { content: string }) => message.content === repeated)).toBe(false);
+    });
+
     it('refuses to create a follow-up without customer conversation history', async () => {
         process.env.OPENROUTER_API_KEY = 'test-key';
         const fetchMock = vi.fn();

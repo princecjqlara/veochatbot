@@ -514,7 +514,7 @@ function parseChatbotPlan(
     };
 }
 
-function getChatbotReplyHistory(history: FacebookMessage[], pageId: string) {
+function getChatbotReplyHistory(history: FacebookMessage[], pageId: string, maxMessages = 200) {
     const seen = new Set<string>();
     const readable = history.filter(message => {
         if (typeof message.message !== 'string' || !message.message.trim() || !message.from?.id) return false;
@@ -527,7 +527,7 @@ function getChatbotReplyHistory(history: FacebookMessage[], pageId: string) {
     if (readable.every(message => Number.isFinite(Date.parse(message.created_time)))) {
         readable.sort((a, b) => Date.parse(b.created_time) - Date.parse(a.created_time));
     }
-    return readable.slice(0, 200).reverse().map(message => ({
+    return readable.slice(0, maxMessages).reverse().map(message => ({
         role: message.from.id === pageId ? 'assistant' as const : 'user' as const,
         content: message.message.trim()
     }));
@@ -846,14 +846,15 @@ export async function generateChatbotFollowUp(input: {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) throw new Error('OPENROUTER_API_KEY is not configured');
 
-    const history = (input.history || [])
-        .filter((message) => typeof message.message === 'string' && message.message.trim())
-        .slice(0, 30)
-        .reverse()
-        .map((message) => ({
-            role: message.from?.id === input.pageId ? 'assistant' as const : 'user' as const,
-            content: message.message.trim()
-        }));
+    // Campaigns and Page replies can bury the customer's request beyond the
+    // newest 30 messages. Keep recent customer turns within the same prompt
+    // budget, together with the newest Page messages used to avoid repetition.
+    const completeHistory = getChatbotReplyHistory(input.history || [], input.pageId, input.history?.length || 0);
+    const selected = new Set(completeHistory.filter(message => message.role === 'user').slice(-6));
+    for (let index = completeHistory.length - 1; index >= 0 && selected.size < 30; index--) {
+        selected.add(completeHistory[index]);
+    }
+    const history = completeHistory.filter(message => selected.has(message));
     const customerMessages = history.filter((message) => message.role === 'user');
     if (customerMessages.length === 0) {
         throw new Error('Cannot create a personalized follow-up without readable customer conversation history');
@@ -896,7 +897,7 @@ export async function generateChatbotFollowUp(input: {
     const pageName = input.pageName?.trim() || 'this Facebook Page';
     const latestCustomerMessage = customerMessages.at(-1)?.content || '';
     const priorPageMessages = new Set(
-        history
+        completeHistory
             .filter((message) => message.role === 'assistant')
             .map((message) => message.content.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim())
             .filter(Boolean)

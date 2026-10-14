@@ -362,6 +362,30 @@ describe('follow-up lead-stage checks', () => {
         expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
+    it('uses customer context fetched beyond the first Messenger history page', async () => {
+        vi.clearAllMocks();
+        const { supabase } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            id: 'page-offer', message: 'Previous Page offer', from: { id: 'fb-page' }
+        }], paging: { next: 'https://graph.facebook.com/thread/messages?after=older' } } });
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [{
+            id: 'customer-request', message: 'I need a restaurant video', from: { id: 'customer' },
+            created_time: '2026-10-06T00:00:00Z'
+        }] }) }));
+        mocks.generateChatbotFollowUp.mockResolvedValue({ message: 'A restaurant video follow-up', messages: ['A restaurant video follow-up'] });
+        mocks.sendMessage.mockResolvedValue({ message_id: 'follow-up-sent' });
+        try {
+            const result = await processDueChatbotFollowUps({ supabase, now: new Date('2026-10-07T00:00:00Z') });
+            expect(result).toMatchObject({ sent: 1, failed: 0 });
+            expect(mocks.generateChatbotFollowUp).toHaveBeenCalledWith(expect.objectContaining({
+                history: expect.arrayContaining([expect.objectContaining({ id: 'customer-request', message: 'I need a restaurant video' })])
+            }));
+            expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('cancels a stage change visible only in Messenger after generation', async () => {
         vi.clearAllMocks();
         const { supabase, updates } = fixture();

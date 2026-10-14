@@ -290,7 +290,6 @@ export async function processDueChatbotFollowUps(input: {
                 page.access_token,
                 { throwOnError: true, timeoutMs: 5000 }
             );
-            const conversationHistory = conversation?.messages?.data || [];
             const stageHistory = await loadMessengerHistoryForStopCheck({
                 facebookPageId: page.fb_page_id, accessToken: page.access_token, initialPage: conversation?.messages, requireAvailable: true,
                 humanHandoffSince: state?.started_at || job.anchor_inbound_at
@@ -322,6 +321,14 @@ export async function processDueChatbotFollowUps(input: {
                 result.cancelled += 1;
                 continue;
             }
+            // The stop audit has already fetched older message pages. Reuse
+            // them for personalization instead of dropping customer context
+            // when the first page contains only newer Page messages.
+            const conversationHistory = stageHistory.flatMap(message => {
+                if (typeof message.message !== 'string' || !message.from?.id) return [];
+                return [{ ...message, id: message.id || '', message: message.message,
+                    from: { ...message.from, id: message.from.id, name: message.from.name || '' }, created_time: message.created_time || '' }];
+            });
             const hasCustomerMessage = hasReadableCustomerConversationHistory(
                 conversationHistory,
                 page.fb_page_id

@@ -3,7 +3,7 @@ export type MessengerSystemSignal = 'order_created' | 'qualified' | 'not_qualifi
 export type MessengerHistoryMessage = {
     id?: string;
     message?: string;
-    from?: { id?: string };
+    from?: { id?: string; name?: string };
     created_time?: string;
     tags?: { data?: Array<{ name?: string }> };
 };
