@@ -23,7 +23,7 @@ import {
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument } from '@/lib/chatbot-drive-folders';
 import { cancelPendingChatbotFollowUps, scheduleChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 import { claimChatbotReply, finishChatbotReply } from '@/lib/chatbot-replies';
-import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
+import { assertChatbotDeliveryAllowed, assertMessengerAutomationDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
 import {
     classifyChatbotStopIntent,
     getChatbotContactState,
@@ -749,6 +749,11 @@ export async function POST(request: NextRequest) {
 
                                 // Send welcome message (must await in serverless environment)
                                 try {
+                                    await assertMessengerAutomationDeliveryAllowed({
+                                        supabase, pageId: page.id, facebookPageId: pageId,
+                                        accessToken: page.access_token, contactId: contact.id,
+                                        psid: senderId, anchorInboundAt: interactionAt
+                                    });
                                     const sendResult = await sendMessage(
                                         pageId,
                                         page.access_token,

@@ -16,26 +16,29 @@ export async function assertChatbotDeliveryAllowed(input: {
     anchorInboundAt?: string;
     followUp?: boolean;
     followUpJobId?: string;
+    /** Workflow/welcome sends share stop rules without requiring the AI bot to be enabled. */
+    enforceChatbotSettings?: boolean;
 }): Promise<void> {
     const db = input.supabase;
+    const enforceChatbotSettings = input.enforceChatbotSettings !== false;
     const checkSavedEligibility = async () => {
         const [contactResult, configResult, state, jobResult] = await Promise.all([
             db.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at')
                 .eq('page_id', input.pageId).eq('id', input.contactId).maybeSingle(),
-            db.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id')
-                .eq('page_id', input.pageId).maybeSingle(),
+            enforceChatbotSettings ? db.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id')
+                .eq('page_id', input.pageId).maybeSingle() : null,
             getChatbotContactState(db, input.pageId, input.contactId),
             input.followUpJobId ? db.from('chatbot_follow_up_jobs').select('status')
                 .eq('id', input.followUpJobId).eq('page_id', input.pageId).eq('contact_id', input.contactId).maybeSingle() : null
         ]);
         if (contactResult.error) throw new Error(contactResult.error.message);
-        if (configResult.error) throw new Error(configResult.error.message);
+        if (configResult?.error) throw new Error(configResult.error.message);
         if (jobResult?.error) throw new Error(jobResult.error.message);
         const contact = contactResult.data;
-        const config = configResult.data;
-        if (!contact || !config?.enabled || !isChatbotContactAllowed(config, input.contactId) ||
+        const config = configResult?.data;
+        if (!contact || (enforceChatbotSettings && (!config?.enabled || !isChatbotContactAllowed(config, input.contactId))) ||
             (input.followUpJobId && jobResult?.data?.status !== 'processing') ||
-            (input.followUp && !config.follow_up_enabled) ||
+            (input.followUp && enforceChatbotSettings && !config?.follow_up_enabled) ||
             state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source) ||
             (input.anchorInboundAt && new Date(contact.last_inbound_at || 0).getTime() > new Date(input.anchorInboundAt).getTime())) {
             throw new ChatbotDeliveryStoppedError('Chatbot eligibility changed; automatic delivery cancelled');
@@ -69,4 +72,11 @@ export async function assertChatbotDeliveryAllowed(input: {
     if (error) throw new Error(error.message);
     await updateContactPipelineStage(db, { pageId: input.pageId, contactId: input.contactId, stage: pipelineStageForMessengerSignal(signal), source: 'messenger' });
     throw new ChatbotDeliveryStoppedError(`Messenger lead stage: ${signal}; automatic delivery cancelled`);
+}
+
+/** All non-campaign automatic sends must honor saved and live Messenger handoffs. */
+export async function assertMessengerAutomationDeliveryAllowed(
+    input: Omit<Parameters<typeof assertChatbotDeliveryAllowed>[0], 'enforceChatbotSettings' | 'followUp' | 'followUpJobId'>
+): Promise<void> {
+    await assertChatbotDeliveryAllowed({ ...input, enforceChatbotSettings: false });
 }

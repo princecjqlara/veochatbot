@@ -130,6 +130,7 @@ function createWebhookRequest(payload?: Record<string, unknown>): NextRequest {
 }
 
 function createSupabaseMock(options?: {
+    deliveryStage?: string;
     welcomeConfig?: {
         enabled: boolean;
         message_text: string;
@@ -151,10 +152,12 @@ function createSupabaseMock(options?: {
     const pageEq = vi.fn().mockReturnValue({ single: pageSingle });
     const pageSelect = vi.fn().mockReturnValue({ eq: pageEq });
 
-    const existingContactMaybeSingle = vi.fn().mockResolvedValue({
-        data: options?.existingContact ?? null,
+    let savedContact: Record<string, unknown> | null = options?.existingContact ?? null;
+    const stopWrites: Record<string, unknown>[] = [];
+    const existingContactMaybeSingle = vi.fn().mockImplementation(async () => ({
+        data: savedContact,
         error: null
-    });
+    }));
     const existingContactEqPsid = vi.fn().mockReturnValue({ maybeSingle: existingContactMaybeSingle });
     const existingContactEqPage = vi.fn().mockReturnValue({ eq: existingContactEqPsid });
     const contactsSelect = vi.fn().mockReturnValue({ eq: existingContactEqPage });
@@ -167,10 +170,15 @@ function createSupabaseMock(options?: {
         error: null
     });
     const contactsUpsertSelect = vi.fn().mockReturnValue({ single: contactsUpsertSingle });
-    const contactsUpsert = vi.fn().mockReturnValue({ select: contactsUpsertSelect });
+    const contactsUpsert = vi.fn().mockImplementation(() => {
+        savedContact ||= { id: 'contact_row_1', name: 'Jane Contact',
+            pipeline_stage: options?.deliveryStage || 'engaged', pipeline_stage_source: 'system' };
+        return { select: contactsUpsertSelect };
+    });
 
-    const contactsUpdateEq = vi.fn().mockResolvedValue({ error: null });
-    const contactsUpdate = vi.fn().mockReturnValue({ eq: contactsUpdateEq });
+    const updateChain: any = { eq: () => updateChain,
+        then: (resolve: any) => Promise.resolve({ error: null }).then(resolve) };
+    const contactsUpdate = vi.fn().mockReturnValue(updateChain);
 
     const welcomeSingle = vi.fn().mockResolvedValue({
         data: options?.welcomeConfig ?? {
@@ -192,6 +200,14 @@ function createSupabaseMock(options?: {
     const interactionsSelect = vi.fn().mockReturnValue({ eq: interactionsSelectEqContact });
 
     const from = vi.fn((table: string) => {
+        if (table === 'chatbot_contact_states' || table === 'chatbot_follow_up_jobs') {
+            const chain: any = { select: () => chain, eq: () => chain, in: () => chain,
+                maybeSingle: async () => ({ data: null, error: null }),
+                upsert: async (payload: Record<string, unknown>) => { stopWrites.push(payload); return { error: null }; },
+                update: () => chain,
+                then: (resolve: any) => Promise.resolve({ error: null }).then(resolve) };
+            return chain;
+        }
         if (table === 'pages') {
             return {
                 select: pageSelect
@@ -224,7 +240,8 @@ function createSupabaseMock(options?: {
 
     return {
         from,
-        contactsUpsert
+        contactsUpsert,
+        stopWrites
     };
 }
 
@@ -1521,6 +1538,31 @@ describe('POST /api/facebook/webhook', () => {
         const response = await POST(createCustomerPhotoRequest());
         expect(response.status).toBe(500);
         expect(mocks.analyzeInboundCustomerImages).not.toHaveBeenCalled();
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it.each(['Not Qualified', 'Converted'])('blocks a welcome when %s appears after the initial history read', async stage => {
+        const supabase = createSupabaseMock({ welcomeConfig: { enabled: true, message_text: 'Welcome!', buttons: [] } });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.getUserProfile.mockResolvedValue({ id: 'contact_psid_1', name: 'Jane Contact' });
+        mocks.getConversationForPsid.mockResolvedValueOnce({ messages: { data: [] } })
+            .mockResolvedValue({ messages: { data: [{ id: 'stage-event',
+                message: `Lead stage set to ${stage}`, from: { id: 'fb_page_1' } }] } });
+        const response = await POST(createWebhookRequest());
+        expect(response.status).toBe(200);
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(supabase.stopWrites).toContainEqual(expect.objectContaining({
+            status: 'stopped', stop_reason: stage === 'Converted' ? 'converted' : 'not_qualified'
+        }));
+    });
+
+    it.each(['not_qualified', 'converted'])('blocks a welcome when the saved stage changes to %s', async stage => {
+        const supabase = createSupabaseMock({ deliveryStage: stage,
+            welcomeConfig: { enabled: true, message_text: 'Welcome!', buttons: [] } });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.getUserProfile.mockResolvedValue({ id: 'contact_psid_1', name: 'Jane Contact' });
+        const response = await POST(createWebhookRequest());
+        expect(response.status).toBe(200);
         expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 

@@ -2,6 +2,7 @@ import { sendMessage, sendMessengerMediaAttachment } from './facebook';
 import { ContactRecord, replaceTemplateVariables } from './placeholders';
 import { recordOutboundMessageEvent } from './outbound-message-events';
 import { isPipelineClosedForAutomation } from './contact-pipeline';
+import { assertMessengerAutomationDeliveryAllowed, ChatbotDeliveryStoppedError } from './chatbot-delivery';
 
 const STANDARD_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_FOLLOW_UP_STEPS = 10;
@@ -468,7 +469,7 @@ export async function processDueFollowUpAutomationSteps(params: {
                 reply_action,
                 pages(fb_page_id, access_token)
             ),
-            contacts(id, psid, page_id, name, last_interaction_at, pipeline_stage, pipeline_stage_source)
+            contacts(id, psid, page_id, name, last_interaction_at, last_inbound_at, pipeline_stage, pipeline_stage_source)
         `)
         .eq('status', 'active')
         .lte('next_step_at', now.toISOString())
@@ -549,7 +550,13 @@ export async function processDueFollowUpAutomationSteps(params: {
                 continue;
             }
 
+            const checkDelivery = () => assertMessengerAutomationDeliveryAllowed({
+                supabase, pageId: automation.page_id, facebookPageId: page.fb_page_id,
+                accessToken: page.access_token, contactId: contact.id, psid: contact.psid,
+                anchorInboundAt: contact.last_inbound_at || undefined
+            });
             if (messageToSend) {
+                await checkDelivery();
                 const sendResult = await sendMessage(
                     page.fb_page_id,
                     page.access_token,
@@ -569,6 +576,8 @@ export async function processDueFollowUpAutomationSteps(params: {
             }
 
             if (mediaUrl) {
+                // A stage edit can arrive after text but before the attachment.
+                await checkDelivery();
                 const mediaSendResult = await sendMessengerMediaAttachment(
                     page.fb_page_id,
                     page.access_token,
@@ -613,6 +622,14 @@ export async function processDueFollowUpAutomationSteps(params: {
 
             result.sent += 1;
         } catch (error) {
+            if (error instanceof ChatbotDeliveryStoppedError) {
+                await updateAutomationState(supabase, state.id, {
+                    status: 'stopped', stopped_at: now.toISOString(),
+                    stopped_reason: 'lead_stage_or_handoff', next_step_at: null
+                });
+                result.stopped += 1;
+                continue;
+            }
             result.errors += 1;
             console.error('[FOLLOW_UP_AUTOMATION] Failed to send due step', {
                 stateId: state.id,

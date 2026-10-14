@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ getConversationForPsid: vi.fn() }));
 vi.mock('@/lib/facebook', () => ({ getConversationForPsid: mocks.getConversationForPsid }));
-import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
+import { assertChatbotDeliveryAllowed, assertMessengerAutomationDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
 
 function fixture(stage = 'engaged', source = 'chatbot') {
     const writes: Array<{ table: string; payload: any }> = [];
@@ -24,6 +24,35 @@ function fixture(stage = 'engaged', source = 'chatbot') {
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe('terminal delivery stops', () => {
+    it.each(['not_qualified', 'converted'])('blocks non-AI automation for saved %s stages', async stage => {
+        await expect(assertMessengerAutomationDeliveryAllowed(fixture(stage).input))
+            .rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+        expect(mocks.getConversationForPsid).not.toHaveBeenCalled();
+    });
+
+    it.each(['Not Qualified', 'Converted'])('persists a live %s stop before non-AI delivery', async stage => {
+        const { input, writes } = fixture();
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            message: `Lead stage set to ${stage}`, from: { id: 'fb-page' }
+        }] } });
+        await expect(assertMessengerAutomationDeliveryAllowed(input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+        expect(writes).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({
+            status: 'stopped', stop_reason: stage === 'Converted' ? 'converted' : 'not_qualified'
+        }) });
+        expect(writes).toContainEqual({ table: 'chatbot_follow_up_jobs', payload: expect.objectContaining({ status: 'cancelled' }) });
+    });
+
+    it('allows independent workflows without requiring an enabled AI chatbot', async () => {
+        const { input } = fixture();
+        const from = input.supabase.from;
+        input.supabase.from = table => {
+            if (table === 'chatbot_configs') throw new Error('Independent workflows do not require chatbot settings');
+            return from(table);
+        };
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [] } });
+        await expect(assertMessengerAutomationDeliveryAllowed(input)).resolves.toBeUndefined();
+    });
+
     it.each(['qualified', 'converted', 'not_qualified', 'order_created', 'opted_out'])(
         'blocks %s without a photo or source exception', async stage => {
             const { input } = fixture(stage);

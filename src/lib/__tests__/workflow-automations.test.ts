@@ -2,13 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     sendMessage: vi.fn(),
-    sendMessengerMediaAttachment: vi.fn()
+    sendMessengerMediaAttachment: vi.fn(),
+    checkDelivery: vi.fn()
 }));
 
 vi.mock('../facebook', () => ({
     sendMessage: mocks.sendMessage,
     sendMessengerMediaAttachment: mocks.sendMessengerMediaAttachment
 }));
+
+vi.mock('../chatbot-delivery', async importOriginal => ({
+    ...await importOriginal<typeof import('../chatbot-delivery')>(),
+    assertMessengerAutomationDeliveryAllowed: mocks.checkDelivery
+}));
+import { ChatbotDeliveryStoppedError } from '../chatbot-delivery';
 
 import {
     handleFollowUpWorkflowContactReply,
@@ -117,6 +124,7 @@ const automation = {
 describe('workflow automations', () => {
     beforeEach(() => {
         mocks.sendMessage.mockReset();
+        mocks.checkDelivery.mockReset().mockResolvedValue(undefined);
         mocks.sendMessengerMediaAttachment.mockReset();
         mocks.sendMessage.mockResolvedValue({ message_id: 'mid_1' });
         mocks.sendMessengerMediaAttachment.mockResolvedValue({ message_id: 'mid_media_1' });
@@ -333,6 +341,40 @@ describe('workflow automations', () => {
             current_step_index: 1,
             next_step_at: '2026-07-29T03:30:00.000Z'
         });
+    });
+
+    it.each(['not_qualified', 'converted'])('stops a workflow when a fresh %s change was absent from the batch snapshot', async stage => {
+        mocks.checkDelivery.mockRejectedValue(new ChatbotDeliveryStoppedError(stage));
+        const { supabase, stateUpdates } = createWorkflowSupabaseMock({ states: [{
+            id: 'state_1', automation_id: 'automation_1', contact_id: 'contact_1', status: 'active',
+            current_step_index: 0, next_step_at: '2026-07-29T02:30:00.000Z',
+            workflow_automations: { ...automation, pages: { fb_page_id: 'fb_page_1', access_token: 'token_1' } },
+            contacts: { id: 'contact_1', page_id: 'page_1', psid: 'psid_1', name: 'Juan',
+                last_interaction_at: '2026-07-29T02:00:00.000Z', pipeline_stage: 'engaged', pipeline_stage_source: 'chatbot' }
+        }] });
+        const result = await processDueFollowUpAutomationSteps({ supabase, now: new Date('2026-07-29T02:30:00.000Z') });
+        expect(result).toMatchObject({ sent: 0, stopped: 1, errors: 0 });
+        expect(stateUpdates[0]).toMatchObject({ status: 'stopped', next_step_at: null, stopped_reason: 'lead_stage_or_handoff' });
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(mocks.sendMessengerMediaAttachment).not.toHaveBeenCalled();
+    });
+
+    it('rechecks a stage change between workflow text and media', async () => {
+        mocks.checkDelivery.mockResolvedValueOnce(undefined).mockRejectedValue(new ChatbotDeliveryStoppedError('converted'));
+        const { supabase, stateUpdates } = createWorkflowSupabaseMock({ states: [{
+            id: 'state_1', automation_id: 'automation_1', contact_id: 'contact_1', status: 'active',
+            current_step_index: 0, next_step_at: '2026-07-29T02:30:00.000Z',
+            workflow_automations: { ...automation, steps: [{ message_text: 'Hello', delay_minutes: 30,
+                media_url: 'https://example.com/video.mp4', media_type: 'video' }],
+                pages: { fb_page_id: 'fb_page_1', access_token: 'token_1' } },
+            contacts: { id: 'contact_1', page_id: 'page_1', psid: 'psid_1', name: 'Juan',
+                last_interaction_at: '2026-07-29T02:00:00.000Z' }
+        }] });
+        const result = await processDueFollowUpAutomationSteps({ supabase, now: new Date('2026-07-29T02:30:00.000Z') });
+        expect(result).toMatchObject({ sent: 0, stopped: 1, errors: 0 });
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(mocks.sendMessengerMediaAttachment).not.toHaveBeenCalled();
+        expect(stateUpdates[0]).toMatchObject({ status: 'stopped', next_step_at: null });
     });
 
     it.each(['manual', 'messenger'])('stops workflow follow-ups for a nonterminal %s handoff', async source => {
