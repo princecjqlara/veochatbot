@@ -6,7 +6,8 @@ import {
     getConversationMessages,
     getFacebookPages,
     getPageConversationsBatch,
-    isFacebookReauthRequired
+    isFacebookReauthRequired,
+    subscribePageToAppWebhook
 } from '../facebook';
 
 function createJsonResponse(ok: boolean, payload: unknown, status: number = 200, statusText: string = 'OK') {
@@ -21,6 +22,18 @@ function createJsonResponse(ok: boolean, payload: unknown, status: number = 200,
 afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+});
+
+describe('webhook reconnect protection', () => {
+    it.each([{ fields: [] }, { fields: ['messages', 'messaging_postbacks'] }, { fields: ['message_reads', 'messages'] }])('always keeps echoes for supplied fields $fields', async ({ fields }) => {
+        const fetchMock = vi.fn().mockResolvedValue(createJsonResponse(true, { success: true }));
+        vi.stubGlobal('fetch', fetchMock);
+        await subscribePageToAppWebhook('page', 'token', fields);
+        const body = new URLSearchParams(fetchMock.mock.calls[0][1].body);
+        const saved = body.get('subscribed_fields')!.split(',');
+        expect(saved).toEqual(expect.arrayContaining([...fields, 'messages', 'messaging_postbacks', 'message_echoes']));
+        expect(new Set(saved).size).toBe(saved.length);
+    });
 });
 
 describe('getFacebookPages', () => {

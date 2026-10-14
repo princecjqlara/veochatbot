@@ -76,6 +76,20 @@ describe('contact pipeline', () => {
         }));
     });
 
+    it.each([false, true])('tags a completed stage preserved by a staff handoff (explicit preserve: %s)', async preserveStage => {
+        const update = vi.fn();
+        const chain: any = { select: () => chain, eq: () => chain,
+            maybeSingle: async () => ({ data: { pipeline_stage: 'qualified', pipeline_stage_source: 'chatbot' }, error: null }),
+            update: (payload: unknown) => { update(payload); return chain; },
+            then: (resolve: any) => Promise.resolve({ error: null }).then(resolve)
+        };
+        await updateContactPipelineStage({ from: () => chain }, {
+            pageId: 'page', contactId: 'contact', stage: 'engaged', source: 'messenger', preserveStage
+        });
+        expect(update).toHaveBeenCalledWith(expect.objectContaining({ pipeline_stage: 'qualified', pipeline_stage_source: 'messenger' }));
+        expect(tagMocks.assign).toHaveBeenCalledWith(expect.anything(), 'page', 'contact', 'qualified', { includePositiveTag: false });
+    });
+
     it('moves forward automatically without regressing successful contacts', () => {
         expect(shouldAutoMovePipeline('new', 'engaged')).toBe(true);
         expect(shouldAutoMovePipeline('qualified', 'collecting_details')).toBe(false);

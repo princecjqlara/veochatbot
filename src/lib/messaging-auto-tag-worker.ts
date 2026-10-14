@@ -17,6 +17,7 @@ import {
 } from '@/lib/contact-pipeline';
 import { recordChatbotInterruptionIfNeeded } from '@/lib/outbound-message-events';
 import { choosePositiveOutcomeTag, ensureMessengerOutcomeTags } from '@/lib/messenger-outcome-tags';
+import { ensureChatbotPageWebhook, repairSavedMessengerOutcomeTags } from '@/lib/chatbot-page-maintenance';
 export { MESSENGER_OUTCOME_TAGS, buildMessengerOutcomeTagRows, choosePositiveOutcomeTag } from '@/lib/messenger-outcome-tags';
 
 type Page = {
@@ -25,6 +26,7 @@ type Page = {
     access_token: string;
     messaging_auto_tag_checked_at: string;
     messaging_auto_tag_cursor: string | null;
+    messaging_auto_tag_scan_started_at?: string | null;
 };
 
 type Message = MessengerHistoryMessage & { id: string; created_time: string };
@@ -69,8 +71,8 @@ async function getMessagesSince(conversationId: string, token: string, since: st
 export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: boolean; pageId?: string } = {}) {
     const db = getSupabaseAdmin();
     const fields = input.chatbotOnly
-        ? 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,chatbot_configs!chatbot_configs_page_id_fkey!inner(enabled)'
-        : 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor';
+        ? 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,messaging_auto_tag_scan_started_at,chatbot_configs!chatbot_configs_page_id_fkey!inner(enabled)'
+        : 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,messaging_auto_tag_scan_started_at';
     let pageQuery = db.from('pages')
         .select<typeof fields, Page>(fields)
         .eq('messaging_auto_tag_enabled', true);
@@ -83,8 +85,25 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
     if (!page) return { pages: 0, conversations: 0, tagged: 0, pipelineMoved: 0 };
     const current = page as Page;
     const runStartedAt = new Date().toISOString();
+    // Existing cursors from before this migration conservatively repeat the old
+    // interval once instead of skipping edits made during their unfinished scan.
+    const scanStartedAt = current.messaging_auto_tag_scan_started_at ||
+        (current.messaging_auto_tag_cursor ? current.messaging_auto_tag_checked_at : runStartedAt);
+    const maintenanceErrors: string[] = [];
+    let webhookHealth: { verified: boolean; repaired: boolean } | { error: string } | null = null;
+    let repairedOutcomeTags = 0;
 
     try {
+        if (input.chatbotOnly) {
+            try {
+                webhookHealth = await ensureChatbotPageWebhook({ facebookPageId: current.fb_page_id, accessToken: current.access_token });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                webhookHealth = { error: message };
+                maintenanceErrors.push(`Webhook: ${message}`);
+                console.warn('Webhook subscription maintenance failed; lead-stage stops will still run', { pageId: current.id, message });
+            }
+        }
         const { data: defaultTags, error: tagError } = await db.from('tags')
             .select('id,name,created_at')
             .eq('owner_type', 'page')
@@ -109,6 +128,7 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
             rawOutcomeTags = await ensureMessengerOutcomeTags(db, current.id);
         } catch (error) {
             console.warn('Could not create outcome tags; lead-stage stops will still run', error);
+            maintenanceErrors.push('Outcome tag definitions need retry');
         }
         const outcomeTagIds = new Map(
             rawOutcomeTags.map(outcomeTag => [
@@ -116,6 +136,14 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                 outcomeTag.id
             ])
         );
+
+        if (input.chatbotOnly) {
+            try { repairedOutcomeTags = await repairSavedMessengerOutcomeTags(db, current.id); }
+            catch (error) {
+                maintenanceErrors.push(`Outcome tag recovery: ${error instanceof Error ? error.message : String(error)}`);
+                console.warn('Saved outcome tags need retry; lead-stage stops will still run', { pageId: current.id, error });
+            }
+        }
 
         const batch = await getPageConversationsBatch(current.fb_page_id, current.access_token, {
             limit: 10,
@@ -219,18 +247,25 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                 }
 
             } catch (error) {
+                maintenanceErrors.push('Lead-stage tagging or audit needs retry');
                 console.warn('Lead-stage stop saved but optional tagging or audit failed', {
                     pageId: current.id, contactId: contact.id, error
                 });
             }
         }
 
-        const { error: checkpointError } = await db.from('pages').update({
-            messaging_auto_tag_checked_at: batch.nextCursor ? current.messaging_auto_tag_checked_at : runStartedAt,
+        let checkpoint = db.from('pages').update({
+            messaging_auto_tag_checked_at: batch.nextCursor ? current.messaging_auto_tag_checked_at : scanStartedAt,
             messaging_auto_tag_cursor: batch.nextCursor,
+            messaging_auto_tag_scan_started_at: batch.nextCursor ? scanStartedAt : null,
             messaging_auto_tag_attempted_at: runStartedAt,
-            messaging_auto_tag_last_error: null
-        }).eq('id', current.id);
+            messaging_auto_tag_last_error: maintenanceErrors.length ? maintenanceErrors.join('; ').slice(0, 500) : null
+        }).eq('id', current.id).eq('messaging_auto_tag_checked_at', current.messaging_auto_tag_checked_at);
+        // An overlapping worker must not replace a newer pagination checkpoint.
+        checkpoint = current.messaging_auto_tag_cursor
+            ? checkpoint.eq('messaging_auto_tag_cursor', current.messaging_auto_tag_cursor)
+            : checkpoint.is('messaging_auto_tag_cursor', null);
+        const { error: checkpointError } = await checkpoint;
         if (checkpointError) throw checkpointError;
         return {
             pages: 1,
@@ -238,6 +273,8 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
             tagged,
             chatbotStopped,
             pipelineMoved,
+            webhookHealth,
+            repairedOutcomeTags,
             more: Boolean(batch.nextCursor)
         };
     } catch (error) {

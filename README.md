@@ -103,6 +103,7 @@ Run the SQL schema from `database/schema.sql` in your Supabase SQL editor.
 Then run `database/migration_database_retention.sql` to install bounded campaign-history retention and automatic database maintenance.
 For production, also run `database/migration_database_control_plane.sql` to add schema-version tracking, database health snapshots, integrity constraints, and maintenance observability.
 Run `database/migration_conversation_export_jobs.sql` to enable durable background conversation exports and the Exports download page.
+Run `supabase/migrations/202610140001_chatbot_page_safeguards.sql` before deploying the chatbot Page safeguards. The existing follow-up cron checks webhook subscriptions and retries missing outcome tags on each enabled Page in rotation. Paginated history scans retain their original start time so edits made during a scan are checked on the next pass.
 Run `database/migration_chatbot.sql` to install per-Page chatbot settings, reply idempotency, and chatbot message attribution.
 Existing Supabase projects should apply `supabase/migrations/202609210003_chatbot_knowledge_rag.sql` to add the pgvector knowledge base. The main `database/schema.sql` already includes it for fresh installations.
 Apply `supabase/migrations/202609210004_chatbot_sales_flow.sql` after it to add seven-day contact state, collected lead details, split-message settings, and durable stop reasons.

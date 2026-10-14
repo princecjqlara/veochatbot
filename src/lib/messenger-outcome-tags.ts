@@ -40,7 +40,8 @@ export async function ensureMessengerOutcomeTags(db: SupabaseLike, pageId: strin
 }
 
 /** Apply cumulative outcome tags at the point a Messenger stage is observed. */
-export async function assignMessengerOutcomeTags(db: SupabaseLike, pageId: string, contactId: string, stage: string) {
+export async function assignMessengerOutcomeTags(db: SupabaseLike, pageId: string, contactId: string, stage: string,
+    options: { includePositiveTag?: boolean } = {}) {
     if (!Object.prototype.hasOwnProperty.call(MESSENGER_OUTCOME_TAGS, stage)) return;
     const tags = await ensureMessengerOutcomeTags(db, pageId);
     const outcome = tags.find(tag => tag.system_key === stage);
@@ -48,7 +49,7 @@ export async function assignMessengerOutcomeTags(db: SupabaseLike, pageId: strin
     const result = await db.from('contact_tags').upsert([{ contact_id: contactId, tag_id: outcome.id }],
         { onConflict: 'contact_id,tag_id', ignoreDuplicates: true });
     if (result.error) throw result.error;
-    if (stage !== 'not_qualified') {
+    if (stage !== 'not_qualified' && options.includePositiveTag !== false) {
         const defaults = await db.from('tags').select('id,name,created_at')
             .eq('owner_type', 'page').eq('owner_id', pageId).eq('is_default', true)
             .order('created_at', { ascending: true }).order('id', { ascending: true }).limit(25);

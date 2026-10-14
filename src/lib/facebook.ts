@@ -360,9 +360,9 @@ export async function subscribePageToAppWebhook(
     const formData = new URLSearchParams();
     formData.set('access_token', pageAccessToken);
 
-    if (subscribedFields.length > 0) {
-        formData.set('subscribed_fields', subscribedFields.join(','));
-    }
+    // Every reconnect/sync must retain the echoes used to stop human handoffs,
+    // including callers that pass a legacy two-field list or an empty list.
+    formData.set('subscribed_fields', [...new Set([...subscribedFields, 'messages', 'messaging_postbacks', 'message_echoes'])].join(','));
 
     const response = await fetch(
         `${FACEBOOK_GRAPH_URL}/${pageId}/subscribed_apps`,

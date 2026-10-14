@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn(), getPageConversationsBatch: vi.fn(), recordChatbotInterruptionIfNeeded: vi.fn() }));
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn(), getPageConversationsBatch: vi.fn(), recordChatbotInterruptionIfNeeded: vi.fn(), ensureWebhook: vi.fn(), repairOutcomes: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: mocks.getSupabaseAdmin }));
 vi.mock('@/lib/facebook', () => ({ getPageConversationsBatch: mocks.getPageConversationsBatch }));
 vi.mock('@/lib/outbound-message-events', () => ({ recordChatbotInterruptionIfNeeded: mocks.recordChatbotInterruptionIfNeeded }));
+vi.mock('@/lib/chatbot-page-maintenance', () => ({ ensureChatbotPageWebhook: mocks.ensureWebhook, repairSavedMessengerOutcomeTags: mocks.repairOutcomes }));
+beforeEach(() => {
+    mocks.ensureWebhook.mockReset().mockResolvedValue({ verified: true, repaired: false });
+    mocks.repairOutcomes.mockReset().mockResolvedValue(0);
+});
 import {
     buildMessengerOutcomeTagRows,
     choosePositiveOutcomeTag,
@@ -53,7 +58,7 @@ describe('durable Messenger lead-stage stops', () => {
                     return { data: [], error: null };
                 };
                 const chain: any = {
-                    select: vi.fn(() => chain), eq: vi.fn(() => chain), order: vi.fn(() => chain),
+                    select: vi.fn(() => chain), eq: vi.fn(() => chain), is: vi.fn(() => chain), order: vi.fn(() => chain),
                     limit: vi.fn(() => chain), in: vi.fn(() => chain),
                     maybeSingle: vi.fn(async () => lookup()),
                     update: vi.fn((value: any) => { payload = value; mutations.push({ table, payload }); return chain; }),
@@ -128,7 +133,7 @@ describe('worker handoffs after an intake reset', () => {
                 return { data: [], error: null };
             };
             const chain: any = {
-                select: vi.fn(() => chain), eq: vi.fn(() => chain), order: vi.fn(() => chain), limit: vi.fn(() => chain), in: vi.fn(() => chain),
+                select: vi.fn(() => chain), eq: vi.fn(() => chain), is: vi.fn(() => chain), order: vi.fn(() => chain), limit: vi.fn(() => chain), in: vi.fn(() => chain),
                 maybeSingle: vi.fn(async () => lookup()),
                 update: vi.fn((value: any) => { payload = value; mutations.push({ table, payload }); return chain; }),
                 upsert: vi.fn(async (value: any) => { mutations.push({ table, payload: value }); return { error: null }; }),
@@ -147,5 +152,65 @@ describe('worker handoffs after an intake reset', () => {
         expect(result.chatbotStopped).toBe(shouldStop ? 1 : 0);
         expect(mutations.some(m => m.table === 'chatbot_follow_up_jobs')).toBe(shouldStop);
         expect(mutations.some(m => m.table === 'chatbot_contact_states' && m.payload.status === 'stopped')).toBe(shouldStop);
+    });
+});
+
+describe('recurring Page maintenance and scan boundaries', () => {
+    function fixture(page: any, nextCursor: string | null = null) {
+        const updates: any[] = [];
+        const filters: Array<[string, any]> = [];
+        const chain: any = {
+            select: () => chain, order: () => chain, limit: () => chain, in: () => chain,
+            eq: (key: string, value: any) => { filters.push([key, value]); return chain; },
+            is: (key: string, value: any) => { filters.push([key, value]); return chain; },
+            maybeSingle: async () => ({ data: page, error: null }),
+            update: (value: any) => { updates.push(value); return chain; },
+            then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve)
+        };
+        const db = { from: () => chain };
+        mocks.getSupabaseAdmin.mockReturnValue(db);
+        mocks.getPageConversationsBatch.mockResolvedValue({ conversations: [], nextCursor });
+        return { updates, filters, db };
+    }
+    const page = { id: 'page', fb_page_id: 'fb-page', access_token: 'token', messaging_auto_tag_checked_at: '2026-10-10T00:00:00Z', messaging_auto_tag_cursor: null };
+
+    it('recovers saved outcome tags even when no new Messenger events are returned', async () => {
+        const { db } = fixture(page);
+        mocks.repairOutcomes.mockResolvedValueOnce(5);
+        const result = await processOneMessagingAutoTagPage({ chatbotOnly: true });
+        expect(result.repairedOutcomeTags).toBe(5);
+        expect(mocks.repairOutcomes).toHaveBeenCalledWith(db, 'page');
+        expect(mocks.ensureWebhook).toHaveBeenCalledWith({ facebookPageId: 'fb-page', accessToken: 'token' });
+    });
+
+    it('keeps maintenance failures visible while advancing the independent history scan', async () => {
+        const { updates } = fixture(page);
+        mocks.ensureWebhook.mockRejectedValueOnce(new Error('Meta temporarily unavailable'));
+        mocks.repairOutcomes.mockRejectedValueOnce(new Error('Tag store unavailable'));
+        const result = await processOneMessagingAutoTagPage({ chatbotOnly: true });
+        expect(result.pages).toBe(1);
+        expect(updates.at(-1).messaging_auto_tag_last_error).toContain('Meta temporarily unavailable');
+        expect(updates.at(-1).messaging_auto_tag_last_error).toContain('Tag store unavailable');
+    });
+
+    it('finishes pagination at its original start so mid-scan edits remain eligible next time', async () => {
+        const { updates, filters } = fixture({ ...page, messaging_auto_tag_cursor: 'last-page', messaging_auto_tag_scan_started_at: '2026-10-11T00:00:00Z' });
+        await processOneMessagingAutoTagPage({ chatbotOnly: true });
+        expect(updates.at(-1)).toMatchObject({ messaging_auto_tag_checked_at: '2026-10-11T00:00:00Z', messaging_auto_tag_cursor: null, messaging_auto_tag_scan_started_at: null });
+        expect(filters).toContainEqual(['messaging_auto_tag_cursor', 'last-page']);
+        expect(filters).toContainEqual(['messaging_auto_tag_checked_at', '2026-10-10T00:00:00Z']);
+    });
+
+    it('stores the first batch start across later batches', async () => {
+        const { updates } = fixture(page, 'next-page');
+        await processOneMessagingAutoTagPage({ chatbotOnly: true });
+        expect(updates.at(-1).messaging_auto_tag_scan_started_at).toBe(updates.at(-1).messaging_auto_tag_attempted_at);
+        expect(updates.at(-1).messaging_auto_tag_checked_at).toBe(page.messaging_auto_tag_checked_at);
+    });
+
+    it('repeats the old interval once for a legacy cursor without a saved start', async () => {
+        const { updates } = fixture({ ...page, messaging_auto_tag_cursor: 'legacy-page' });
+        await processOneMessagingAutoTagPage({ chatbotOnly: true });
+        expect(updates.at(-1).messaging_auto_tag_checked_at).toBe(page.messaging_auto_tag_checked_at);
     });
 });

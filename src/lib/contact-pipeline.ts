@@ -121,20 +121,27 @@ export async function updateContactPipelineStage(
     if (contactError) throw new Error(contactError.message || 'Could not load contact pipeline stage');
     if (!contact) return false;
 
+    const current = isContactPipelineStage(contact.pipeline_stage) ? contact.pipeline_stage : 'new';
+    const preservesStage = input.preserveStage || (input.source === 'messenger' && input.stage === 'engaged');
+    const nextStage = preservesStage ? current : input.stage;
     const assignOutcome = async () => {
-        if (input.source !== 'messenger' || input.preserveStage) return;
+        if (input.source !== 'messenger') return;
         try {
-            await assignMessengerOutcomeTags(supabase, input.pageId, input.contactId, input.stage);
+            if (preservesStage) {
+                // Human ownership can preserve a completed stage. Tag that stage
+                // without interpreting the staff reply as a positive outcome event.
+                await assignMessengerOutcomeTags(supabase, input.pageId, input.contactId, nextStage, { includePositiveTag: false });
+            } else {
+                await assignMessengerOutcomeTags(supabase, input.pageId, input.contactId, input.stage);
+            }
         } catch (error) {
             // Optional tags must not undo a saved stop or human ownership.
             console.warn('Messenger stage saved but outcome tagging failed', { pageId: input.pageId, contactId: input.contactId, error });
         }
     };
 
-    const current = isContactPipelineStage(contact.pipeline_stage) ? contact.pipeline_stage : 'new';
     // A generic staff handoff has no replacement lead stage. Keep the stage,
     // but mark Messenger ownership so every automation honors the handoff.
-    const nextStage = input.preserveStage || (input.source === 'messenger' && input.stage === 'engaged') ? current : input.stage;
     if (input.source === 'chatbot' &&
         (contact.pipeline_stage_source === 'manual' || contact.pipeline_stage_source === 'messenger')) return false;
     // A person confirming the same stage in Messenger is still a handoff.

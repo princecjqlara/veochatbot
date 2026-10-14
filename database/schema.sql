@@ -48,6 +48,7 @@
         messaging_auto_tag_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         messaging_auto_tag_checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         messaging_auto_tag_cursor TEXT,
+        messaging_auto_tag_scan_started_at TIMESTAMPTZ,
         messaging_auto_tag_attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         messaging_auto_tag_last_error TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
