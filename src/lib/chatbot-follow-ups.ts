@@ -120,6 +120,7 @@ export async function cancelPendingChatbotFollowUps(input: {
     reason?: string;
     now?: Date;
     exceptJobId?: string;
+    beforeAnchorInboundAt?: string;
 }) {
     const now = input.now || new Date();
     let query = input.supabase
@@ -132,10 +133,10 @@ export async function cancelPendingChatbotFollowUps(input: {
             updated_at: now.toISOString()
         })
         .eq('page_id', input.pageId)
-        .eq('contact_id', input.contactId)
-        .in('status', ['pending', 'processing', 'ready_manual']);
+        .eq('contact_id', input.contactId);
     if (input.exceptJobId) query = query.neq('id', input.exceptJobId);
-    const { error } = await query;
+    if (input.beforeAnchorInboundAt) query = query.lt('anchor_inbound_at', input.beforeAnchorInboundAt);
+    const { error } = await query.in('status', ['pending', 'processing', 'ready_manual']);
     if (error) throw new Error(error.message || 'Could not cancel chatbot follow-ups');
 }
 
@@ -158,6 +159,7 @@ export async function scheduleChatbotFollowUps(input: {
         pageId: input.pageId,
         contactId: input.contact.id,
         reason: 'Replaced by a newer follow-up sequence',
+        beforeAnchorInboundAt: input.anchorInboundAt,
         now
     });
 
@@ -186,7 +188,9 @@ export async function scheduleChatbotFollowUps(input: {
     const jobs = [...quickJobs, ...bestTimeJobs].filter((job) => new Date(job.due_at).getTime() > now.getTime());
     if (jobs.length === 0) return 0;
     const { error } = await input.supabase.from('chatbot_follow_up_jobs').upsert(jobs, {
-        onConflict: 'contact_id,anchor_inbound_at,schedule_type,sequence_index'
+        onConflict: 'contact_id,anchor_inbound_at,schedule_type,sequence_index',
+        // A replay must never revive a sent/cancelled job or reset its claim.
+        ignoreDuplicates: true
     });
     if (error) throw new Error(error.message || 'Could not schedule chatbot follow-ups');
     return jobs.length;

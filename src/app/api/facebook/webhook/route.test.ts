@@ -201,7 +201,7 @@ function createSupabaseMock(options?: {
 
     const from = vi.fn((table: string) => {
         if (table === 'chatbot_contact_states' || table === 'chatbot_follow_up_jobs') {
-            const chain: any = { select: () => chain, eq: () => chain, in: () => chain,
+            const chain: any = { select: () => chain, eq: () => chain, lt: () => chain, in: () => chain,
                 maybeSingle: async () => ({ data: null, error: null }),
                 upsert: async (payload: Record<string, unknown>) => { stopWrites.push(payload); return { error: null }; },
                 update: () => chain,
@@ -258,6 +258,7 @@ function createPhotoChatbotSupabaseMock(options: {
     activeState?: boolean;
 } = {}) {
     const pipelineStage = options.pipelineStage || 'engaged';
+    const followUpCancelLt = vi.fn();
     const contactStateUpsert = vi.fn().mockResolvedValue({ error: null });
     const outboundEventsUpsert = vi.fn().mockResolvedValue({ error: null });
     const interruptionEventsUpsert = vi.fn().mockResolvedValue({ error: null });
@@ -359,14 +360,11 @@ function createPhotoChatbotSupabaseMock(options: {
             };
         }
         if (table === 'chatbot_follow_up_jobs') {
+            const chain: any = { eq: () => chain,
+                lt: (key: string, value: unknown) => { followUpCancelLt(key, value); return chain; },
+                in: async () => ({ error: null }) };
             return {
-                update: vi.fn().mockReturnValue({
-                    eq: vi.fn().mockReturnValue({
-                        eq: vi.fn().mockReturnValue({
-                            in: vi.fn().mockResolvedValue({ error: null })
-                        })
-                    })
-                })
+                update: vi.fn().mockReturnValue(chain)
             };
         }
         if (table === 'chatbot_contact_states') {
@@ -425,7 +423,7 @@ function createPhotoChatbotSupabaseMock(options: {
         throw new Error(`Unexpected table: ${table}`);
     });
 
-    return { from, welcomeSelect, contactStateUpsert, replyEventUpdate, outboundEventsUpsert };
+    return { from, welcomeSelect, contactStateUpsert, replyEventUpdate, outboundEventsUpsert, followUpCancelLt };
 }
 
 function createCustomerPhotoRequest(text?: string) {
@@ -1190,6 +1188,18 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ inboundMessage: 'hello there' }));
         expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
         expect(supabase.welcomeSelect).not.toHaveBeenCalled();
+    });
+
+    it('cancels only older follow-up sequences when the same inbound webhook is replayed', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({ stopReason: 'manual' });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        const response = await POST(createCustomerPhotoRequest());
+        const replay = await POST(createCustomerPhotoRequest());
+        expect(response.status).toBe(200);
+        expect(replay.status).toBe(200);
+        expect(supabase.followUpCancelLt).toHaveBeenCalledTimes(2);
+        expect(supabase.followUpCancelLt).toHaveBeenCalledWith('anchor_inbound_at', new Date(1791108000000).toISOString());
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
     it('records a credit failure without sending the fallback or marking the inquiry answered', async () => {

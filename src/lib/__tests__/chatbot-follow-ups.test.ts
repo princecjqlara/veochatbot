@@ -81,6 +81,7 @@ describe('chatbot follow-up scheduling', () => {
         const chain: any = {
             update: vi.fn(() => chain),
             eq: vi.fn(() => chain),
+            lt: vi.fn(() => chain),
             in: vi.fn(async () => ({ error: null })),
             upsert: vi.fn(async (rows: Array<Record<string, unknown>>) => {
                 inserted.push(...rows);
@@ -117,6 +118,53 @@ describe('chatbot follow-up scheduling', () => {
         expect(inserted[2].due_at).toBe('2026-09-22T01:00:00.000Z');
         expect(inserted.every((job) => job.message_text === 'AI-generated from conversation at send time')).toBe(true);
         expect(inserted.some((job) => job.message_text === 'First check-in' || job.message_text === 'Update about your request')).toBe(false);
+    });
+
+    it('keeps delivered and claimed jobs intact when the same scheduling event is replayed', async () => {
+        const anchor = '2026-10-14T10:00:00.000Z';
+        const rows: Array<Record<string, any>> = [];
+        const supabase = { from: () => {
+            const filters: Array<(row: Record<string, any>) => boolean> = [];
+            let update: Record<string, unknown> = {};
+            const chain: any = {
+                update: (payload: Record<string, unknown>) => { update = payload; return chain; },
+                eq: (key: string, value: unknown) => { filters.push(row => row[key] === value); return chain; },
+                lt: (key: string, value: string) => { filters.push(row => String(row[key]) < value); return chain; },
+                in: async (key: string, values: unknown[]) => {
+                    for (const row of rows) if (filters.every(match => match(row)) && values.includes(row[key])) Object.assign(row, update);
+                    return { error: null };
+                },
+                upsert: async (jobs: Array<Record<string, unknown>>, options: { ignoreDuplicates?: boolean }) => {
+                    for (const job of jobs) {
+                        const old = rows.find(row => ['contact_id', 'anchor_inbound_at', 'schedule_type', 'sequence_index'].every(key => row[key] === job[key]));
+                        if (!old) rows.push({ ...job });
+                        else if (!options.ignoreDuplicates) Object.assign(old, job);
+                    }
+                    return { error: null };
+                }
+            };
+            return chain;
+        } };
+        const input = { supabase, pageId: 'page-1', contact: { id: 'contact-1', page_id: 'page-1', psid: 'psid-1' },
+            config: { follow_up_enabled: true, follow_up_quick_delays_minutes: [60, 240, 720, 1380], follow_up_best_time_days: [] } as unknown as ChatbotConfig,
+            anchorInboundAt: anchor, now: new Date(anchor) };
+        await scheduleChatbotFollowUps(input);
+        const statuses = ['sent', 'processing', 'cancelled', 'failed'];
+        rows.forEach((row, index) => Object.assign(row, { status: statuses[index], message_id: index === 0 ? 'delivered' : null,
+            attempt_count: 2, claimed_at: index === 1 ? '2026-10-14T14:00:00.000Z' : null }));
+        rows.push({ page_id: 'page-1', contact_id: 'contact-1', anchor_inbound_at: '2026-10-14T09:00:00.000Z',
+            schedule_type: 'response', sequence_index: 0, status: 'pending' });
+        rows.push({ page_id: 'page-1', contact_id: 'contact-1', anchor_inbound_at: '2026-10-14T11:00:00.000Z',
+            schedule_type: 'response', sequence_index: 0, status: 'pending' });
+        // A replay carries the original webhook's interaction time.
+        await scheduleChatbotFollowUps(input);
+        expect(rows.filter(row => row.anchor_inbound_at === anchor).map(row => row.status)).toEqual(statuses);
+        expect(rows[0].message_id).toBe('delivered');
+        expect(rows[1].claimed_at).toBe('2026-10-14T14:00:00.000Z');
+        expect(rows.slice(0, 4).every(row => row.attempt_count === 2)).toBe(true);
+        expect(rows[4].status).toBe('cancelled');
+        expect(rows[5].status).toBe('pending');
+        expect(rows).toHaveLength(6);
     });
 
     it('does not schedule follow-ups after a contact is qualified', async () => {

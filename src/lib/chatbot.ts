@@ -896,12 +896,18 @@ export async function generateChatbotFollowUp(input: {
     const contactName = input.contactName?.trim() || 'the customer';
     const pageName = input.pageName?.trim() || 'this Facebook Page';
     const latestCustomerMessage = customerMessages.at(-1)?.content || '';
-    const priorPageMessages = new Set(
-        completeHistory
-            .filter((message) => message.role === 'assistant')
-            .map((message) => message.content.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim())
-            .filter(Boolean)
-    );
+    const comparableText = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const priorPageMessages = new Set<string>();
+    for (const [index, turn] of completeHistory.entries()) {
+        if (turn.role !== 'assistant') continue;
+        priorPageMessages.add(comparableText(turn.content));
+        const previous = completeHistory[index - 1];
+        // Messenger stores each bubble separately. Compare the complete copy
+        // too, including when a later draft moves the bubble break.
+        if (previous?.role === 'assistant') {
+            priorPageMessages.add(comparableText(`${previous.content} ${turn.content}`));
+        }
+    }
     const configuredFollowUpParts = Math.round(Number(input.config.max_message_parts));
     const followUpMaxMessageParts = input.config.split_messages
         ? Number.isFinite(configuredFollowUpParts) && configuredFollowUpParts > 0
@@ -968,7 +974,7 @@ export async function generateChatbotFollowUp(input: {
                 ? messages
                 : [...messages, {
                     role: 'system' as const,
-                    content: 'Return the required JSON now with one non-empty personalized message and a non-empty personalization_basis grounded in the customer conversation. Do not output reasoning outside the JSON.'
+                    content: `The previous draft was rejected as ${invalidReason}. Return the required JSON with fresh wording that does not repeat any previous Page bubble or follow-up. Include a non-empty personalized message and personalization_basis grounded in the customer conversation. Do not output reasoning outside the JSON.`
                 }]
         });
         tokenUsage = combineTokenUsage(tokenUsage, normalizeTokenUsage(body));
@@ -1012,8 +1018,11 @@ export async function generateChatbotFollowUp(input: {
             if (requestedAnyMedia && !mediaDecisionReason) {
                 throw new Error('media selected without a conversation-specific reason');
             }
-            const comparableMessage = message.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-            if (comparableMessage && priorPageMessages.has(comparableMessage)) {
+            const comparableMessage = comparableText(message);
+            const comparableParts = messages.map(comparableText).filter(Boolean);
+            if ((comparableMessage && priorPageMessages.has(comparableMessage)) ||
+                comparableParts.some(part => priorPageMessages.has(part)) ||
+                new Set(comparableParts).size !== comparableParts.length) {
                 throw new Error('follow-up repeated a previous Page message');
             }
             const requestedDocumentIds = [...new Set(
@@ -1077,9 +1086,9 @@ export async function generateChatbotFollowUp(input: {
                 ...(retrievalWarning ? { retrieval_warning: retrievalWarning } : {}),
                 ...(tokenUsage ? { token_usage: tokenUsage } : {})
             };
-        } catch {
-            invalidReason = 'invalid JSON';
-            console.warn('[CHATBOT_INVALID_FOLLOW_UP]', { attempt, model: body.model || model });
+        } catch (error) {
+            invalidReason = error instanceof Error && error.message.startsWith('follow-up repeated') ? 'repeated' : 'invalid JSON';
+            console.warn('[CHATBOT_INVALID_FOLLOW_UP]', { attempt, model: body.model || model, reason: invalidReason });
         }
     }
 

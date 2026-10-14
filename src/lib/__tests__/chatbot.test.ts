@@ -418,6 +418,49 @@ describe('VeoBot chatbot', () => {
         expect(request.messages.slice(1, -1).some((message: { content: string }) => message.content === repeated)).toBe(false);
     });
 
+    it.each([
+        { label: 'the same two bubbles', parts: ['Roger, I can prepare a commercial for your glass installation business.', 'Would you like to see a sample for your store?'] },
+        { label: 'the old two bubbles merged into one', parts: ['Roger, I can prepare a commercial for your glass installation business. Would you like to see a sample for your store?'] },
+        { label: 'an old bubble with a new continuation', parts: ['Roger, I can prepare a commercial for your glass installation business.', 'Should the video focus on windows or shopfronts?'] },
+        { label: 'a repeated bubble within the new draft', parts: ['Should the video focus on windows or shopfronts?', 'Should the video focus on windows or shopfronts?'] }
+    ])('regenerates instead of delivering $label', async ({ parts }) => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const reply = (messages: string[]) => ({ ok: true, status: 200, json: async () => ({
+            choices: [{ message: { content: JSON.stringify({ messages,
+                personalization_basis: 'Customer wants a commercial for a glass installation business.' }) } }]
+        }) });
+        const fetchMock = vi.fn().mockResolvedValueOnce(reply(parts))
+            .mockResolvedValueOnce(reply(['Is next Friday a suitable deadline for the glass video?']));
+        vi.stubGlobal('fetch', fetchMock);
+        const result = await generateChatbotFollowUp({ config: { ...config, split_messages: true },
+            pageId: 'page-facebook-id', sequenceNumber: 2, scheduleLabel: 'first 24 hours', history: [
+                { id: 'old-second', message: 'Would you like to see a sample for your store?', from: { id: 'page-facebook-id', name: 'Page' }, created_time: '2026-10-14T12:00:02Z' },
+                { id: 'old-first', message: 'Roger, I can prepare a commercial for your glass installation business.', from: { id: 'page-facebook-id', name: 'Page' }, created_time: '2026-10-14T12:00:01Z' },
+                { id: 'customer', message: 'I need a commercial for my glass installation business.', from: { id: 'customer-id', name: 'Roger' }, created_time: '2026-10-14T12:00:00Z' }
+            ] });
+        expect(result.message).toBe('Is next Friday a suitable deadline for the glass video?');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const retry = JSON.parse(fetchMock.mock.calls[1][1].body);
+        expect(retry.messages.at(-1).content).toContain('rejected as repeated');
+    });
+
+    it('fails closed when both attempts repeat a previously delivered split follow-up', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const parts = ['I can prepare your restaurant video.', 'Would you like a sample?'];
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({
+            choices: [{ message: { content: JSON.stringify({ messages: parts,
+                personalization_basis: 'Customer needs a restaurant video.' }) } }]
+        }) });
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(generateChatbotFollowUp({ config: { ...config, split_messages: true }, pageId: 'page-facebook-id',
+            sequenceNumber: 2, scheduleLabel: 'first 24 hours', history: [
+                { id: 'second', message: parts[1], from: { id: 'page-facebook-id', name: 'Page' }, created_time: '' },
+                { id: 'first', message: parts[0], from: { id: 'page-facebook-id', name: 'Page' }, created_time: '' },
+                { id: 'customer', message: 'I need a restaurant video.', from: { id: 'customer-id', name: 'Customer' }, created_time: '' }
+            ] })).rejects.toThrow('no generic fallback was sent');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
     it('refuses to create a follow-up without customer conversation history', async () => {
         process.env.OPENROUTER_API_KEY = 'test-key';
         const fetchMock = vi.fn();

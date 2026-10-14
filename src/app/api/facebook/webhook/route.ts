@@ -802,6 +802,9 @@ export async function POST(request: NextRequest) {
                                         pageId: page.id,
                                         contactId: contact.id,
                                         reason: 'Customer replied',
+                                        // Duplicate or out-of-order webhooks must
+                                        // preserve the current/newer sequence.
+                                        beforeAnchorInboundAt: interactionAt,
                                         now: interactionTime
                                     });
                                 } catch (followUpCancelError) {
