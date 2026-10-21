@@ -1128,7 +1128,7 @@ describe('POST /api/facebook/webhook', () => {
     it.each([
         [false, false, false], [false, true, false], [true, false, false], [true, true, true]
     ])('commercial form complete=%s request=%s stops only when both are true (%s)', async (formComplete, hasRequest, stops) => {
-        const details = { 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote bread', ...(formComplete ? { 'Contact Number': '09171234567' } : {}) };
+        const details = { 'Business Name': 'CJ Bakery', 'Page / Social Media Link': 'https://example.com/bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote bread', 'Preferred Video Length': '24 seconds', 'Preferred Style': 'Cinematic', 'Portrait or Landscape?': 'Portrait', ...(formComplete ? { 'Contact Number': '09171234567' } : {}) };
         const supabase = createPhotoChatbotSupabaseMock({ commercialVideo: true });
         mocks.getSupabaseAdmin.mockReturnValue(supabase);
         mocks.generateChatbotResponse.mockResolvedValueOnce({
@@ -1219,6 +1219,19 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ inboundMessage: 'How much is a video?' }));
         expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
         expect(supabase.welcomeSelect).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [{ postback: { title: 'Fill out form', payload: 'VEO:FORM:2' } }, 'Pakisend ng fill-up form.'],
+        [{ message: { mid: 'duration-click', text: '1 min', quick_reply: { payload: 'VEO:DURATION:60' } } }, '60 seconds']
+    ])('routes an intake button through ordinary generation and delivery guards: %j', async (event, inboundMessage) => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({ commercialVideo: true }));
+        const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+            sender: { id: 'contact_psid_1' }, recipient: { id: 'fb_page_1' }, timestamp: Date.now(), ...event
+        }] }] }));
+        expect(response.status).toBe(200);
+        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ inboundMessage }));
+        expect(mocks.sendMessage).toHaveBeenCalled();
     });
 
     it.each(['qualified', 'converted', 'not_qualified', 'order_created', 'opted_out'])(

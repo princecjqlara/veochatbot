@@ -20,6 +20,7 @@ import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDoc
 import { getMissingChatbotDetails } from '@/lib/chatbot-control';
 import { normalizeCommercialVideoDetails, normalizeCommercialVideoIntakeConfig } from '@/lib/chatbot-intake';
 import { evaluateCommercialVideoIntake, extractClearVideoRequest, isCommercialVideoIntake } from '@/lib/chatbot-policy';
+import { getCommercialVideoMessageControls, resolveChatbotAction } from '@/lib/chatbot-interactions';
 
 function defaultConfig(pageId: string): ChatbotConfig {
     return {
@@ -442,7 +443,9 @@ export async function POST(
         const testContactName = typeof body.contact_name === 'string' && body.contact_name.trim()
             ? body.contact_name.trim().replace(/\s+/g, ' ').slice(0, 120)
             : 'Test Customer';
-        const message = typeof body.message === 'string' ? body.message.trim() : '';
+        let message = typeof body.message === 'string' ? body.message.trim() : '';
+        const action = resolveChatbotAction(body.action_payload);
+        if (action) message = action.message;
         if (testMode === 'reply' && (!message || message.length > 2000)) {
             return NextResponse.json({ error: 'Test message must be between 1 and 2000 characters' }, { status: 400 });
         }
@@ -566,6 +569,7 @@ export async function POST(
             return NextResponse.json({
                 reply: followUp.message,
                 messages: followUp.messages?.length ? followUp.messages : [followUp.message],
+                message_controls: isCommercialVideoIntake(config) ? getCommercialVideoMessageControls(followUp.messages?.length ? followUp.messages : [followUp.message]) : [],
                 mode: 'follow_up',
                 follow_up_type: followUpType,
                 personalization_basis: followUp.personalization_basis,
@@ -636,6 +640,7 @@ export async function POST(
         return NextResponse.json({
             reply: result.reply,
             messages: result.messages,
+            message_controls: isCommercialVideoIntake(config) ? getCommercialVideoMessageControls(result.messages) : [],
             collected_details: result.collected_details,
             missing_details: result.missing_details,
             details_complete: result.details_complete,

@@ -7,10 +7,11 @@ vi.mock('@/lib/outbound-message-events', () => ({ recordOutboundMessageEvent: mo
 import { processDueChatbotFollowUps, scheduleChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 import type { ChatbotConfig } from '@/lib/chatbot';
 import { ChatbotFollowUpRepeatedError } from '@/lib/chatbot-message-copy';
+import { videoPreferences } from './fixtures/commercial-video';
 
 const anchor = '2026-10-17T05:00:00Z';
 const now = new Date('2026-10-17T05:01:00Z');
-const complete = { 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Sell cakes', 'Contact Number': '09171234567' };
+const complete = { ...videoPreferences, 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Sell cakes', 'Contact Number': '09171234567' };
 function fixture(formComplete = false, clearRequest = false) {
     const job: any = { id: 'job', page_id: 'page', contact_id: 'contact', anchor_inbound_at: anchor,
         schedule_type: 'response', sequence_index: 0, due_at: now.toISOString(), attempt_count: 0,

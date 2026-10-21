@@ -16,6 +16,16 @@ afterEach(() => {
 });
 
 describe('sendMessage', () => {
+    it('sends every video-length choice as a Messenger text quick reply', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(createJsonResponse(true, { message_id: 'duration-mid' }));
+        vi.stubGlobal('fetch', fetchMock);
+        const choices = [16, 20, 24, 30, 60].map(seconds => ({ title: seconds === 60 ? '1 min' : `${seconds}s`, payload: `VEO:DURATION:${seconds}` }));
+        await sendMessage('page', 'token', 'customer', 'Ilang seconds ang gusto mo?', 'RESPONSE', undefined, undefined, undefined, undefined, undefined, choices);
+        const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+        expect(payload.message.quick_replies).toEqual(choices.map(choice => ({ content_type: 'text', ...choice })));
+        expect(payload.message.attachment).toBeUndefined();
+    });
+
     it('rejects invalid utility parameters before calling Facebook', async () => {
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);

@@ -1,3 +1,5 @@
+import { getCommercialVideoMessageControls, type ChatbotChoice, type ChatbotMessageControls } from '@/lib/chatbot-interactions';
+
 export type TestSource = { document_id: string; title: string; similarity: number };
 export type TestMedia = {
     id: string;
@@ -19,6 +21,8 @@ export type TestChatMessage = {
     mediaItems?: TestMedia[];
     folder?: TestFolder | null;
     previewOnly?: boolean;
+    buttons?: ChatbotChoice[];
+    quickReplies?: ChatbotChoice[];
 };
 
 type TestReply = {
@@ -28,6 +32,7 @@ type TestReply = {
     media?: TestMedia | null;
     media_items?: TestMedia[];
     folder?: TestFolder | null;
+    message_controls?: ChatbotMessageControls[];
 };
 
 /** Preserve generated bubbles and mirror the live text/card/question order. */
@@ -36,8 +41,11 @@ export function buildChatbotTestMessages(result: TestReply, options: {
 }): TestChatMessage[] {
     const parts = Array.isArray(result.messages) && result.messages.length ? result.messages : [result.reply];
     const replies = parts.filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+    const controls = result.message_controls || (options.commercialVideoIntake ? getCommercialVideoMessageControls(replies) : []);
     const messages: TestChatMessage[] = replies.map((content, index) => ({
         id: `${options.idPrefix}-${index}`, role: 'assistant', content,
+        buttons: controls.find(item => item.message_index === index)?.buttons,
+        quickReplies: controls.find(item => item.message_index === index)?.quick_replies,
         ...(options.label ? { label: options.label } : {})
     }));
     const finalText = messages.at(-1);

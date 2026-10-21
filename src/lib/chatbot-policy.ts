@@ -26,6 +26,15 @@ export function evaluateCommercialVideoIntake(details: unknown, hasClearRequest:
 
 const EMPTY_REQUEST: CommercialVideoRequest = { has_clear_request: false, request_type: null, request_evidence: null };
 
+function isFormSubmissionOnly(text: string): boolean {
+    const fieldLine = /^(?:\d+[.)]\s*)?(?:(?:Business Name|Page \/ Social Media Link|Business Location|Location|Goal ng Video|Preferred Video Length|Preferred Style|Contact Number):|Portrait or Landscape\?)/i;
+    const lines = text.split(/\r?\n/);
+    const fieldCount = lines.filter(line => fieldLine.test(line)).length;
+    const consentText = fieldCount >= 2 ? lines.filter(line => !fieldLine.test(line)).join(' ') : text;
+    const explicitProduction = /\b(?:proceed|buy|order|avail|pagawa|papagawa|gawan|make|create|prepare|free\s+(?:concept|script))\b/i.test(consentText);
+    return !explicitProduction && (fieldCount >= 2 || /\bform\b/i.test(text));
+}
+
 function requestType(text: string): CommercialVideoRequestType | null {
     if (/\b(?:concept|konsepto)\b/i.test(text)) return 'free_concept';
     if (/\bscript\b/i.test(text)) return 'free_script';
@@ -50,6 +59,7 @@ export function extractClearVideoRequest(history: FacebookMessage[], pageId: str
             current = { ...EMPTY_REQUEST, request_evidence: text.slice(0, 500), request_evidence_message_id: message.id || null };
             continue;
         }
+        if (isFormSubmissionOnly(text)) continue;
         // A request for samples means viewing previous work, never production intent.
         if (/\b(?:samples?|portfolio|examples?)\b/i.test(text) && !/\b(?:concept|script)\b/i.test(text)) continue;
         if (/^\s*(?:how much|magkano|hm\b|what (?:is|are|s|the).{0,20}(?:price|cost)|can you (?:tell|explain)|i (?:want|would like|need) to (?:know|learn|see|ask|inquire))\b/i.test(text)) continue;
@@ -85,6 +95,10 @@ export function resolveCommercialVideoRequest(input: {
     const observed = extractClearVideoRequest(history, input.pageId);
     if (observed.has_clear_request) return observed;
     if (observed.request_evidence) return observed;
+    const latest = input.inboundMessage || history.filter(message => message.from?.id !== input.pageId).sort((a, b) => Date.parse(b.created_time) - Date.parse(a.created_time))[0]?.message || '';
+    if (isFormSubmissionOnly(latest)) return input.hasClearRequest === true
+        ? { has_clear_request: true, request_type: input.requestType || null, request_evidence: input.requestEvidence || null }
+        : { ...EMPTY_REQUEST };
     // The model may resolve contextual references ("Proceed with that please"),
     // but its candidate must contain actual customer request language and a
     // verbatim quote. Merely returning has_clear_request never creates intent.
@@ -94,13 +108,13 @@ export function resolveCommercialVideoRequest(input: {
     if (candidate?.has_clear_request === true &&
         ['commercial_video', 'free_concept', 'free_script'].includes(candidate.request_type || '') &&
         evidence.length > 0 && evidence.length <= 500 && evidenceMessage &&
+        !isFormSubmissionOnly(evidenceMessage.message) &&
         /\b(?:want|need|would like|please|request|proceed|go ahead|tuloy|simulan|gusto|gawan|pagawa|papagawa|pahingi|pakigawa|pakisend)\b/i.test(evidence) &&
         !/^\s*(?:how much|magkano|hm\b|what .{0,20}(?:price|cost)|i (?:want|would like|need) to (?:know|learn|see|ask|inquire))\b/i.test(evidenceMessage.message) &&
         !(/\b(?:sample|portfolio|example)s?\b/i.test(evidenceMessage.message) && !/\b(?:concept|script)\b/i.test(evidenceMessage.message))) {
         return { has_clear_request: true, request_type: candidate.request_type as CommercialVideoRequestType,
             request_evidence: evidence, request_evidence_message_id: evidenceMessage.id || null };
     }
-    const latest = input.inboundMessage || history.filter(message => message.from?.id !== input.pageId).sort((a, b) => Date.parse(b.created_time) - Date.parse(a.created_time))[0]?.message || '';
     if (/\b(?:cancel|changed my mind|not interested|no thanks|ayoko|wag na|huwag na|hindi na|do not make|don't make)\b/i.test(latest)) return { ...EMPTY_REQUEST };
     return input.hasClearRequest === true
         ? { has_clear_request: true, request_type: input.requestType || null, request_evidence: input.requestEvidence || null }

@@ -45,7 +45,7 @@ for (const [index, message] of [
     'Bakery po ang business namin. Preview Bakery ang business name.',
     '24 seconds po',
     'Sige, gusto kong mag-proceed sa commercial video. Pakisend ng form.',
-    'Manila po ang location namin. Goal ng video ay i-promote ang fresh bread. Contact number 09171234567.'
+    'Page / Social Media Link: https://example.com/preview-bakery\nLocation: Manila\nGoal ng Video: i-promote ang fresh bread\nPreferred Style: Cinematic\nContact Number: 09171234567\nPortrait or Landscape? Portrait'
 ].entries()) {
     history.push({ role: 'user', content: message });
     const reply = await previewRequest(endpoint, { method: 'POST', headers, body: JSON.stringify({ message, contact_name: 'Miguel Reyes', history, collected_details: details }), signal: AbortSignal.timeout(60000) });
@@ -58,7 +58,7 @@ for (const [index, message] of [
     assert.ok(!result.generation_warning, result.generation_warning); assert.ok(!result.retrieval_warning, result.retrieval_warning);
     assert.match(result.messages.at(-1), /\?$/);
     assert.doesNotMatch(result.messages.join('\n'), /Reyes|\p{Extended_Pictographic}|\b(?:sir|maam|boss)\b/iu);
-    assert.equal((result.messages.join(' ').match(/\?/g) || []).length, 1);
+    assert.equal((result.messages.filter(message => !/Kindly fill out these details:|summary ng request/i.test(message)).join(' ').match(/\?/g) || []).length, 1);
     if (index === 0) { assert.ok(!result.messages.some(containsCommercialVideoForm)); assert.match(result.messages.at(-1), /business|negosyo/i); }
     if (index === 1) { assert.ok(result.media_items?.length > 0, 'Existing sample is selected'); assert.ok(!result.messages.some(containsCommercialVideoForm)); assert.match(result.messages.at(-1), /seconds|duration/i); }
     if (index === 2) {

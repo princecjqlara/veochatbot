@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import pg from 'pg';
-import { COMMERCIAL_VIDEO_OWNER_POLICY, COMMERCIAL_VIDEO_OWNER_POLICY_MARKER, commercialVideoOwnerGuidance } from '../src/lib/chatbot-intake.ts';
+import { COMMERCIAL_VIDEO_REQUIRED_DETAILS, COMMERCIAL_VIDEO_OWNER_POLICY, COMMERCIAL_VIDEO_OWNER_POLICY_MARKER, commercialVideoOwnerGuidance } from '../src/lib/chatbot-intake.ts';
 
 const promptKeys = ['instructions', 'bot_dos', 'bot_donts', 'follow_up_prompt', 'follow_up_ai_instructions'];
-const markers = [COMMERCIAL_VIDEO_OWNER_POLICY_MARKER, 'Business sample duration and single-message sales policy (2026-10-21):', 'Form incentive and sentence splitting policy (2026-10-18):', 'Compact form-first conversation policy (2026-10-18):', 'Form-first split and follow-up policy (2026-10-18):', 'Form-first summary and pricing policy (2026-10-17):', 'Form-first follow-up update (2026-10-17):',
+const markers = [COMMERCIAL_VIDEO_OWNER_POLICY_MARKER, 'Natural follow-up and free-concept sales policy (2026-10-21):', 'Business sample duration and single-message sales policy (2026-10-21):', 'Form incentive and sentence splitting policy (2026-10-18):', 'Compact form-first conversation policy (2026-10-18):', 'Form-first split and follow-up policy (2026-10-18):', 'Form-first summary and pricing policy (2026-10-17):', 'Form-first follow-up update (2026-10-17):',
     'Current owner language and message policy (2026-10-17):', 'Current commercial-video intake policy:'];
 const stripPolicy = text => {
     const positions = markers.map(marker => (text || '').indexOf(marker)).filter(index => index >= 0);
@@ -28,6 +28,8 @@ function patch(original) {
         assert.ok(updated[key].length <= (key === 'instructions' ? 5000 : 3000), `${key} exceeds saved-settings limit`);
     }
     updated.fallback_reply = fallback;
+    updated.details_to_collect = [...COMMERCIAL_VIDEO_REQUIRED_DETAILS];
+    updated.details_completion_percent = 100;
     return updated;
 }
 
@@ -50,13 +52,18 @@ const db = new pg.Client({ connectionString,
     ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 15000, query_timeout: 45000 });
 await db.connect();
 try {
+    if (process.argv.includes('--apply-schema')) {
+        const installed = await db.query("SELECT 1 FROM app_private.schema_migrations WHERE version='20261021_002'");
+        if (!installed.rowCount) await db.query(await readFile(new URL('../supabase/migrations/202610210002_interactive_eight_field_intake.sql', import.meta.url), 'utf8'));
+        console.log(JSON.stringify({ eightFieldSchemaReady: true }));
+    }
     await db.query('BEGIN');
     try {
         await db.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s'");
         const configs = (await db.query('SELECT * FROM chatbot_configs WHERE commercial_video_intake_enabled=true ORDER BY page_id FOR UPDATE')).rows;
         assert.ok(configs.length, 'No configured commercial-video bots found');
         const changes = configs.map(original => ({ original, updated: patch(original) }))
-            .filter(({ original, updated }) => [...promptKeys, 'fallback_reply'].some(key => original[key] !== updated[key]));
+            .filter(({ original, updated }) => [...promptKeys, 'fallback_reply', 'details_to_collect', 'details_completion_percent'].some(key => JSON.stringify(original[key]) !== JSON.stringify(updated[key])));
         if (!process.argv.includes('--apply')) {
             console.log(JSON.stringify({ mode: 'preview', configured: configs.length, toUpdate: changes.length,
                 policy: COMMERCIAL_VIDEO_OWNER_POLICY, lengths: changes.map(({ original, updated }) => ({ pageId: original.page_id,
@@ -70,8 +77,8 @@ try {
             await mkdir(directory, { recursive: true });
             if (changes.length) await writeFile(new URL(`form-summary-policy-backup-${Date.now()}.json`, directory), JSON.stringify({ configs, states, jobs }, null, 2), { flag: 'wx' });
             for (const { original, updated } of changes) {
-                const keys = [...promptKeys, 'fallback_reply'];
-                const saved = (await db.query(`UPDATE chatbot_configs SET ${keys.map((key, index) => `${key}=$${index + 2}`).join(',')},updated_at=clock_timestamp() WHERE page_id=$1 RETURNING *`, [original.page_id, ...keys.map(key => updated[key])])).rows[0];
+                const keys = [...promptKeys, 'fallback_reply', 'details_to_collect', 'details_completion_percent'];
+                const saved = (await db.query(`UPDATE chatbot_configs SET ${keys.map((key, index) => `${key}=$${index + 2}`).join(',')},updated_at=clock_timestamp() WHERE page_id=$1 RETURNING *`, [original.page_id, ...keys.map(key => key === 'details_to_collect' ? JSON.stringify(updated[key]) : updated[key])])).rows[0];
                 for (const key of Object.keys(original).filter(key => !keys.includes(key) && !['updated_at', 'policy_revision'].includes(key))) {
                     assert.deepEqual(saved[key], original[key], `Preserve ${key}`);
                 }

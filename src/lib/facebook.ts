@@ -452,7 +452,8 @@ export async function sendMessage(
     templateLanguage: string = DEFAULT_UTILITY_LANGUAGE,
     templateBodyParameters?: string[],
     templateButtons?: Array<{ type: 'URL'; text: string; url: string } | { type: 'POSTBACK'; text: string; payload: string }>,
-    templateMediaHeader?: { type: TemplateMediaType; url: string }
+    templateMediaHeader?: { type: TemplateMediaType; url: string },
+    quickReplies?: Array<{ title: string; payload: string }>
 ): Promise<{ message_id: string }> {
     // Build the request payload based on messaging type
     let bodyPayload: Record<string, unknown>;
@@ -576,7 +577,12 @@ export async function sendMessage(
             bodyPayload = {
                 recipient: { id: recipientPsid },
                 messaging_type: 'RESPONSE',
-                message: { text: messageText }
+                message: {
+                    text: messageText,
+                    ...(quickReplies?.length ? { quick_replies: quickReplies.slice(0, 13).map(choice => ({
+                        content_type: 'text', title: choice.title.slice(0, 20), payload: choice.payload
+                    })) } : {})
+                }
             };
         }
     }

@@ -3,7 +3,8 @@ import { renderCommercialVideoMessages, renderCommercialVideoProcess, renderComm
 import { containsCommercialVideoForm, renderCommercialVideoForm } from '@/lib/chatbot-intake';
 import { formatChatbotReplyMessages } from '@/lib/chatbot';
 import type { CommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
-const complete = { 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote bread', 'Contact Number': '09171234567' };
+import { videoPreferences } from './fixtures/commercial-video';
+const complete = { ...videoPreferences, 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote bread', 'Contact Number': '09171234567' };
 const flow = (step: CommercialVideoSalesFlow['step'], extra = {}): CommercialVideoSalesFlow => ({ step, business: 'CJ Bakery', durationSeconds: 24, sampleSent: true, sampleHandled: true, processSent: false, pricingSent: false, formSent: false, formRequested: false, processRequested: false, ...extra });
 const render = (extra: Partial<Parameters<typeof renderCommercialVideoMessages>[0]> = {}) => renderCommercialVideoMessages({ parts: [], details: {}, action: 'none', contactName: 'CJ Lara', ...extra });
 
@@ -79,19 +80,19 @@ describe('natural commercial-video replies and intact structured messages', () =
     it('prefills known answers in one complete form, then asks a missing field', () => {
         const messages = render({ details: { 'Business Name': 'CJ Bakery' }, action: 'send_form', salesFlow: flow('form') });
         expect(messages).toHaveLength(2); expect(messages[0]).toContain('CJ,');
-        expect(messages[0]).toContain('1. Business Name: CJ Bakery\n2. Business Location:\n3. Goal ng video:\n4. Contact Number:');
-        expect(messages[1]).toMatch(/city|location/i); expect(messages[1]).toMatch(/\?$/);
+        expect(messages[0]).toContain('Kindly fill out these details:\n\nBusiness Name: CJ Bakery\nPage / Social Media Link:\nLocation:\nGoal ng Video:\nPreferred Video Length:\nPreferred Style:\nContact Number:\nPortrait or Landscape?');
+        expect(messages[1]).toMatch(/page|social/i); expect(messages[1]).toMatch(/\?$/);
     });
     it('never repeats the form after partial answers', () => {
         const messages = render({ parts: [renderCommercialVideoForm()], details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, salesFlow: flow('form', { formSent: true }) });
-        expect(messages.some(containsCommercialVideoForm)).toBe(false); expect(messages).toHaveLength(1); expect(messages[0]).toMatch(/city|location/i);
+        expect(messages.some(containsCommercialVideoForm)).toBe(false); expect(messages).toHaveLength(1); expect(messages[0]).toMatch(/page|social/i);
     });
-    it('resends a prefilled form on explicit request', () => expect(render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, salesFlow: flow('form', { formRequested: true }) })[0]).toContain('1. Business Name: CJ Bakery'));
+    it('resends a prefilled form on explicit request', () => expect(render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, salesFlow: flow('form', { formRequested: true }) })[0]).toContain('Business Name: CJ Bakery'));
     it('allows a useful prefilled form reminder without a resend request and explains the free concept', () => {
         const messages = render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, repeatForm: true, salesFlow: flow('form') });
         expect(messages.find(containsCommercialVideoForm)).toContain('free concept');
         expect(messages.find(containsCommercialVideoForm)).toContain('Walang bayad');
-        expect(messages.find(containsCommercialVideoForm)).toContain('1. Business Name: CJ Bakery');
+        expect(messages.find(containsCommercialVideoForm)).toContain('Business Name: CJ Bakery');
         expect(messages.at(-1)).toMatch(/\?$/);
     });
     it('mentions a no-fee free concept with pricing while keeping paid production separate', () => {
@@ -101,7 +102,7 @@ describe('natural commercial-video replies and intact structured messages', () =
     });
     it('rotates ignored missing-field questions and never asks known details', () => {
         const messages = render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, salesFlow: flow('form'), recentMessages: ['Saang city o area ang CJ Bakery?'] });
-        expect(messages.at(-1)).toMatch(/goal|number/i); expect(messages.at(-1)).not.toMatch(/city|business name/i);
+        expect(messages.at(-1)).toMatch(/page|social/i); expect(messages.at(-1)).not.toMatch(/city|business name/i);
     });
     it('keeps one useful model question for a missing field and removes its duplicate declarative request', () => {
         const messages = render({ parts: ['Anong contact number ang pwede naming gamitin?', 'Please send your contact number.'], details: { ...complete, 'Contact Number': '' }, formPreviouslySent: true, salesFlow: flow('form') });
@@ -125,7 +126,7 @@ describe('natural commercial-video replies and intact structured messages', () =
         const summary = renderCommercialVideoSummary(complete);
         const args = { details: complete, salesFlow: flow('complete'), recentMessages: [summary], action: 'clarify_next_step' as const };
         expect(render(args).join(' ')).not.toContain('Contact Number:');
-        expect(render({ ...args, details: { ...complete, 'Business Location': 'Cebu' } }).join(' ')).toContain('Business Location: Cebu');
+        expect(render({ ...args, details: { ...complete, 'Business Location': 'Cebu' } }).join(' ')).toContain('Location: Cebu');
         const delivered = render({ details: complete, salesFlow: flow('complete') });
         expect(render({ ...args, recentMessages: delivered }).join(' ')).not.toContain('Contact Number:');
     });

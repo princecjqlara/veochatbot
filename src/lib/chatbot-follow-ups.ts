@@ -18,6 +18,7 @@ import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDoc
 import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateContactPipelineStage, type ContactPipelineStage, type ContactPipelineSource } from '@/lib/contact-pipeline';
 import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
 import { ChatbotFollowUpRepeatedError, hasRepeatedChatbotCopy } from '@/lib/chatbot-message-copy';
+import { getCommercialVideoMessageControls } from '@/lib/chatbot-interactions';
 
 const RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * RESPONSE_WINDOW_MS;
@@ -529,31 +530,22 @@ export async function processDueChatbotFollowUps(input: {
                 messageParts.length > 1 && /\?\s*$/.test(messageParts[messageParts.length - 1]);
             const sendTextPart = async (partIndex: number) => {
                 const message = messageParts[partIndex];
+                const controls = isCommercialVideoIntake(config)
+                    ? getCommercialVideoMessageControls(messageParts).find(item => item.message_index === partIndex) : undefined;
                 await checkDelivery();
                 const isFinalPart = partIndex === messageParts.length - 1;
-                const sendResult = selectedDriveFolder && isFinalPart
-                    ? await sendMessage(
-                        page.fb_page_id,
-                        page.access_token,
-                        contact.psid,
-                        message,
-                        messagingType || 'RESPONSE',
-                        undefined,
-                        undefined,
-                        undefined,
-                        [{
+                const sendArgs: Parameters<typeof sendMessage> = [page.fb_page_id, page.access_token, contact.psid, message, messagingType || 'RESPONSE'];
+                const buttons = [
+                        ...(controls?.buttons || []).map(button => ({ type: 'POSTBACK' as const, text: button.title, payload: button.payload })),
+                        ...(selectedDriveFolder && isFinalPart ? [{
                             type: 'URL',
                             text: selectedDriveFolder.button_text,
                             url: selectedDriveFolder.folder_url
-                        }]
-                    )
-                    : await sendMessage(
-                        page.fb_page_id,
-                        page.access_token,
-                        contact.psid,
-                        message,
-                        messagingType || 'RESPONSE'
-                    );
+                        } as const] : [])
+                ];
+                if (buttons.length) sendArgs[8] = buttons;
+                if (controls?.quick_replies?.length) sendArgs[10] = controls.quick_replies;
+                const sendResult = await sendMessage(...sendArgs);
                 lastSendResult = sendResult;
                 deliveredMessageId = sendResult.message_id;
                 // Checkpoint each bubble before sending the next. A stale lease

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { getMissingCommercialVideoDetails, normalizeCommercialVideoDetails } from '../src/lib/chatbot-intake.ts';
 
 // Match Next's local environment without printing credentials.
 try {
@@ -13,20 +14,23 @@ try {
         if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
     }
 } catch { /* Environment may already be injected. */ }
-const connectionString = process.env.DATABASE_POOLER_URL_5432 || process.env.DATABASE_URL;
+const connectionString = process.argv.includes('--transaction-pooler') ? process.env.DATABASE_POOLER_URL_6543 : process.env.DATABASE_POOLER_URL_5432 || process.env.DATABASE_URL;
 if (!connectionString) throw new Error('An isolated verification connection is required');
 const concurrent = process.argv.includes('--concurrency');
-const pool = new pg.Pool({ connectionString, ssl: { rejectUnauthorized: false }, max: 3, connectionTimeoutMillis: 15000 });
+const pool = new pg.Pool({ connectionString, ssl: { rejectUnauthorized: false }, max: 3, connectionTimeoutMillis: 15000,
+    query_timeout: 20000, application_name: 'veobot-intake-sql-verification' });
 const client = await pool.connect();
 const schema = `intake_verify_${randomUUID().replaceAll('-', '')}`;
 const rewrite = source => source.replace(/^BEGIN;\s*$/mg, '').replace(/^COMMIT;\s*$/mg, '')
+    .replace(/n.nspname='public'/g, `n.nspname='${schema}'`)
     .replace(/\bpublic\./g, `${schema}.`).replace(/\bapp_private\./g, `${schema}.`)
     .replace(/search_path\s*=\s*public\s*,\s*pg_temp/gi, `search_path=${schema},pg_temp`);
 const checks = [];
 const check = (value, message) => { assert.ok(value, message); checks.push(message); };
 const when = '2026-10-16T15:59:00.000Z';
-const form = { 'Business Name': 'Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Sell cakes', 'Contact Number': '09171234567' };
+const form = { 'Business Name': 'Bakery', 'Page / Social Media Link': 'https://example.com/bakery', 'Business Location': 'Manila', 'Goal ng video': 'Sell cakes', 'Preferred Video Length': '24 seconds', 'Preferred Style': 'Cinematic', 'Contact Number': '09171234567', 'Portrait or Landscape?': 'Portrait' };
 try {
+    console.log(JSON.stringify({ scratchVerificationStarted: true }));
     await client.query('BEGIN');
     await client.query("SET LOCAL statement_timeout='30s'");
     await client.query("SET LOCAL lock_timeout='5s'");
@@ -56,6 +60,14 @@ try {
     await client.query(rewrite(await readFile(new URL('../supabase/migrations/202610150001_chatbot_continuation_reviews.sql', import.meta.url), 'utf8')));
     await client.query(rewrite(await readFile(new URL('../supabase/migrations/202610170001_commercial_video_nightly_handoff.sql', import.meta.url), 'utf8')));
     await client.query(rewrite(await readFile(new URL('../supabase/migrations/202610210001_nightly_review_requires_no_agreement.sql', import.meta.url), 'utf8')));
+    await client.query(rewrite(await readFile(new URL('../supabase/migrations/202610210002_interactive_eight_field_intake.sql', import.meta.url), 'utf8')));
+    console.log(JSON.stringify({ scratchMigrationsApplied: true }));
+    for (const input of [form, {}, { ...form, 'Preferred Video Length': '0 seconds' }, { ...form, 'Preferred Video Length': '1 min', 'Page / Social Media Link': 'Wala pa' }, { ...form, 'Portrait or Landscape?': '' }, { ...form, 'Contact Number': '00000000' }]) {
+        const details = normalizeCommercialVideoDetails(input);
+        const actual = (await client.query(`SELECT ${schema}.chatbot_commercial_missing_details($1) AS missing`, [details])).rows[0].missing;
+        assert.deepEqual(actual, getMissingCommercialVideoDetails(details), 'SQL and application agree on all eight fields');
+    }
+    console.log(JSON.stringify({ eightFieldParityPassed: true }));
     check(Number((await client.query("SELECT count(*) FROM pg_constraint WHERE conrelid=$1::regclass AND contype='u' AND cardinality(conkey)=4", [`${schema}.chatbot_follow_up_jobs`])).rows[0].count) === 1,
         'additive schema preserves old reminder uniqueness until application deployment');
     // Simulate the transactional activation step, after new application deployment.

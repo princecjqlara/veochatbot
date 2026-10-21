@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateChatbotFollowUp, generateChatbotResponse, extractChatbotContactDetails, formatChatbotReplyMessages, type ChatbotConfig } from '@/lib/chatbot';
-import { COMMERCIAL_VIDEO_REQUIRED_DETAILS, COMMERCIAL_VIDEO_OWNER_POLICY, hasCommercialVideoPriceList, hasForbiddenFreeVideoOffer, hasForbiddenFreePreproductionCharge, normalizeCommercialVideoDetails, normalizeCommercialVideoIntakeConfig, renderCommercialVideoForm } from '@/lib/chatbot-intake';
+import { COMMERCIAL_VIDEO_FIELDS, COMMERCIAL_VIDEO_REQUIRED_DETAILS, COMMERCIAL_VIDEO_OWNER_POLICY, hasCommercialVideoPriceList, hasForbiddenFreeVideoOffer, hasForbiddenFreePreproductionCharge, normalizeCommercialVideoDetails, normalizeCommercialVideoIntakeConfig, renderCommercialVideoForm } from '@/lib/chatbot-intake';
 import { evaluateCommercialVideoIntake, extractClearVideoRequest, resolveCommercialVideoRequest } from '@/lib/chatbot-policy';
 import { renderCommercialVideoSummary } from '@/lib/chatbot-message-renderer';
 import type { FacebookMessage } from '@/types';
+import { videoPreferences } from './fixtures/commercial-video';
 import { retrieveChatbotKnowledge } from '@/lib/chatbot-knowledge';
 vi.mock('@/lib/chatbot-knowledge', () => ({ retrieveChatbotKnowledge: vi.fn() }));
 
@@ -15,7 +16,7 @@ const config: ChatbotConfig = {
     split_messages: true, max_message_parts: 0, stop_when_details_collected: true, stop_on_opt_out: true, stop_on_refusal: true,
     stop_on_qualified: true, stop_on_not_qualified: true, stop_on_converted: true, stop_on_order_created: true, commercial_video_intake_enabled: true
 };
-const complete = { 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote new bread', 'Contact Number': '09171234567' };
+const complete = { ...videoPreferences, 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote new bread', 'Contact Number': '09171234567' };
 const customer = (text: string, second = 1): FacebookMessage => ({ id: `customer-${second}`, message: text, from: { id: 'customer', name: 'CJ' }, created_time: `2026-10-17T10:00:${String(second).padStart(2, '0')}Z` });
 const page = (text: string, second = 0): FacebookMessage => ({ ...customer(text, second), id: `page-${second}`, from: { id: 'page', name: 'Page' } });
 const completion = (plan: unknown) => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(plan) } }] }) });
@@ -38,7 +39,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); delete process.en
 
 describe('canonical commercial form policy', () => {
     it('migrates explicit aliases, rejects placeholders and preserves the proper business identity', () => {
-        expect(normalizeCommercialVideoDetails({ name: 'Messenger Name', 'company name': 'CJ Bakery', business_location: 'Manila', 'Video objective': 'Sell bread', phone: '+63 (917) 123-4567', budget: '5000' })).toEqual({ ...complete, 'Goal ng video': 'Sell bread', 'Contact Number': '+639171234567' });
+        expect(normalizeCommercialVideoDetails({ name: 'Messenger Name', 'company name': 'CJ Bakery', business_location: 'Manila', 'Video objective': 'Sell bread', phone: '+63 (917) 123-4567', budget: '5000' })).toEqual({ 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Sell bread', 'Contact Number': '+639171234567' });
         expect(normalizeCommercialVideoDetails({ 'business name': 'pending', 'business location': 'unknown', 'video goal': 'N/A', 'phone number': '123' })).toEqual({});
         expect(normalizeCommercialVideoDetails({ name: 'Messenger Name', brand: 'Supplier Brand' })).toEqual({});
     });
@@ -59,8 +60,8 @@ describe('canonical commercial form policy', () => {
     it('keeps the full form in exactly one bubble after downstream formatting', () => {
         const messages = formatChatbotReplyMessages(['A'.repeat(600), ...renderCommercialVideoForm().split('\n')], config);
         expect(messages).toHaveLength(2);
-        for (const label of COMMERCIAL_VIDEO_REQUIRED_DETAILS) expect(messages[1]).toContain(`${label}:`);
-        expect(messages[1]).toMatch(/1\. Business Name:\n2\. Business Location:\n3\. Goal ng video:\n4\. Contact Number:$/);
+        for (const field of COMMERCIAL_VIDEO_FIELDS) expect(messages[1]).toContain(field.displayLabel);
+        expect(messages[1]).toBe(renderCommercialVideoForm());
     });
 });
 
@@ -145,8 +146,8 @@ describe('commercial generation and follow-ups', () => {
     it('honors an explicit form request and saves answers already supplied', async () => {
         mockPlan({ messages: ['Sige po.'], collected_details: { 'Business Name': 'CJ Bakery' } });
         const result = await generateChatbotResponse({ config, pageId: 'page', contactName: 'CJ Lara', inboundMessage: 'Pakisend ng form, CJ Bakery ang business name' });
-        expect(result.intake_action).toBe('send_form'); expect(result.messages.filter(m => m.includes('1. Business Name:'))).toHaveLength(1);
-        expect(result.messages.join(' ')).toContain('1. Business Name: CJ Bakery'); expect(result.messages.at(-1)).toMatch(/location|city/i);
+        expect(result.intake_action).toBe('send_form'); expect(result.messages.filter(m => m.includes('Kindly fill out these details:'))).toHaveLength(1);
+        expect(result.messages.join(' ')).toContain('Business Name: CJ Bakery'); expect(result.messages.at(-1)).toMatch(/page|social/i);
         expect(formatChatbotReplyMessages(result.messages, { split_messages: false, max_message_parts: 1 })).toEqual(result.messages);
     });
     it('requires all four fields despite obsolete detail targets and carries a saved free request', async () => {
@@ -173,7 +174,7 @@ describe('commercial generation and follow-ups', () => {
         mockPlan({ messages: [renderCommercialVideoForm()], collected_details: { 'Business Location': 'Manila' } });
         const result = await generateChatbotResponse({ config, pageId: 'page', inboundMessage: 'Manila po', history: [page(renderCommercialVideoForm())], collectedDetails: { 'Business Name': 'CJ Bakery' } });
         expect(result.intake_action).toBe('ask_missing_field'); expect(result.messages.join(' ')).not.toContain('Business Name:');
-        expect(result.messages.at(-1)).toMatch(/goal|number/i);
+        expect(result.messages.at(-1)).toMatch(/page|social/i);
     });
     it('retries unauthorized personalized sample promises from stale instructions', async () => {
         process.env.OPENROUTER_API_KEY = 'test-key';
@@ -201,7 +202,7 @@ describe('commercial generation and follow-ups', () => {
     it('does not repeat a model-written summary or ignore a selected free output', async () => {
         mockPlan({ messages: [renderCommercialVideoSummary(complete), 'Ipapasa po ito sa team.'], collected_details: {} });
         const result = await generateChatbotResponse({ config, pageId: 'page', inboundMessage: 'Free script please', collectedDetails: complete });
-        for (const label of COMMERCIAL_VIDEO_REQUIRED_DETAILS) expect(result.messages.join('\n').split(label)).toHaveLength(2);
+        for (const field of COMMERCIAL_VIDEO_FIELDS) expect(result.messages.join('\n').split(field.displayLabel)).toHaveLength(2);
         expect(result.messages.join(' ')).toContain('Walang bayad'); expect(result.messages.at(-1)).toMatch(/\?$/);
     });
     it('extracts details silently without generating a sales reply', async () => {

@@ -1,6 +1,6 @@
 import type { FacebookMessage } from '@/types';
 import { normalizeContactName } from '@/lib/contact-names';
-import { containsCommercialVideoForm, getMissingCommercialVideoDetails, normalizeCommercialVideoDetails } from '@/lib/chatbot-intake';
+import { containsCommercialVideoForm, containsLegacyCommercialVideoForm, getMissingCommercialVideoDetails, normalizeCommercialVideoDetails } from '@/lib/chatbot-intake';
 import type { ChatbotKnowledgeMatch } from '@/lib/chatbot-knowledge';
 
 function sampleKind(match: ChatbotKnowledgeMatch): 'drive_file' | 'media' | null {
@@ -83,7 +83,7 @@ export function commercialVideoFirstName(value: unknown): string | null {
 
 export function cleanCommercialVideoCopy(text: string, contactName?: string | null): string {
     text = text.replace(/\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|[\uFE0E\uFE0F]|\u200D\p{Extended_Pictographic})*|\p{Regional_Indicator}|[\uFE0E\uFE0F\u20E3\u200D]/gu, '').trimEnd();
-    const fieldLine = /^(?:\d+[.)]\s*)?(?:Business Name|Business Location|Goal ng video|Contact Number):/i;
+    const fieldLine = /^(?:\d+[.)]\s*)?(?:Business Name|Page \/ Social Media Link|Business Location|Location|Goal ng video|Preferred Video Length|Preferred Style|Contact Number|Portrait or Landscape\?)[?:]?/i;
     if (text.includes('\n')) return text.split('\n').map(line => fieldLine.test(line) ? line : cleanCommercialVideoCopy(line, contactName)).join('\n').trim();
     if (fieldLine.test(text)) return text;
     let cleaned = text
@@ -131,7 +131,7 @@ function durationIn(text: string, first = false): number | null {
 }
 
 /** Derive progress from real messages, never from a model's claimed stage.
- * Existing four-field storage, holds, and reminder schedules need no migration. */
+ * Preserve earlier answers, holds, and reminder schedules. */
 export function resolveCommercialVideoSalesFlow(input: {
     history?: FacebookMessage[]; pageId: string; inboundMessage?: string; details?: unknown;
     businessType?: unknown; hasClearRequest?: boolean; requestType?: string | null;
@@ -147,7 +147,7 @@ export function resolveCommercialVideoSalesFlow(input: {
     }
     const collected = normalizeCommercialVideoDetails(input.details);
     let business: string | null = collected['Business Name'] || null;
-    let durationSeconds: number | null = null;
+    let durationSeconds: number | null = durationIn(collected['Preferred Video Length'] || '');
     let pricedDurationSeconds: number | null = null;
     let sampleSent = false, sampleHandled = false, processSent = false, formSent = false;
     let lastPageMessage = '';
@@ -158,7 +158,7 @@ export function resolveCommercialVideoSalesFlow(input: {
                 const pricingBody = text.includes('\n') ? text.slice(text.indexOf('\n') + 1) : text;
                 pricedDurationSeconds = durationIn(pricingBody, true) || durationSeconds;
             }
-            if (containsCommercialVideoForm(text)) formSent = true;
+            if (containsCommercialVideoForm(text) || containsLegacyCommercialVideoForm(text)) formSent = true;
             if (/STEP-BY-STEP PROCESS PO:/i.test(text) && /(?:^|\n)7[.) ]/.test(text)) processSent = true;
             if (sampleDelivery.test(text) && !unavailableSample.test(text) && !/\?\s*$/.test(text)) sampleSent = sampleHandled = true;
             if (sampleRequest.test(text) && unavailableSample.test(text) && !/\?\s*$/.test(text)) sampleHandled = true;
@@ -184,6 +184,7 @@ export function resolveCommercialVideoSalesFlow(input: {
         business = input.businessType.trim();
     }
     const latestCustomer = inbound || messages.filter(message => message.from?.id !== input.pageId).at(-1)?.message || '';
+    if (!durationIn(inbound) && !/^\s*\d{1,3}\s*(?:po|please)?[.!]?\s*$/i.test(inbound) && collected['Preferred Video Length']) durationSeconds = durationIn(collected['Preferred Video Length']);
     const formRequested = /\b(?:(?:send|show|resend|pahingi|paki(?:send)?|pakita|ibigay)\b.{0,30}\bform|form\s+(?:again|ulit|please|po)|(?:fill.up|fill out|sagutan)\b.{0,20}\bform)\b/i.test(latestCustomer);
     const processRequested = /step.by.step|proseso|\bprocess\b|paano.{0,30}(?:magpagawa|umorder|order|payment|bayad|gawin)/i.test(latestCustomer);
     const complete = getMissingCommercialVideoDetails(collected).length === 0;
@@ -198,12 +199,12 @@ export function resolveCommercialVideoSalesFlow(input: {
 export function commercialVideoSalesFlowPrompt(flow: CommercialVideoSalesFlow, contactName?: string | null): string {
     return '\n\nCURRENT VERIFIED SALES FLOW:\n' + JSON.stringify(flow) + '\n' +
         `Use only the first name ${JSON.stringify(commercialVideoFirstName(contactName))}; never address the customer by a surname, sir, maam, boss, or a made-up name. ` +
-        'Follow business -> existing relevant sample -> duration -> verified pricing and the full seven-step process -> buying decision -> four-field form. Continue from the current step without restarting. Repeat a relevant existing sample or prefilled form when it helps or the customer asks; avoid repeated pitches and near-identical questions/reminders. ' +
+        'Follow business -> existing relevant sample -> duration choices -> verified pricing and the full seven-step process -> proceed question with form button -> eight-field form on click. Continue without restarting. Repeat a relevant existing sample or prefilled form when useful/requested; avoid repeated pitches and near-identical questions. ' +
         'Answer direct questions first; an explicit request for the form or a free concept/script can proceed to intake immediately. Save any supplied form details at every step. ' +
         'For step=business ask what business they want the video for. Include business_type in JSON only as an exact short quote from their messages; this is context, not the Business Name field. ' +
         'For step=sample select the most relevant existing portfolio media or indexed Drive file using its verified document_id, even if the customer did not separately ask for samples. Do not claim a sample is attached without selecting a valid asset. If no suitable sample is available say so honestly and ask duration. ' +
         'For step=duration ask how many seconds they want. For step=pricing_process provide the verified selected-duration price in one intact messages entry, including known inclusions; distinguish total, PHP150 down payment, and balance. A changed duration requires updated pricing before the form, even if the process was already explained. Do not repeat that process unless requested. A main 24-second video and two 8-second ADD-ON videos are different deliverables; never replace the main duration with the add-ons. Clearly label historical/template/reference rates as reference only, pending team confirmation, never as approved live quotes. If no applicable rate is available, say the team must confirm it, never invent a price. The app adds the exact seven-step process when needed and a separate buying question. ' +
-        'For step=decision ask whether they want to proceed with the commercial video. For step=form the app sends one intact form prefilled with known answers, then one specific missing-field question. Set intake_action=send_form when a useful repeat will help the customer answer. Every form and pricing message explains that a free concept is available with no fee or purchase requirement; paid-video charges are separate. ' +
+        'For step=decision ask whether they want to proceed; the app adds a Fill out form button. Clicking it asks for the form only, never buying consent. Duration questions have 16s, 20s, 24s, 30s and 1 min choices; other typed lengths are accepted. For step=form the app sends the exact eight-field form prefilled with known answers, then one missing-field question. Set intake_action=send_form for a useful repeat. Every form and price explains the free concept needs no fee/purchase; paid production is separate. ' +
         'Every active response and scheduled reminder ends with one relevant question. Full pricing, the numbered process plus revision note, and the entire form are each single messages, exempt from sentence splitting and short-answer caps. Follow them with a separate relevant question. ' +
         'Write the current factual answer in messages. Do not duplicate the form or process: the app renders those. Use natural Taglish and no emojis. Respect opt-outs, refusals, and team handoff stops.\n';
 }

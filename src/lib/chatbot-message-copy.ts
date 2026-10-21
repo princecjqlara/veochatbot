@@ -1,6 +1,6 @@
 /** Copy comparison ignores politeness and layout, but keeps numbers and
  * negation so an updated quote or correction is never treated as a duplicate. */
-import { containsCommercialVideoForm } from '@/lib/chatbot-intake';
+import { containsCommercialVideoForm, containsLegacyCommercialVideoForm } from '@/lib/chatbot-intake';
 
 export class ChatbotFollowUpRepeatedError extends Error {}
 
@@ -48,9 +48,10 @@ type RepetitionOptions = { allowRepeatedFormsAndSamples?: boolean };
 
 function repetitionUnits(text: string, options: RepetitionOptions): string[] {
     if (!options.allowRepeatedFormsAndSamples) return [text, ...splitConversationalCopy(text)];
-    const form = containsCommercialVideoForm(text);
+    const form = containsCommercialVideoForm(text) || containsLegacyCommercialVideoForm(text);
     const lines = text.split(/\r?\n/).filter(line => !form || (
-        !/^\s*[1-4][.)]\s*(?:Business Name|Business Location|Goal ng video|Contact Number):/i.test(line) &&
+        !/^\s*(?:\d+[.)]\s*)?(?:(?:Business Name|Page \/ Social Media Link|Business Location|Location|Goal ng video|Preferred Video Length|Preferred Style|Contact Number):|Portrait or Landscape\?)/i.test(line) &&
+        !/^Kindly fill out these details:/i.test(line) &&
         !/(?:para maihanda|pakisagutan ang kulang).*(?:concept|script|details|request)|walang bayad.*walang kailangang bilhin/i.test(line)
     ));
     return lines.flatMap(splitConversationalCopy).filter(part => {

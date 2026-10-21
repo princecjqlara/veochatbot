@@ -19,7 +19,7 @@ for (const [index, text] of [
     'Bakery po ang business namin. Preview Bakery ang business name.',
     '24 seconds po',
     'Sige, gusto kong mag-proceed sa commercial video. Pakisend ng form.',
-    'Manila po ang location namin. Goal ng video ay i-promote ang fresh bread. Contact number 09171234567.'
+    'Page / Social Media Link: https://example.com/preview-bakery\nLocation: Manila\nGoal ng Video: i-promote ang fresh bread\nPreferred Style: Cinematic\nContact Number: 09171234567\nPortrait or Landscape? Portrait'
 ].entries()) {
     const created = new Date().toISOString();
     history.push({ id: 'preview-customer-' + index, from: { id: 'preview-only-customer', name: 'Miguel Reyes' }, message: text, created_time: created });
@@ -28,7 +28,7 @@ for (const [index, text] of [
     assert.ok(!result.retrieval_warning, result.retrieval_warning);
     assert.match(result.messages.at(-1), /\?$/);
     assert.doesNotMatch(result.messages.join('\n'), /Reyes|\p{Extended_Pictographic}|\b(?:sir|maam|boss)\b/iu);
-    assert.equal((result.messages.join(' ').match(/\?/g) || []).length, 1);
+    assert.equal((result.messages.filter(message => !/Kindly fill out these details:|summary ng request/i.test(message)).join(' ').match(/\?/g) || []).length, 1);
     if (index === 0) assert.ok(!result.messages.some(containsCommercialVideoForm), 'Business before form');
     if (index === 1) {
         assert.ok(!result.messages.some(containsCommercialVideoForm), 'Sample before form');

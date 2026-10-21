@@ -30,8 +30,9 @@ import {
     Video
 } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabase';
-import { COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
+import { COMMERCIAL_VIDEO_FIELDS, COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
 import { buildChatbotTestMessages, getChatbotTestHistory, type TestChatMessage, type TestMedia, type TestSource } from '@/lib/chatbot-test-preview';
+import { resolveChatbotAction, type ChatbotChoice } from '@/lib/chatbot-interactions';
 
 type PageSummary = {
     id: string;
@@ -733,26 +734,28 @@ export default function ChatbotPage() {
         }
     };
 
-    const testChatbot = async () => {
-        const message = testMessage.trim();
+    const testChatbot = async (choice?: ChatbotChoice) => {
+        const action = resolveChatbotAction(choice?.payload);
+        const message = action?.message || testMessage.trim();
         if (!selectedPageId || !message || testing) return;
         const history = getChatbotTestHistory(testConversation);
         const userMessage: TestChatMessage = {
             id: `user-${Date.now()}`,
             role: 'user',
-            content: message
+            content: action?.title || message
         };
         setTesting(true);
         setError('');
         setStatus('');
-        setTestMessage('');
-        setTestConversation((current) => [...current, userMessage]);
+        if (!choice) setTestMessage('');
+        setTestConversation((current) => [...current.map(entry => ({ ...entry, quickReplies: undefined })), userMessage]);
         try {
             const response = await fetch('/api/pages/' + selectedPageId + '/chatbot', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     message,
+                    ...(choice ? { action_payload: choice.payload } : {}),
                     contact_name: testContactName,
                     history,
                     collected_details: testCollectedDetails,
@@ -776,7 +779,7 @@ export default function ChatbotPage() {
         } catch (testError) {
             setError((testError as Error).message);
             setTestConversation((current) => current.filter((entry) => entry.id !== userMessage.id));
-            setTestMessage(message);
+            if (!choice) setTestMessage(message);
         } finally {
             setTesting(false);
         }
@@ -863,7 +866,7 @@ export default function ChatbotPage() {
                 label: body.follow_up_label || 'Follow-up preview',
                 commercialVideoIntake: config?.commercial_video_intake_enabled
             });
-            setTestConversation((current) => [...current, ...messages]);
+            setTestConversation((current) => [...current.map(entry => ({ ...entry, quickReplies: undefined })), ...messages]);
             setTestTokenUsage(body.token_usage || null);
             setTestFollowUpCount((current) => current + 1);
             setStatus([
@@ -1779,7 +1782,7 @@ export default function ChatbotPage() {
                             Details to collect — one per line
                         </label>
                         <textarea
-                            value={config.details_to_collect.join('\n')}
+                            value={(config.commercial_video_intake_enabled ? COMMERCIAL_VIDEO_FIELDS.map(field => field.displayLabel) : config.details_to_collect).join('\n')}
                             disabled={config.commercial_video_intake_enabled === true}
                             onChange={(event) => updateConfig({
                                 details_to_collect: event.target.value
@@ -1792,7 +1795,7 @@ export default function ChatbotPage() {
                         />
                         <p className="mt-2 text-xs text-gray-500 font-mono">
                             {config.commercial_video_intake_enabled
-                                ? 'All four fields are required. The bot remembers answers and asks only for missing information after introducing the form.'
+                                ? 'All eight form fields are required. Earlier answers and the chosen video length are prefilled, then the bot asks only for missing information.'
                                 : 'The bot remembers customer-provided values and asks for only one missing detail at a time.'}
                         </p>
 
@@ -2458,7 +2461,7 @@ export default function ChatbotPage() {
                             <div>
                                 <h2 className="font-bold text-base">Test chatbot</h2>
                                 <p className="mt-1 text-xs text-gray-500">Test the current editor settings with the same reply and follow-up logic used in Messenger. This preview does not send messages or change contacts.</p>
-                                {config.commercial_video_intake_enabled && <p className="mt-2 text-xs text-gray-600">Business → sample → duration → pricing and full process → proceed confirmation → form. Pricing, process, and form each stay in one message, with a separate follow-up question.</p>}
+                                {config.commercial_video_intake_enabled && <p className="mt-2 text-xs text-gray-600">Business → sample carousel → video-length choices → pricing and full process → Fill out form button → eight-field form and follow-up question. You can click the buttons below just like in Messenger.</p>}
                             </div>
                         </div>
 
@@ -2626,7 +2629,7 @@ export default function ChatbotPage() {
                                 <div className="flex flex-wrap gap-2">
                                     {Object.entries(testCollectedDetails).map(([key, value]) => (
                                         <span key={key} className="border border-gray-400 bg-gray-50 px-2 py-1 text-[11px]">
-                                            <b>{key}:</b> {value}
+                                            <b>{COMMERCIAL_VIDEO_FIELDS.find(field => field.label === key)?.displayLabel || key}:</b> {value}
                                         </span>
                                     ))}
                                 </div>
@@ -2660,6 +2663,14 @@ export default function ChatbotPage() {
                                                 <p className="mb-1 font-mono text-[9px] font-bold uppercase text-blue-700">{chatMessage.label}</p>
                                             )}
                                             {chatMessage.content && <p className="whitespace-pre-wrap">{chatMessage.content}</p>}
+                                            {chatMessage.buttons?.map(button => (
+                                                <button key={button.payload} type="button" disabled={testing} onClick={() => void testChatbot(button)} className="mt-2 block w-full border-t border-gray-300 px-3 py-2 text-center text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-40">
+                                                    {button.title}
+                                                </button>
+                                            ))}
+                                            {!!chatMessage.quickReplies?.length && <div className="mt-3 flex flex-wrap gap-2" aria-label="Test quick reply options">
+                                                {chatMessage.quickReplies.map(choice => <button key={choice.payload} type="button" disabled={testing} onClick={() => void testChatbot(choice)} className="rounded-full border border-blue-600 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-40">{choice.title}</button>)}
+                                            </div>}
                                             {chatMessage.mediaItems && chatMessage.mediaItems.length > 0 && (
                                                 <MessengerCarouselPreview mediaItems={chatMessage.mediaItems} />
                                             )}

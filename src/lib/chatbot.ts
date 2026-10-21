@@ -22,6 +22,7 @@ import {
     hasCommercialVideoPriceList,
     normalizeCommercialVideoDetails,
     mergeCommercialVideoChatDetails,
+    commercialVideoCustomerTexts,
     normalizeCommercialVideoIntakeConfig,
     type CommercialVideoIntakeAction
 } from '@/lib/chatbot-intake';
@@ -34,6 +35,7 @@ import {
 } from '@/lib/chatbot-policy';
 import { getStructuredCommercialVideoMessages, renderCommercialVideoMessages } from '@/lib/chatbot-message-renderer';
 import { cleanCommercialVideoCopy, commercialVideoFirstName, commercialVideoSalesFlowPrompt, ensureCommercialVideoSampleSelection, getCommercialVideoPricing, hasVerifiedCommercialVideoSample, isCommercialVideoSampleRequested, resolveCommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
+import { getCommercialVideoMessageControls, type ChatbotMessageControls } from '@/lib/chatbot-interactions';
 import { ChatbotFollowUpRepeatedError, hasRepeatedChatbotCopy, splitConversationalCopy } from '@/lib/chatbot-message-copy';
 
 export const DEFAULT_CHATBOT_MODEL = '~deepseek/deepseek-flash-latest';
@@ -146,11 +148,13 @@ export type ChatbotResponse = {
     request_evidence?: string | null;
     request_evidence_message_id?: string | null;
     intake_action?: CommercialVideoIntakeAction;
+    message_controls?: ChatbotMessageControls[];
 };
 
 export type ChatbotFollowUpResponse = {
     message: string;
     messages: string[];
+    message_controls?: ChatbotMessageControls[];
     personalization_basis?: string;
     knowledge: ChatbotKnowledgeMatch[];
     media_document_ids?: string[];
@@ -449,7 +453,7 @@ function parseChatbotPlan(
     existingDetails: Record<string, string>,
     knowledge: ChatbotKnowledgeMatch[],
     intakeContext?: { request: CommercialVideoRequest; requestInput: Parameters<typeof resolveCommercialVideoRequest>[0]; formPreviouslySent: boolean; contactName?: string | null }
-): Pick<ChatbotResponse, 'reply' | 'messages' | 'collected_details' | 'missing_details' | 'details_complete' | 'detected_stop_reason' | 'media_document_ids' | 'media_document_id' | 'drive_file_document_ids' | 'link_document_id' | 'has_clear_request' | 'request_type' | 'request_evidence' | 'request_evidence_message_id' | 'intake_action'> {
+): Pick<ChatbotResponse, 'reply' | 'messages' | 'collected_details' | 'missing_details' | 'details_complete' | 'detected_stop_reason' | 'media_document_ids' | 'media_document_id' | 'drive_file_document_ids' | 'link_document_id' | 'has_clear_request' | 'request_type' | 'request_evidence' | 'request_evidence_message_id' | 'intake_action' | 'message_controls'> {
     let parsed: Record<string, unknown> | null = null;
     const jsonCandidate = content.trim()
         .replace(/^```(?:json)?\s*/i, '')
@@ -469,10 +473,14 @@ function parseChatbotPlan(
     const commercialIntake = isCommercialVideoIntake(config);
     const requestedDetails = commercialIntake ? COMMERCIAL_VIDEO_REQUIRED_DETAILS : normalizeDetailsToCollect(config.details_to_collect);
     const collectedDetails = commercialIntake ? mergeCommercialVideoChatDetails(existingDetails, parsed?.collected_details,
-        [...(intakeContext?.requestInput.history || []).filter(message => message.from?.id !== intakeContext?.requestInput.pageId).map(message => message.message || ''), intakeContext?.requestInput.inboundMessage || '']) : {
+        commercialVideoCustomerTexts(intakeContext?.requestInput.history || [], intakeContext?.requestInput.pageId || '', intakeContext?.requestInput.inboundMessage), intakeContext?.requestInput.inboundMessage) : {
         ...normalizeCollectedChatbotDetails(existingDetails, requestedDetails),
         ...normalizeCollectedChatbotDetails(parsed?.collected_details, requestedDetails)
     };
+    if (commercialIntake && intakeContext) {
+        const duration = resolveCommercialVideoSalesFlow({ ...intakeContext.requestInput, details: collectedDetails }).durationSeconds;
+        if (duration) collectedDetails['Preferred Video Length'] = duration + ' seconds';
+    }
     const missingDetails = commercialIntake ? getMissingCommercialVideoDetails(collectedDetails) : getMissingChatbotDetails(requestedDetails, collectedDetails);
     const requiredDetailCount = getRequiredChatbotDetailCount(
         requestedDetails.length,
@@ -584,6 +592,7 @@ function parseChatbotPlan(
     return {
         reply: messages.join('\n\n'),
         messages,
+        ...(commercialIntake && !detectedStopReason ? { message_controls: getCommercialVideoMessageControls(messages) } : {}),
         collected_details: collectedDetails,
         missing_details: missingDetails,
         details_complete: detailsComplete,
@@ -690,7 +699,7 @@ export function buildChatbotMessages(input: {
         'An explicit answer such as no script is a valid answer; a missing answer is not. ' +
         'Ask at most one natural follow-up question at a time and never ask again for a known detail. ' +
         (commercialIntake && targetReached
-            ? 'All four required fields are complete. The application shows their summary before your next-step clarification or handoff; do not repeat intake questions.'
+            ? 'All eight required fields are complete. The application shows their summary before your next-step clarification or handoff; do not repeat intake questions.'
             : targetReached
             ? 'The collection target is already reached. Answer the current inquiry first, then confirm the next step without asking another sales question.'
             : 'Answer the current inquiry before requesting details. Stop requesting new details as soon as the collection target is reached, then confirm the next step.')
@@ -963,7 +972,7 @@ export async function extractChatbotContactDetails(
         throw new Error('Invalid contact detail extraction');
     }
     const collected = commercialIntake ? mergeCommercialVideoChatDetails(existing, parsed.collected_details,
-        [...(input.history || []).filter(message => message.from?.id !== input.pageId).map(message => message.message || ''), input.inboundMessage])
+        commercialVideoCustomerTexts(input.history || [], input.pageId, input.inboundMessage), input.inboundMessage)
         : { ...existing, ...normalizeCollectedChatbotDetails(parsed.collected_details, requested) };
     return { collected_details: collected, missing_details: commercialIntake ? getMissingCommercialVideoDetails(collected) : getMissingChatbotDetails(requested, collected),
         ...(commercialIntake ? resolveCommercialVideoRequest({ ...input, requestCandidate: parsed }) : {}) };
@@ -1053,7 +1062,7 @@ export async function generateChatbotFollowUp(input: {
     }
 
     const commercialIntake = isCommercialVideoIntake(input.config);
-    const collectedDetails = commercialIntake ? normalizeCommercialVideoDetails(input.collectedDetails) : Object.fromEntries(
+    const collectedDetails = commercialIntake ? mergeCommercialVideoChatDetails(input.collectedDetails, {}, commercialVideoCustomerTexts(input.history || [], input.pageId)) : Object.fromEntries(
         Object.entries(input.collectedDetails || {})
             .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0)
             .map(([key, value]) => [key.trim().slice(0, 80), value.trim().slice(0, 500)])
@@ -1301,6 +1310,7 @@ export async function generateChatbotFollowUp(input: {
             return {
                 message,
                 messages,
+                ...(commercialIntake ? { message_controls: getCommercialVideoMessageControls(messages) } : {}),
                 personalization_basis: personalizationBasis,
                 knowledge,
                 ...(media.length > 0 ? {

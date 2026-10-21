@@ -1,4 +1,4 @@
-import { COMMERCIAL_VIDEO_REQUIRED_DETAILS, containsCommercialVideoForm, getMissingCommercialVideoDetails, normalizeCommercialVideoDetails, renderCommercialVideoForm, type CommercialVideoIntakeAction } from '@/lib/chatbot-intake';
+import { containsCommercialVideoForm, getMissingCommercialVideoDetails, normalizeCommercialVideoDetails, renderCommercialVideoForm, type CommercialVideoIntakeAction } from '@/lib/chatbot-intake';
 import { isRepeatedChatbotCopy, splitConversationalCopy, uniqueChatbotCopy } from '@/lib/chatbot-message-copy';
 import { cleanCommercialVideoCopy, commercialVideoFirstName, isCommercialVideoPriceRequested, personalizeCommercialVideoMessages, type CommercialVideoSalesFlow, type CommercialVideoPricing } from '@/lib/chatbot-sales-flow';
 
@@ -11,7 +11,7 @@ const FREE_OFFER = 'Gusto mo ba ng free concept o free script para dito?';
 export function renderCommercialVideoSummary(details: unknown): string {
     const collected = normalizeCommercialVideoDetails(details);
     if (getMissingCommercialVideoDetails(collected).length) return '';
-    return SUMMARY_PREFIX + '\n' + COMMERCIAL_VIDEO_REQUIRED_DETAILS.map(label => label + ': ' + collected[label].replace(/\s+/g, ' ')).join('\n');
+    return SUMMARY_PREFIX + '\n' + renderCommercialVideoForm(collected).split('\n').slice(2).join('\n');
 }
 
 /** Owner-approved production terms stay complete in one Messenger message. */
@@ -34,7 +34,7 @@ export function renderCommercialVideoProcess(contactName?: string | null, busine
 }
 
 function isSummary(text: string): boolean {
-    return /ito(?: po)? ang summary ng request (?:mo|ninyo):\n/i.test(text) && COMMERCIAL_VIDEO_REQUIRED_DETAILS.every(label => text.includes('\n' + label + ': '));
+    return /ito(?: po)? ang summary ng request (?:mo|ninyo):\n/i.test(text) && /\nPage \/ Social Media Link:/.test(text) && /\nPortrait or Landscape\?/.test(text);
 }
 export function isStructuredCommercialVideoMessage(text: string): boolean {
     return containsCommercialVideoForm(text) || isSummary(text) || /STEP-BY-STEP PROCESS PO:/i.test(text) || /^(?:[^,\n]+,\s*)?PRICING PARA SA /im.test(text);
@@ -49,11 +49,19 @@ function deliverParts(parts: string[], contactName?: string | null, settings: Me
 
 const FIELD_VARIANTS: Record<string, string[]> = {
     'Business Name': ['Ano ang name ng business mo?', 'Anong business name ang ilalagay natin sa request?', 'Ano ang pangalan ng business na gagawan natin ng video?'],
+    'Page / Social Media Link': ['Ano ang link ng page o social media ng business mo?', 'Anong page link ang pwede naming gawing reference?', 'May social media link ka bang maibabahagi, o wala pa kayong page?'],
     'Business Location': ['Saan located ang business mo?', 'Saang city o area ang business mo?', 'Anong location ang ilalagay natin para sa business?'],
     'Goal ng video': ['Ano ang main goal mo para sa video?', 'Ano ang gusto mong ma-achieve sa video?', 'Anong product o service ang gusto mong i-promote sa video?'],
-    'Contact Number': ['Anong contact number ang pwede naming gamitin?', 'Anong number ang pwede naming tawagan tungkol sa request?', 'Saang mobile number ka pwedeng ma-contact ng team?']
+    'Contact Number': ['Anong contact number ang pwede naming gamitin?', 'Anong number ang pwede naming tawagan tungkol sa request?', 'Saang mobile number ka pwedeng ma-contact ng team?'],
+    'Preferred Video Length': ['Ilang seconds ang preferred length ng video mo?', 'May preferred duration ka ba para sa video?', 'Gaano kahabang video ang gusto mo?'],
+    'Preferred Style': ['Anong style ang gusto mo para sa video?', 'May preferred style o peg ka ba para sa video?', 'Anong look o style ang gusto mong sundan natin?'],
+    'Portrait or Landscape?': ['Portrait o landscape ang gusto mong format?', 'Vertical na portrait o horizontal na landscape ang preferred mo?', 'Anong orientation ang pipiliin mo, portrait o landscape?']
 };
 const FIELD_PATTERNS: Record<string, RegExp> = {
+    'Page / Social Media Link': /page.*link|social media|social.*link|facebook|instagram/i,
+    'Preferred Video Length': /length|duration|seconds|segundo|haba|katagal/i,
+    'Preferred Style': /style|look|peg/i,
+    'Portrait or Landscape?': /portrait|landscape|orientation|vertical|horizontal|format/i,
     'Contact Number': /contact number|phone|mobile number|numero|anong\s+number/i,
     'Goal ng video': /goal|objective|layunin|purpose|ma-achieve|para\s+saan.*(?:video|commercial)|i-?promote/i,
     'Business Location': /located|location|lokasyon|saan|address|city|area/i,
@@ -78,8 +86,8 @@ function factualAnswer(parts: string[], contactName?: string | null): string {
         if (/STEP-BY-STEP PROCESS|step.by.step process/i.test(line)) { inProcess = true; continue; }
         if (inProcess && /^\s*(?:\d+[.)]|note:|$)/i.test(line)) continue;
         inProcess = false;
-        if (/^\s*\d+[.)]\s*(?:Business Name|Business Location|Goal ng video|Contact Number)\s*:/i.test(line)) continue;
-        if (/^\s*(?:Business Name|Business Location|Goal ng video|Contact Number)\s*:/i.test(line)) continue;
+        if (/^\s*(?:\d+[.)]\s*)?(?:(?:Business Name|Page \/ Social Media Link|Business Location|Location|Goal ng video|Preferred Video Length|Preferred Style|Contact Number):|Portrait or Landscape\?)/i.test(line)) continue;
+        if (/^Kindly fill out these details:/i.test(line)) continue;
         if (/ito.*summary|pakisagutan|paki.*fill|please.*fill|fill.up.*form|gusto.*(?:free concept|free script)/i.test(line)) continue;
         if (/ipapasa.*team|forward.*team/i.test(line)) continue;
         if (/\b(?:paki\w*|please|send|share|provide|ibigay)\b/i.test(line) && Object.values(FIELD_PATTERNS).some(pattern => pattern.test(line))) continue;
@@ -175,9 +183,8 @@ export function renderCommercialVideoMessages(input: {
             messages.push((name ? name + ', ' + reason[0].toLowerCase() + reason.slice(1) : reason) + '\n\n' + renderCommercialVideoForm(input.details));
         }
         const candidates = input.parts.flatMap(part => cleanCommercialVideoCopy(part, input.contactName).match(/[^.!?\n]+\?/g) || []);
-        const candidate = candidates.find(question => question.length <= 140 && /^(?:ano(?:ng)?|saan(?:g)?|para\s+saan)\b/i.test(question.trim()) && missing.includes(Object.keys(FIELD_PATTERNS).find(field => FIELD_PATTERNS[field].test(question)) || '') &&
-            !recent.some(previous => isRepeatedChatbotCopy(question, previous)) &&
-            !/length|duration|budget|seconds|segundo|katagal|portrait|landscape/i.test(question));
+        const candidate = candidates.find(question => question.length <= 140 && /^(?:ano(?:ng)?|saan(?:g)?|ilang|para\s+saan)\b/i.test(question.trim()) && missing.includes(Object.keys(FIELD_PATTERNS).find(field => FIELD_PATTERNS[field].test(question)) || '') &&
+            !recent.some(previous => isRepeatedChatbotCopy(question, previous)) && !/budget/i.test(question));
         messages.push(candidate?.trim() || nextQuestion(missing, recent, input.details));
     } else {
         const summary = renderCommercialVideoSummary(input.details);
@@ -185,7 +192,8 @@ export function renderCommercialVideoMessages(input: {
         const summarySent = recent.some((text, index) => /ito(?: po)? ang summary ng request (?:mo|ninyo):/i.test(text) &&
             [recent.slice(index, index + 4), recent.slice(Math.max(0, index - 3), index + 1)].some(block =>
                 summaryValues.every(line => block.join('\n').includes(line))));
-        if (!summarySent || input.summaryRequested || flow?.formRequested) messages.push(summary);
+        if (flow?.formRequested) messages.push(COMMERCIAL_VIDEO_FORM_REASON + '\n\n' + renderCommercialVideoForm(input.details));
+        else if (!summarySent || input.summaryRequested) messages.push(summary);
         if (input.action === 'handoff') {
             const free = input.requestType === 'free_concept' ? 'free concept' : input.requestType === 'free_script' ? 'free script' : null;
             messages.push('Ipapasa sa team ang request mo' + (free ? ' para sa ' + free + '. Walang bayad ito.' : ' para sa commercial video.'));
@@ -202,8 +210,8 @@ export function getStructuredCommercialVideoMessages(parts: string[], _settings:
         _settings.splitMessages === false || isStructuredCommercialVideoMessage(part) ? [part.trim()] : splitConversationalCopy(part)).filter(Boolean);
     const joined = parts.join('\n');
     if (!containsCommercialVideoForm(joined)) return null;
-    const first = joined.indexOf('1. Business Name:');
-    const last = joined.indexOf('4. Contact Number:', first);
+    const first = joined.indexOf('Kindly fill out these details:');
+    const last = joined.indexOf('Portrait or Landscape?', first);
     const end = joined.indexOf('\n', last);
     return [joined.slice(0, first).trim(), joined.slice(first, end < 0 ? undefined : end).trim(), end < 0 ? '' : joined.slice(end + 1).trim()].filter(Boolean);
 }

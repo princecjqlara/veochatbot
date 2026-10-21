@@ -2,12 +2,14 @@
 import assert from 'node:assert/strict';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import pg from 'pg';
-import { COMMERCIAL_VIDEO_OWNER_POLICY, COMMERCIAL_VIDEO_OWNER_POLICY_MARKER } from '../src/lib/chatbot-intake.ts';
+import { COMMERCIAL_VIDEO_REQUIRED_DETAILS, COMMERCIAL_VIDEO_OWNER_POLICY, COMMERCIAL_VIDEO_OWNER_POLICY_MARKER } from '../src/lib/chatbot-intake.ts';
 const directory = new URL('../../data/', import.meta.url);
 const files = (await readdir(directory)).filter(name => /^form-summary-policy-backup-\d+\.json$/.test(name)).sort();
 assert.ok(files.length, 'A pre-update settings backup is required');
 const before = JSON.parse(await readFile(new URL(files.at(-1), directory), 'utf8'));
 const expectDisabled = process.argv.includes('--expect-disabled');
+const enabledPageIndex = process.argv.indexOf('--enabled-page');
+const enabledPageId = enabledPageIndex >= 0 ? process.argv[enabledPageIndex + 1] : null;
 const db = new pg.Client({ connectionString: process.argv.includes('--transaction-pooler') ? process.env.DATABASE_POOLER_URL_6543
     : process.env.DATABASE_POOLER_URL_5432 || process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 10000, query_timeout: 20000 });
 await db.connect();
@@ -20,8 +22,10 @@ try {
         const original = before.configs.find(config => config.page_id === row.page_id);
         assert.equal(row.split_messages, true, `${row.name}: split messaging stays enabled`);
         assert.equal(row.max_message_parts, 0, `${row.name}: automatic splitting stays enabled`);
+        assert.deepEqual(row.details_to_collect, COMMERCIAL_VIDEO_REQUIRED_DETAILS, `${row.name}: all eight fields`);
+        assert.equal(row.details_completion_percent, 100);
         if (expectDisabled) assert.equal(row.enabled, false, `${row.name}: owner requested all bots off`);
-        for (const key of Object.keys(original).filter(key => ![...promptKeys, 'fallback_reply', 'policy_revision', 'updated_at'].includes(key))) {
+        for (const key of Object.keys(original).filter(key => ![...promptKeys, 'fallback_reply', 'details_to_collect', 'details_completion_percent', 'policy_revision', 'updated_at'].includes(key))) {
             if (expectDisabled && key === 'enabled') continue;
             assert.deepEqual(row[key] instanceof Date ? row[key].toISOString() : row[key], original[key], `${row.name}: preserve ${key}`);
         }
@@ -45,6 +49,10 @@ try {
         assert.equal((await db.query('SELECT count(*)::integer AS count FROM chatbot_configs WHERE enabled')).rows[0].count, 0);
         assert.equal((await db.query('SELECT count(*)::integer AS count FROM chatbot_inbound_recovery_pages WHERE enabled')).rows[0].count, 0);
         assert.equal((await db.query("SELECT count(*)::integer AS count FROM chatbot_follow_up_jobs WHERE status IN ('pending','processing','ready_manual')")).rows[0].count, 0);
+    }
+    if (enabledPageId) {
+        assert.deepEqual((await db.query('SELECT page_id FROM chatbot_configs WHERE enabled ORDER BY page_id')).rows.map(row => row.page_id), [enabledPageId]);
+        assert.deepEqual((await db.query('SELECT page_id FROM chatbot_inbound_recovery_pages WHERE enabled ORDER BY page_id')).rows.map(row => row.page_id), [enabledPageId]);
     }
     const report = { at: new Date().toISOString(), configured: rows.length, checks, stalePendingReminders: stale, messengerMessagesSent: 0 };
     await writeFile(new URL('form-summary-policy-readback.json', directory), JSON.stringify(report, null, 2));

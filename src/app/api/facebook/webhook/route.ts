@@ -13,6 +13,7 @@ import {
     type ChatbotConfig
 } from '@/lib/chatbot';
 import type { FacebookMessage } from '@/types';
+import { getCommercialVideoMessageControls, resolveChatbotAction } from '@/lib/chatbot-interactions';
 import {
     analyzeInboundCustomerImages,
     createChatbotMediaPublicViewUrl,
@@ -641,11 +642,12 @@ export async function POST(request: NextRequest) {
                         processedContacts += 1;
                         let welcomeMessageSent = false;
                         let conversationHistoryUnavailable = false;
-                        const inboundMessageText = typeof event.message?.text === 'string'
+                        const clickedChatbotAction = resolveChatbotAction(event.message?.quick_reply?.payload || event.postback?.payload);
+                        const inboundMessageText = clickedChatbotAction?.message || (typeof event.message?.text === 'string'
                             ? event.message.text.trim()
                             : typeof event.postback?.title === 'string' && event.postback.title.trim()
                                 ? event.postback.title.trim()
-                                : typeof event.postback?.payload === 'string' ? event.postback.payload.trim() : '';
+                                : typeof event.postback?.payload === 'string' ? event.postback.payload.trim() : '');
                         const inboundImageUrls = getInboundMessengerImageUrls(event.message);
 
                         const inboundChatbotConfig = (eventType === 'message' || eventType === 'postback') &&
@@ -1295,9 +1297,15 @@ export async function POST(request: NextRequest) {
                                                 replyMessages.length > 1 && /\?\s*$/.test(replyMessages[replyMessages.length - 1]);
                                             const sendReplyPart = async (messageIndex: number) => {
                                                 const replyText = replyMessages[messageIndex];
+                                                const controls = isCommercialVideoIntake(chatbotConfig)
+                                                    ? getCommercialVideoMessageControls(replyMessages).find(item => item.message_index === messageIndex) : undefined;
                                                 await checkDelivery();
                                                 const isFinalMessage = messageIndex === replyMessages.length - 1;
-                                                const sendResult = await sendMessage(
+                                                const buttons = [
+                                                    ...(controls?.buttons || []).map(button => ({ type: 'POSTBACK' as const, text: button.title, payload: button.payload })),
+                                                    ...(isFinalMessage && selectedDriveFolder ? [{ type: 'URL' as const, text: selectedDriveFolder.button_text, url: selectedDriveFolder.folder_url }] : [])
+                                                ];
+                                                const sendArgs: Parameters<typeof sendMessage> = [
                                                     pageId,
                                                     page.access_token,
                                                     senderId,
@@ -1306,14 +1314,10 @@ export async function POST(request: NextRequest) {
                                                     undefined,
                                                     undefined,
                                                     undefined,
-                                                    isFinalMessage && selectedDriveFolder
-                                                        ? [{
-                                                            type: 'URL',
-                                                            text: selectedDriveFolder.button_text,
-                                                            url: selectedDriveFolder.folder_url
-                                                        }]
-                                                        : undefined
-                                                );
+                                                    buttons.length ? buttons : undefined
+                                                ];
+                                                if (controls?.quick_replies?.length) sendArgs[10] = controls.quick_replies;
+                                                const sendResult = await sendMessage(...sendArgs);
                                                 lastOutboundMessageId = sendResult.message_id;
 
                                                 await recordOutboundMessageEvent(supabase, {

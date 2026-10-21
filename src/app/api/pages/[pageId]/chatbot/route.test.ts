@@ -52,6 +52,8 @@ vi.mock('@/lib/chatbot-drive-folders', async (importOriginal) => ({
 }));
 
 import { GET, POST, PUT } from './route';
+import { COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
+import { videoPreferences } from '@/lib/__tests__/fixtures/commercial-video';
 
 const savedConfig = {
     page_id: 'page_1',
@@ -101,8 +103,8 @@ function updateBuilder(existingPolicies: Array<{ page_id: string; commercial_vid
     return builder;
 }
 
-const requiredDetails = ['Business Name', 'Business Location', 'Goal ng video', 'Contact Number'];
-const completeForm = { 'Business Name': 'CJ Cafe', 'Business Location': 'Manila', 'Goal ng video': 'Promote our opening', 'Contact Number': '09171234567' };
+const requiredDetails = COMMERCIAL_VIDEO_REQUIRED_DETAILS;
+const completeForm = { ...videoPreferences, 'Business Name': 'CJ Cafe', 'Business Location': 'Manila', 'Goal ng video': 'Promote our opening', 'Contact Number': '09171234567' };
 
 function configRequest(body: unknown, method = 'PUT') {
     return new Request('http://localhost/api/pages/page_1/chatbot', { method,
@@ -331,6 +333,16 @@ describe('chatbot Page-member access', () => {
                 expect.objectContaining({ message: 'I need a haircut', from: expect.objectContaining({ id: 'test-contact' }) })
             ]
         }));
+    });
+
+    it('lets a Test Chat form button open the exact form through the same response generator', async () => {
+        const configBuilder = selectBuilder({ data: { ...savedConfig, commercial_video_intake_enabled: true }, error: null });
+        const pageBuilder = selectBuilder({ data: { name: 'Test Page' }, error: null });
+        mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(table => table === 'chatbot_configs' ? configBuilder : pageBuilder) });
+        mocks.generateChatbotResponse.mockResolvedValue({ reply: 'Form', messages: ['Form', 'Anong business name mo?'], collected_details: {}, knowledge: [] });
+        const response = await POST(configRequest({ action_payload: 'VEO:FORM:2', contact_name: 'CJ Lara' }, 'POST'), { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ inboundMessage: 'Pakisend ng fill-up form.', contactName: 'CJ Lara' }));
     });
 
     it('previews a Human Agent follow-up without scheduling or sending it', async () => {
