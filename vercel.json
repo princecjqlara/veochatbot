@@ -3,7 +3,16 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/cron/chatbot",
+      "schedule": "* * * * *"
+    }
+  ],
   "functions": {
+    "src/app/api/cron/chatbot/route.ts": {
+      "maxDuration": 300
+    },
     "src/app/api/facebook/webhook/route.ts": {
       "maxDuration": 300
     },
