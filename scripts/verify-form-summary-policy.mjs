@@ -26,6 +26,7 @@ try {
         assert.equal(row.details_completion_percent, 100);
         if (expectDisabled) assert.equal(row.enabled, false, `${row.name}: owner requested all bots off`);
         for (const key of Object.keys(original).filter(key => ![...promptKeys, 'fallback_reply', 'details_to_collect', 'details_completion_percent', 'policy_revision', 'updated_at'].includes(key))) {
+            if (enabledPageId && key === 'enabled') { assert.equal(row.enabled, row.page_id === enabledPageId); continue; }
             if (expectDisabled && key === 'enabled') continue;
             assert.deepEqual(row[key] instanceof Date ? row[key].toISOString() : row[key], original[key], `${row.name}: preserve ${key}`);
         }
@@ -45,6 +46,7 @@ try {
         JOIN chatbot_configs c ON c.page_id=j.page_id WHERE c.page_id=ANY($1::uuid[]) AND j.status='pending' AND s.status='active'
         AND j.automation_epoch=s.automation_epoch AND j.policy_revision<>c.policy_revision`, [rows.map(row => row.page_id)])).rows[0].count;
     assert.equal(stale, 0, 'Pending eligible reminders adopt the new policy');
+    assert.deepEqual((await db.query('SELECT page_id FROM chatbot_inbound_recovery_pages WHERE enabled ORDER BY page_id')).rows.map(row => row.page_id), rows.filter(row => row.enabled).map(row => row.page_id).sort(), 'Recovery switches match the saved Page switches');
     if (expectDisabled) {
         assert.equal((await db.query('SELECT count(*)::integer AS count FROM chatbot_configs WHERE enabled')).rows[0].count, 0);
         assert.equal((await db.query('SELECT count(*)::integer AS count FROM chatbot_inbound_recovery_pages WHERE enabled')).rows[0].count, 0);

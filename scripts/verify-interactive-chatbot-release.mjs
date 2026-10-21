@@ -25,7 +25,8 @@ async function request(body) {
     return result;
 }
 const { config } = await request();
-assert.equal(config.enabled, true);
+if (process.argv.includes('--expect-enabled')) assert.equal(config.enabled, true);
+const enabledBefore = checked(await db.from('chatbot_configs').select('page_id,enabled')).filter(row => row.enabled).map(row => row.page_id).sort();
 assert.deepEqual(config.details_to_collect, COMMERCIAL_VIDEO_REQUIRED_DETAILS);
 const conversation = [], turns = [];
 let details = {};
@@ -74,7 +75,8 @@ assert.equal(complete.reply.intake_action, 'clarify_next_step');
 const handoff = await turn('Gusto ko ng commercial video, mag-proceed na tayo.');
 assert.equal(handoff.reply.intake_action, 'handoff');
 const enabled = checked(await db.from('chatbot_configs').select('page_id,enabled')).filter(row => row.enabled);
-assert.deepEqual(enabled.map(row => row.page_id), [page.id]);
-const report = { at: new Date().toISOString(), origin, page: page.name, passed: true, turns, followUpPassed: true, enabled: true, otherBotsEnabled: 0, databaseWrites: 0, messengerMessagesSent: 0 };
+assert.deepEqual(enabled.map(row => row.page_id).sort(), enabledBefore, 'Admin previews preserve Page switches');
+const otherBotsEnabled = enabled.filter(row => row.page_id !== page.id).length;
+const report = { at: new Date().toISOString(), origin, page: page.name, passed: true, turns, followUpPassed: true, enabled: config.enabled, otherBotsEnabled, databaseWrites: 0, messengerMessagesSent: 0 };
 await writeFile(new URL('../../data/interactive-chatbot-production-check-2026-10-21.json', import.meta.url), JSON.stringify(report, null, 2));
-console.log(JSON.stringify({ passed: true, turns: turns.length, followUpPassed: true, enabled: true, otherBotsEnabled: 0, databaseWrites: 0, messengerMessagesSent: 0 }));
+console.log(JSON.stringify({ passed: true, turns: turns.length, followUpPassed: true, enabled: config.enabled, otherBotsEnabled, databaseWrites: 0, messengerMessagesSent: 0 }));
