@@ -88,6 +88,14 @@ describe('natural commercial-video replies and intact structured messages', () =
         expect(messages.some(containsCommercialVideoForm)).toBe(false); expect(messages).toHaveLength(1); expect(messages[0]).toMatch(/page|social/i);
     });
     it('resends a prefilled form on explicit request', () => expect(render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, salesFlow: flow('form', { formRequested: true }) })[0]).toContain('Business Name: CJ Bakery'));
+    it('reopens every field after completion instead of substituting a summary', () => {
+        const messages = render({ details: complete, formPreviouslySent: true, salesFlow: flow('complete', { formRequested: true }), action: 'clarify_next_step' });
+        expect(messages.filter(containsCommercialVideoForm)).toHaveLength(1);
+        expect(messages[0]).toContain(renderCommercialVideoForm(complete));
+        expect(messages[0]).not.toContain('Ito ang summary');
+        expect(messages.at(-1)).toMatch(/\?$/);
+        expect(formatChatbotReplyMessages(messages, { split_messages: true, max_message_parts: 1 })).toEqual(messages);
+    });
     it('allows a useful prefilled form reminder without a resend request and explains the free concept', () => {
         const messages = render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, repeatForm: true, salesFlow: flow('form') });
         expect(messages.find(containsCommercialVideoForm)).toContain('free concept');

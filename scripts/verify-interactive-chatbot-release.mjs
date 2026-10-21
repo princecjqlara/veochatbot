@@ -28,6 +28,32 @@ const { config } = await request();
 if (process.argv.includes('--expect-enabled')) assert.equal(config.enabled, true);
 const enabledBefore = checked(await db.from('chatbot_configs').select('page_id,enabled')).filter(row => row.enabled).map(row => row.page_id).sort();
 assert.deepEqual(config.details_to_collect, COMMERCIAL_VIDEO_REQUIRED_DETAILS);
+const dashboard = await fetch(origin + '/dashboard/chatbot', { headers, signal: AbortSignal.timeout(20000) });
+assert.equal(dashboard.status, 200);
+const html = await dashboard.text();
+const chunk = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(match => match[1]).find(src => src.includes('/app/dashboard/chatbot/page-'));
+assert.ok(chunk, 'Dashboard client bundle is present');
+const chunkUrl = new URL(chunk, origin);
+assert.equal(chunkUrl.origin, origin);
+const bundleResponse = await fetch(chunkUrl, { signal: AbortSignal.timeout(20000) });
+assert.equal(bundleResponse.status, 200);
+const bundle = await bundleResponse.text();
+for (const marker of ['Open full intake form', 'Test quick reply options', 'action_payload', 'VEO:FORM:2', 'Messenger sample card']) {
+    assert.ok(bundle.includes(marker), 'Deployed Test Chat includes ' + marker);
+}
+console.log(JSON.stringify({ dashboardBundleVerified: true }));
+function assertWholeForm(reply) {
+    const formBlocks = reply.messages.filter(containsCommercialVideoForm);
+    assert.equal(formBlocks.length, 1, 'One complete form must be visible in a single bubble');
+    for (const field of COMMERCIAL_VIDEO_FIELDS) assert.ok(formBlocks[0].includes(field.displayLabel));
+    assert.ok(reply.messages.indexOf(formBlocks[0]) < reply.messages.length - 1, 'The form needs a separate follow-up bubble');
+    assert.match(reply.messages.at(-1), /\?$/);
+    assert.equal(reply.has_clear_request, false, 'Opening the form is not purchase consent');
+    return formBlocks[0];
+}
+const directForm = await request({ action_payload: COMMERCIAL_FORM_PAYLOAD, history: [], collected_details: {}, contact_name: 'Miguel Reyes', draft_config: config });
+assertWholeForm(directForm);
+console.log(JSON.stringify({ directFormPassed: true, emptyComposer: true, fullForm: true }));
 const conversation = [], turns = [];
 let details = {};
 async function turn(message, action_payload) {
@@ -59,11 +85,7 @@ for (let step = 1; step <= 7; step++) assert.ok(productionProcess?.includes('\n'
 assert.match(productionProcess, /PHP150[\s\S]*FREE poster ads[\s\S]*PHP100/);
 assert.equal(pricing.messages.at(-1).buttons[0].payload, COMMERCIAL_FORM_PAYLOAD);
 const form = await turn('Fill out form', COMMERCIAL_FORM_PAYLOAD);
-const formBlocks = form.reply.messages.filter(containsCommercialVideoForm);
-assert.equal(formBlocks.length, 1);
-for (const field of COMMERCIAL_VIDEO_FIELDS) assert.ok(formBlocks[0].includes(field.displayLabel));
-assert.ok(formBlocks[0].includes('Preferred Video Length: 30 seconds'));
-assert.equal(form.reply.has_clear_request, false, 'Opening the form is not purchase consent');
+assert.ok(assertWholeForm(form.reply).includes('Preferred Video Length: 30 seconds'));
 const partial = await turn('Page / Social Media Link: https://example.com/preview-bakery\nLocation: Manila\nGoal ng Video: i-promote ang fresh bread\nPreferred Style: Cinematic\nContact Number: 09171234567');
 assert.equal(partial.reply.details_complete, false);
 assert.deepEqual(partial.reply.missing_details, ['Portrait or Landscape?']);
@@ -72,11 +94,15 @@ const complete = await turn('Portrait', 'VEO:ORIENTATION:PORTRAIT');
 assert.equal(complete.reply.details_complete, true);
 assert.equal(complete.reply.has_clear_request, false, 'A completed form still needs explicit output consent');
 assert.equal(complete.reply.intake_action, 'clarify_next_step');
+const reopened = await request({ action_payload: COMMERCIAL_FORM_PAYLOAD, history: getChatbotTestHistory(conversation), collected_details: details, contact_name: 'Miguel Reyes', draft_config: config });
+const reopenedForm = assertWholeForm(reopened);
+for (const field of COMMERCIAL_VIDEO_FIELDS) assert.ok(reopenedForm.includes(details[field.label]), 'Reopened form retains ' + field.displayLabel);
+console.log(JSON.stringify({ completedFormReopenPassed: true, fullForm: true }));
 const handoff = await turn('Gusto ko ng commercial video, mag-proceed na tayo.');
 assert.equal(handoff.reply.intake_action, 'handoff');
 const enabled = checked(await db.from('chatbot_configs').select('page_id,enabled')).filter(row => row.enabled);
 assert.deepEqual(enabled.map(row => row.page_id).sort(), enabledBefore, 'Admin previews preserve Page switches');
 const otherBotsEnabled = enabled.filter(row => row.page_id !== page.id).length;
-const report = { at: new Date().toISOString(), origin, page: page.name, passed: true, turns, followUpPassed: true, enabled: config.enabled, otherBotsEnabled, databaseWrites: 0, messengerMessagesSent: 0 };
+const report = { at: new Date().toISOString(), origin, page: page.name, passed: true, turns, dashboardBundleVerified: true, directFormPassed: true, completedFormReopenPassed: true, followUpPassed: true, enabled: config.enabled, otherBotsEnabled, databaseWrites: 0, messengerMessagesSent: 0 };
 await writeFile(new URL('../../data/interactive-chatbot-production-check-2026-10-21.json', import.meta.url), JSON.stringify(report, null, 2));
-console.log(JSON.stringify({ passed: true, turns: turns.length, followUpPassed: true, enabled: config.enabled, otherBotsEnabled, databaseWrites: 0, messengerMessagesSent: 0 }));
+console.log(JSON.stringify({ passed: true, turns: turns.length, dashboardBundleVerified: true, directFormPassed: true, completedFormReopenPassed: true, followUpPassed: true, enabled: config.enabled, otherBotsEnabled, databaseWrites: 0, messengerMessagesSent: 0 }));

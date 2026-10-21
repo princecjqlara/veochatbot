@@ -1,6 +1,7 @@
 export type ChatbotChoice = { title: string; payload: string };
 export type ChatbotMessageControls = { message_index: number; buttons?: ChatbotChoice[]; quick_replies?: ChatbotChoice[] };
 export const COMMERCIAL_FORM_PAYLOAD = 'VEO:FORM:2';
+export const COMMERCIAL_FORM_CHOICE: ChatbotChoice = { title: 'Fill out form', payload: COMMERCIAL_FORM_PAYLOAD };
 export const COMMERCIAL_DURATION_CHOICES: ChatbotChoice[] = [16, 20, 24, 30, 60].map(seconds => ({
     title: seconds === 60 ? '1 min' : `${seconds}s`, payload: `VEO:DURATION:${seconds}`
 }));
@@ -27,7 +28,7 @@ export function getCommercialVideoMessageControls(messages: string[]): ChatbotMe
         { title: 'Portrait', payload: 'VEO:ORIENTATION:PORTRAIT' }, { title: 'Landscape', payload: 'VEO:ORIENTATION:LANDSCAPE' }
     ] }];
     if (/proceed|simulan|ready.*form|sagutan.*form|(?:send|masend|ibigay).*form/i.test(question)) {
-        return [{ message_index, buttons: [{ title: 'Fill out form', payload: COMMERCIAL_FORM_PAYLOAD }] }];
+        return [{ message_index, buttons: [COMMERCIAL_FORM_CHOICE] }];
     }
     return [];
 }

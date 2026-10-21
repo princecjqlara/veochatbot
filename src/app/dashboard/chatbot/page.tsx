@@ -32,7 +32,7 @@ import {
 import { getSupabaseClient } from '@/lib/supabase';
 import { COMMERCIAL_VIDEO_FIELDS, COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
 import { buildChatbotTestMessages, getChatbotTestHistory, type TestChatMessage, type TestMedia, type TestSource } from '@/lib/chatbot-test-preview';
-import { resolveChatbotAction, type ChatbotChoice } from '@/lib/chatbot-interactions';
+import { COMMERCIAL_FORM_CHOICE, resolveChatbotAction, type ChatbotChoice } from '@/lib/chatbot-interactions';
 
 type PageSummary = {
     id: string;
@@ -748,7 +748,7 @@ export default function ChatbotPage() {
         setError('');
         setStatus('');
         if (!choice) setTestMessage('');
-        setTestConversation((current) => [...current.map(entry => ({ ...entry, quickReplies: undefined })), userMessage]);
+        setTestConversation((current) => [...current, userMessage]);
         try {
             const response = await fetch('/api/pages/' + selectedPageId + '/chatbot', {
                 method: 'POST',
@@ -768,7 +768,7 @@ export default function ChatbotPage() {
                 idPrefix: `assistant-${Date.now()}`,
                 commercialVideoIntake: config?.commercial_video_intake_enabled
             });
-            setTestConversation((current) => [...current, ...assistantMessages]);
+            setTestConversation((current) => [...current.map(entry => ({ ...entry, quickReplies: undefined })), ...assistantMessages]);
             setTestCollectedDetails(body.collected_details || {});
             setTestTokenUsage(body.token_usage || null);
             setStatus([
@@ -2559,6 +2559,18 @@ export default function ChatbotPage() {
                         </div>
 
                         <div className="mb-3 flex flex-wrap justify-end gap-2">
+                            {config.commercial_video_intake_enabled && (
+                                <button
+                                    type="button"
+                                    onClick={() => void testChatbot(COMMERCIAL_FORM_CHOICE)}
+                                    disabled={testing || !providerConfigured || !selectedPageId}
+                                    aria-label="Open full intake form"
+                                    className="btn-wireframe flex items-center justify-center gap-2 bg-white px-3 py-2 text-xs disabled:opacity-40"
+                                >
+                                    <FileText className="h-3.5 w-3.5" />
+                                    Fill out form
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 onClick={previewTestCarousel}
