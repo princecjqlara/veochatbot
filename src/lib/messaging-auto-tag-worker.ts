@@ -3,11 +3,13 @@ import {
     classifyMessengerHistoryMessage,
     findLatestMessengerSystemSignal,
     findLatestMessengerLeadStageEvent,
+    getMessengerHandoffMetadata,
     type MessengerSystemSignal,
     type MessengerHistoryMessage
 } from '@/lib/messaging-auto-tag';
 import {
     getChatbotContactState,
+    getChatbotHandoffOptions,
     saveChatbotContactState
 } from '@/lib/chatbot-control';
 import { getSupabaseAdmin } from '@/lib/supabase';
@@ -185,17 +187,20 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
             // Stop first. Optional tags and interruption logs must never gate
             // the durable stop or let a queued follow-up continue.
             const existingState = await getChatbotContactState(db, current.id, contact.id);
-            const handoffOptions = { humanHandoffSince: existingState?.started_at || contact.last_inbound_at || runStartedAt };
+            const handoffOptions = getChatbotHandoffOptions(existingState, contact.last_inbound_at || runStartedAt);
             signals = [...new Set(messages
                 .map(message => classifyMessengerHistoryMessage(message, current.fb_page_id, handoffOptions))
                 .filter((signal): signal is MessengerSystemSignal => signal !== null))];
             if (signals.length === 0) continue;
             const stopSignal = findLatestMessengerSystemSignal(messages, current.fb_page_id, handoffOptions);
             if (stopSignal) {
-                if (existingState?.status !== 'stopped' || existingState.stop_reason !== stopSignal) {
+                const handoffMetadata = getMessengerHandoffMetadata(messages, current.fb_page_id, handoffOptions);
+                if (existingState?.status !== 'stopped' || existingState.stop_reason !== stopSignal ||
+                    (handoffMetadata.humanActivityAt && Date.parse(handoffMetadata.humanActivityAt) > (Date.parse(existingState.last_human_activity_at || '') || 0))) {
                     await saveChatbotContactState(db, {
                         pageId: current.id, contactId: contact.id, existingState,
-                        stopReason: stopSignal
+                        stopReason: stopSignal,
+                        ...handoffMetadata
                     });
                     chatbotStopped++;
                 }
@@ -211,7 +216,7 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
             }
 
             try {
-                const leadStageEvent = findLatestMessengerLeadStageEvent(messages, current.fb_page_id);
+                const leadStageEvent = findLatestMessengerLeadStageEvent(messages, current.fb_page_id, handoffOptions);
                 if (leadStageEvent) {
                     await recordChatbotInterruptionIfNeeded(db, {
                         pageId: current.id,

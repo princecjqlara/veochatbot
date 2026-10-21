@@ -44,8 +44,9 @@ describe('chatbot conversation controls', () => {
     });
 
     it('keeps a stopped state and original handoff time when saving late answers', async () => {
-        const upsert = vi.fn().mockResolvedValue({ error: null });
-        await saveChatbotContactState({ from: () => ({ upsert }) }, {
+        const chain: any = { update: vi.fn(() => chain), eq: vi.fn(() => chain),
+            then: (resolve: any) => Promise.resolve({ error: null }).then(resolve) };
+        await saveChatbotContactState({ from: () => chain }, {
             pageId: 'page-1', contactId: 'contact-1',
             existingState: {
                 status: 'stopped', stop_reason: 'qualified', stopped_at: '2026-10-01T00:00:00Z',
@@ -54,10 +55,12 @@ describe('chatbot conversation controls', () => {
             collectedDetails: { Deadline: 'Friday' }, missingDetails: [],
             now: new Date('2026-10-07T00:00:00Z')
         });
-        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+        expect(chain.update).toHaveBeenCalledWith(expect.objectContaining({
             status: 'stopped', stop_reason: 'qualified', stopped_at: '2026-10-01T00:00:00Z',
             collected_details: { Script: 'No script', Deadline: 'Friday' }
-        }), expect.anything());
+        }));
+        expect(chain.eq).toHaveBeenCalledWith('status', 'stopped');
+        expect(chain.eq).toHaveBeenCalledWith('stop_reason', 'qualified');
     });
 
     it('only updates active rows when saving from an older active snapshot', async () => {

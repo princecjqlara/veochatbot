@@ -49,13 +49,15 @@ export function isContactPipelineStage(value: unknown): value is ContactPipeline
 }
 
 /** Contacts in these stages have finished the bot qualification flow. */
-export function isPipelineClosedForAutomation(value: unknown, source?: unknown): boolean {
+export function isPipelineClosedForAutomation(value: unknown, source?: unknown, policy?: { commercial_video_intake_enabled?: boolean }): boolean {
     return source === 'manual' || source === 'messenger' ||
-        (isContactPipelineStage(value) && AUTOMATION_CLOSED_STAGES.has(value));
+        (!(policy?.commercial_video_intake_enabled && source === 'chatbot' && value === 'qualified') &&
+        (isContactPipelineStage(value) && AUTOMATION_CLOSED_STAGES.has(value)));
 }
 
-export function chatbotStopReasonForPipelineStage(stage: unknown, source?: unknown): ChatbotStopReason | null {
+export function chatbotStopReasonForPipelineStage(stage: unknown, source?: unknown, policy?: { commercial_video_intake_enabled?: boolean }): ChatbotStopReason | null {
     if (stage === 'opted_out') return 'opt_out';
+    if (stage === 'qualified' && policy?.commercial_video_intake_enabled && source === 'chatbot') return null;
     if (stage === 'qualified' || stage === 'order_created' || stage === 'converted' || stage === 'not_qualified') return stage;
     return source === 'manual' || source === 'messenger' ? 'manual' : null;
 }

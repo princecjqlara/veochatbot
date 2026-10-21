@@ -19,7 +19,9 @@ export async function stopChatbotForManualReply(input: {
     if (!contactResult.data) throw new Error('Contact unavailable before manual handoff');
     await saveChatbotContactState(supabase, {
         pageId, contactId, existingState: state,
-        stopReason: state?.status === 'stopped' ? state.stop_reason || 'manual' : 'manual'
+        stopReason: state?.status === 'stopped' && state.stop_reason !== 'details_collected' ? state.stop_reason || 'manual' : 'manual',
+        pauseKind: state?.pause_kind === 'explicit_hold' ? 'explicit_hold' : 'human_takeover',
+        humanActivityAt: new Date().toISOString()
     });
     await cancelPendingChatbotFollowUps({
         supabase, pageId, contactId, reason: 'Staff replied in VeoBot', exceptJobId: input.followUpJobId || undefined

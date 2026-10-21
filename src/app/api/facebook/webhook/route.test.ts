@@ -256,6 +256,14 @@ function createPhotoChatbotSupabaseMock(options: {
     attributionError?: string;
     knowledgeSource?: string;
     activeState?: boolean;
+    historyResetAt?: string;
+    detailTarget?: number;
+    commercialVideo?: boolean;
+    savedRequest?: boolean;
+    savedRequestType?: 'commercial_video' | 'free_concept' | 'free_script' | null;
+    savedRequestEvidence?: string | null;
+    automationEpoch?: number;
+    collectedDetails?: Record<string, string>;
 } = {}) {
     const pipelineStage = options.pipelineStage || 'engaged';
     const followUpCancelLt = vi.fn();
@@ -298,7 +306,9 @@ function createPhotoChatbotSupabaseMock(options: {
         stop_on_qualified: true,
         stop_on_not_qualified: true,
         stop_on_converted: true,
-        stop_on_order_created: true
+        stop_on_order_created: true,
+        commercial_video_intake_enabled: options.commercialVideo || false,
+        policy_revision: 1
     };
 
     const from = vi.fn((table: string) => {
@@ -378,8 +388,15 @@ function createPhotoChatbotSupabaseMock(options: {
                                     collected_details: { address: 'Saved address' },
                                     missing_details: [], started_at: '2026-10-04T09:00:00Z'
                                 } : options.activeState ? {
-                                    status: 'active', collected_details: {}, missing_details: ['Name', 'Budget'],
-                                    started_at: '2026-10-04T09:00:00Z'
+                                    status: 'active', collected_details: options.collectedDetails || {}, missing_details: ['Name', 'Budget'],
+                                    detail_collection_target: options.detailTarget,
+                                    window_expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+                                    started_at: '2026-10-04T09:00:00Z',
+                                    has_clear_request: options.savedRequest,
+                                    request_type: options.savedRequestType,
+                                    request_evidence: options.savedRequestEvidence,
+                                    automation_epoch: options.automationEpoch,
+                                    messenger_history_reset_at: options.historyResetAt
                                 } : null,
                                 error: null
                             })
@@ -423,7 +440,7 @@ function createPhotoChatbotSupabaseMock(options: {
         throw new Error(`Unexpected table: ${table}`);
     });
 
-    return { from, welcomeSelect, contactStateUpsert, replyEventUpdate, outboundEventsUpsert, followUpCancelLt };
+    return { from, welcomeSelect, contactStateUpsert, replyEventUpdate, outboundEventsUpsert, followUpCancelLt, chatbotConfig };
 }
 
 function createCustomerPhotoRequest(text?: string) {
@@ -1101,6 +1118,55 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.sendMessage).not.toHaveBeenCalled();
     });
 
+    it('uses the raised per-contact target for a resumed intake reply', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({ activeState: true, detailTarget: 6 });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        await POST(createCustomerPhotoRequest('My video deadline is Friday'));
+        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ detailTargetCount: 6 }));
+    });
+
+    it.each([
+        [false, false, false], [false, true, false], [true, false, false], [true, true, true]
+    ])('commercial form complete=%s request=%s stops only when both are true (%s)', async (formComplete, hasRequest, stops) => {
+        const details = { 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote bread', ...(formComplete ? { 'Contact Number': '09171234567' } : {}) };
+        const supabase = createPhotoChatbotSupabaseMock({ commercialVideo: true });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.generateChatbotResponse.mockResolvedValueOnce({
+            reply: 'Salamat po.', messages: ['Salamat po.'], knowledge: [], collected_details: details,
+            missing_details: formComplete ? [] : ['Contact Number'], details_complete: formComplete,
+            has_clear_request: hasRequest, request_type: hasRequest ? 'free_concept' : null,
+            request_evidence: hasRequest ? 'Free concept please' : null
+        });
+        const response = await POST(createCustomerPhotoRequest('Details po'));
+        expect(response.status).toBe(200);
+        expect(supabase.chatbotConfig.stop_when_details_collected).toBe(false);
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(supabase.contactStateUpsert).toHaveBeenLastCalledWith(expect.objectContaining({
+            status: stops ? 'stopped' : 'active', stop_reason: stops ? 'details_collected' : null,
+            has_clear_request: hasRequest, collected_details: details,
+            ...(stops ? { pause_kind: 'ready_for_team' } : {})
+        }), expect.anything());
+    });
+
+    it('passes saved commercial request evidence into generation and preserves it when collecting missing details', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({ commercialVideo: true, activeState: true,
+            savedRequest: true, savedRequestType: 'free_script', savedRequestEvidence: 'Free script please', automationEpoch: 3,
+            collectedDetails: { 'Business Name': 'CJ Bakery' } });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.generateChatbotResponse.mockResolvedValueOnce({ reply: 'Ano pong location?', messages: ['Ano pong location?'], knowledge: [],
+            collected_details: { 'Business Name': 'CJ Bakery' }, missing_details: ['Business Location', 'Goal ng video', 'Contact Number'], details_complete: false,
+            has_clear_request: true, request_type: 'free_script', request_evidence: 'Free script please' });
+        await POST(createCustomerPhotoRequest('CJ Bakery po'));
+        expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({
+            hasClearRequest: true, requestType: 'free_script', requestEvidence: 'Free script please',
+            collectedDetails: { 'Business Name': 'CJ Bakery' }
+        }));
+        expect(supabase.contactStateUpsert).toHaveBeenLastCalledWith(expect.objectContaining({
+            status: 'active', stop_reason: null, has_clear_request: true, request_type: 'free_script'
+        }), expect.anything());
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
     it('saves late customer answers after handoff without replying or restarting the bot', async () => {
         const supabase = createPhotoChatbotSupabaseMock({
             pipelineStage: 'qualified', pipelineSource: 'messenger', stopReason: 'qualified',
@@ -1262,9 +1328,28 @@ describe('POST /api/facebook/webhook', () => {
         }), expect.anything());
     });
 
+    it('delivers a commercial sample card before its follow-up question', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({ commercialVideo: true }));
+        mocks.generateChatbotResponse.mockResolvedValueOnce({
+            messages: ['CJ, ito ang existing bakery sample namin.', 'Ilang seconds ang gusto mo para sa video?'],
+            collected_details: {}, missing_details: [], details_complete: false, drive_file_document_ids: ['drive-doc']
+        });
+        mocks.getReadyChatbotDriveFilesForDocuments.mockResolvedValueOnce([{
+            name: 'Bakery sample', media_type: 'video', web_view_url: 'https://drive.google.com/sample', drive_file_id: 'drive-file'
+        }]);
+        mocks.sendMessengerGenericCarousel.mockResolvedValueOnce({ message_id: 'sample-card' });
+        expect((await POST(createCustomerPhotoRequest())).status).toBe(200);
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(2);
+        const textOrder = mocks.sendMessage.mock.invocationCallOrder;
+        const cardOrder = mocks.sendMessengerGenericCarousel.mock.invocationCallOrder[0];
+        expect(textOrder[0]).toBeLessThan(cardOrder);
+        expect(textOrder[1]).toBeGreaterThan(cardOrder);
+        expect(mocks.sendMessage.mock.calls[1][3]).toMatch(/\?$/);
+    });
+
     it('stops remaining reply bubbles when Messenger sets the stage after the first bubble', async () => {
         mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock());
-        mocks.generateChatbotResponse.mockResolvedValueOnce({ messages: ['First', 'Second'], collected_details: {}, missing_details: [], details_complete: false });
+        mocks.generateChatbotResponse.mockResolvedValueOnce({ messages: ['What business is the video for?', 'The complete form', 'Free concept or free script'], collected_details: {}, missing_details: [], details_complete: false });
         mocks.sendMessage.mockImplementationOnce(async () => {
             mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{ message: 'Lead stage set to Converted', from: { id: 'fb_page_1' } }] } });
             return { message_id: 'first-sent' };
@@ -1273,6 +1358,40 @@ describe('POST /api/facebook/webhook', () => {
         expect(response.status).toBe(200);
         expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
     });
+
+    it('delivers the conversational question, intact form, and free offer in order', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock());
+        const messages = ['What business is the video for?', '1. Business Name:\n2. Business Location:\n3. Goal ng video:\n4. Contact Number:', 'Free concept or free script po.'];
+        mocks.generateChatbotResponse.mockResolvedValueOnce({ messages, collected_details: {}, missing_details: [], details_complete: false });
+        expect((await POST(createCustomerPhotoRequest())).status).toBe(200);
+        expect(mocks.sendMessage.mock.calls.map(call => call[3])).toEqual(messages);
+    });
+
+    it('replies after an explicit reset even when Messenger returns the old Not qualified notice', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({ activeState: true, historyResetAt: '2026-10-17T07:14:46Z' });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.getConversationForPsid.mockResolvedValue({ messages: { data: [{
+            id: 'old-disqualification', message: 'Lead stage set to Not qualified', from: { id: 'fb_page_1' },
+            created_time: '2025-09-15T19:37:44Z'
+        }] } });
+        mocks.generateChatbotResponse.mockResolvedValueOnce({ messages: ['Which business is this for?'], collected_details: {}, missing_details: [], details_complete: false });
+        expect((await POST(createCustomerPhotoRequest())).status).toBe(200);
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(supabase.contactStateUpsert).not.toHaveBeenCalledWith(expect.objectContaining({ stop_reason: 'not_qualified' }), expect.anything());
+    });
+
+    it.each([['2025-09-15T19:37:44Z', false], ['2026-10-17T07:15:00Z', true]])(
+        'handles a stage echo dated %s after an explicit reset', async (at, shouldStop) => {
+            const supabase = createPhotoChatbotSupabaseMock({ activeState: true, historyResetAt: '2026-10-17T07:14:46Z' });
+            mocks.getSupabaseAdmin.mockReturnValue(supabase);
+            const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+                sender: { id: 'fb_page_1' }, recipient: { id: 'contact_psid_1' }, timestamp: Date.parse(String(at)),
+                message: { mid: 'stage-echo', text: 'Lead stage set to Not qualified', is_echo: true }
+            }] }] }));
+            expect(response.status).toBe(200);
+            expect(supabase.contactStateUpsert.mock.calls.some(call => call[0].stop_reason === 'not_qualified')).toBe(shouldStop);
+            expect(mocks.sendMessage).not.toHaveBeenCalled();
+        });
 
     it('cancels delivery if a saved stage changes while the last Messenger read is in flight', async () => {
         const options = { deliveryStage: 'engaged', pipelineSource: 'chatbot' };

@@ -5,7 +5,9 @@ const mocks = vi.hoisted(() => ({
     getSupabaseAdmin: vi.fn(),
     processDueFollowUpAutomationSteps: vi.fn(),
     processDueChatbotFollowUps: vi.fn(),
-    processOneMessagingAutoTagPage: vi.fn()
+    processOneMessagingAutoTagPage: vi.fn(),
+    recoverMissingChatbotMessages: vi.fn(),
+    processChatbotContinuationReviews: vi.fn()
 }));
 
 vi.mock('@/lib/supabase', () => ({
@@ -23,6 +25,8 @@ vi.mock('@/lib/chatbot-follow-ups', () => ({
 vi.mock('@/lib/messaging-auto-tag-worker', () => ({
     processOneMessagingAutoTagPage: mocks.processOneMessagingAutoTagPage
 }));
+vi.mock('@/lib/chatbot-inbound-recovery', () => ({ recoverMissingChatbotMessages: mocks.recoverMissingChatbotMessages }));
+vi.mock('@/lib/chatbot-continuation', () => ({ processChatbotContinuationReviews: mocks.processChatbotContinuationReviews }));
 
 import { GET } from './route';
 
@@ -33,6 +37,8 @@ describe('GET /api/cron/follow-up-automations', () => {
         mocks.processDueFollowUpAutomationSteps.mockResolvedValue({ processed: 0 });
         mocks.processDueChatbotFollowUps.mockResolvedValue({ checked: 0, sent: 0 });
         mocks.processOneMessagingAutoTagPage.mockResolvedValue({ pages: 1, conversations: 0, tagged: 0 });
+        mocks.recoverMissingChatbotMessages.mockResolvedValue({ recovered: 0 });
+        mocks.processChatbotContinuationReviews.mockResolvedValue({ reviewed: 0 });
     });
 
     it('uses the existing minute cron invocation to continue campaigns', async () => {
@@ -61,6 +67,9 @@ describe('GET /api/cron/follow-up-automations', () => {
 
     it('processes follow-ups before invoking the potentially slow campaign worker', async () => {
         const callOrder: string[] = [];
+        mocks.recoverMissingChatbotMessages.mockImplementation(async () => {
+            callOrder.push('recovery'); return { recovered: 0 };
+        });
         mocks.processOneMessagingAutoTagPage.mockImplementation(async () => {
             callOrder.push('stages');
             return { pages: 1 };
@@ -81,7 +90,7 @@ describe('GET /api/cron/follow-up-automations', () => {
             'https://veobot.vercel.app/api/cron/follow-up-automations'
         ) as NextRequest);
 
-        expect(callOrder).toEqual(['stages', 'follow-ups', 'campaigns']);
+        expect(callOrder).toEqual(['recovery', 'stages', 'follow-ups', 'campaigns']);
         expect(mocks.processOneMessagingAutoTagPage).toHaveBeenCalledWith({ chatbotOnly: true });
     });
 
@@ -98,6 +107,15 @@ describe('GET /api/cron/follow-up-automations', () => {
             ok: false,
             retryable: true
         }));
+        expect(mocks.processDueFollowUpAutomationSteps).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues ordinary follow-ups when recovery reads fail', async () => {
+        mocks.recoverMissingChatbotMessages.mockRejectedValue(new Error('Meta temporarily unavailable'));
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ success: true }));
+        const response = await GET(new Request('https://veobot.vercel.app/api/cron/follow-up-automations') as NextRequest);
+        expect(response.status).toBe(200);
+        expect((await response.json()).inboundRecovery.failed).toBe(true);
         expect(mocks.processDueFollowUpAutomationSteps).toHaveBeenCalledTimes(1);
     });
 });

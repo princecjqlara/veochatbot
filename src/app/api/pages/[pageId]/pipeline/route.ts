@@ -145,7 +145,9 @@ export async function PATCH(
         await saveChatbotContactState(db, {
             pageId, contactId,
             existingState: await getChatbotContactState(db, pageId, contactId),
-            stopReason: chatbotStopReasonForPipelineStage(body.stage, 'manual')
+            stopReason: chatbotStopReasonForPipelineStage(body.stage, 'manual'),
+            pauseKind: 'explicit_hold',
+            humanActivityAt: new Date().toISOString()
         });
         await cancelPendingChatbotFollowUps({ supabase: db, pageId, contactId, reason: 'Lead stage set by a person' });
         await updateContactPipelineStage(db, {

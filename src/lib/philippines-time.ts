@@ -59,29 +59,29 @@ export function getPhilippinesDatePartsFromDateString(value: string): Philippine
     };
 }
 
-export function getPhilippinesScheduledAtIso(hour: number, dateParts: PhilippinesDateParts): string {
+export function getPhilippinesScheduledAtIso(hour: number, dateParts: PhilippinesDateParts, minute = 0): string {
     return new Date(
         Date.UTC(
             dateParts.year,
             dateParts.month,
             dateParts.day,
             hour - PHILIPPINES_UTC_OFFSET_HOURS,
-            0,
+            minute,
             0,
             0
         )
     ).toISOString();
 }
 
-export function getNextPhilippinesScheduledAtIso(hour: number, now = new Date()): string {
+export function getNextPhilippinesScheduledAtIso(hour: number, now = new Date(), minute = 0): string {
     const todayParts = getPhilippinesDateParts(now);
-    let scheduledAt = getPhilippinesScheduledAtIso(hour, todayParts);
+    let scheduledAt = getPhilippinesScheduledAtIso(hour, todayParts, minute);
 
     if (new Date(scheduledAt).getTime() <= now.getTime()) {
         scheduledAt = getPhilippinesScheduledAtIso(hour, {
             ...todayParts,
             day: todayParts.day + 1
-        });
+        }, minute);
     }
 
     return scheduledAt;

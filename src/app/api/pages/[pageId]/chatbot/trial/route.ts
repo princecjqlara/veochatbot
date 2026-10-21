@@ -134,38 +134,11 @@ export async function POST(
             });
         }
 
-        const now = new Date().toISOString();
-        const [stateResult, followUpResult, pipelineResult] = await Promise.all([
-            supabase
-                .from('chatbot_contact_states')
-                .delete()
-                .eq('page_id', pageId)
-                .eq('contact_id', contactId),
-            supabase
-                .from('chatbot_follow_up_jobs')
-                .update({
-                    status: 'cancelled',
-                    claimed_at: null,
-                    cancelled_at: now,
-                    error_message: 'Reset from live Messenger trial controls',
-                    updated_at: now
-                })
-                .eq('page_id', pageId)
-                .eq('contact_id', contactId)
-                .in('status', ['pending', 'processing', 'ready_manual']),
-            supabase
-                .from('contacts')
-                .update({
-                    pipeline_stage: 'engaged',
-                    pipeline_stage_source: 'system',
-                    pipeline_stage_updated_at: now
-                })
-                .eq('page_id', pageId)
-                .eq('id', contactId)
-        ]);
-        if (stateResult.error) throw stateResult.error;
-        if (followUpResult.error) throw followUpResult.error;
-        if (pipelineResult.error) throw pipelineResult.error;
+        // Reset jobs, intake, and pipeline atomically, with a durable history boundary.
+        const { error: resetError } = await supabase.rpc('reset_chatbot_contact', {
+            p_page_id: pageId, p_contact_id: contactId
+        });
+        if (resetError) throw resetError;
 
         return NextResponse.json({
             success: true,

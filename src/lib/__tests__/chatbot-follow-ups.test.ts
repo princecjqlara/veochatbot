@@ -240,6 +240,7 @@ describe('chatbot follow-up scheduling', () => {
                         return chain;
                     }),
                     eq: vi.fn(() => chain),
+                    not: vi.fn(() => chain),
                     lt: vi.fn(() => chain),
                     lte: vi.fn(() => chain),
                     order: vi.fn(() => chain),
@@ -327,7 +328,7 @@ describe('follow-up lead-stage checks', () => {
             const filters: Record<string, unknown> = {};
             const chain: any = {
                 select: () => chain, eq: (key: string, value: unknown) => { filters[key] = value; return chain; },
-                in: (key: string, value: unknown) => { filters[key] = value; return chain; }, lt: () => chain, lte: () => chain, order: () => chain,
+                in: (key: string, value: unknown) => { filters[key] = value; return chain; }, not: () => chain, lt: () => chain, lte: () => chain, order: () => chain,
                 update: (payload: any) => {
                     updates.push({ table, payload });
                     if (table === 'chatbot_follow_up_jobs' && payload.status === 'cancelled') cancellations.push({ filters });

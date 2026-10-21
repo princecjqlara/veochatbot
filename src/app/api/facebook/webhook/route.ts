@@ -27,10 +27,12 @@ import { assertChatbotDeliveryAllowed, assertMessengerAutomationDeliveryAllowed,
 import {
     classifyChatbotStopIntent,
     getChatbotContactState,
+    getChatbotHandoffOptions,
     getChatbotStateStopReason,
     getMissingChatbotDetails,
     isChatbotContactAllowed,
     saveChatbotContactState,
+    type ChatbotContactState,
     type ChatbotStopReason
 } from '@/lib/chatbot-control';
 import {
@@ -42,7 +44,8 @@ import {
     updateContactPipelineStage
 } from '@/lib/contact-pipeline';
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../lib/contact-names';
-import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, isMessengerAutomaticNotice, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
+import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, getMessengerHandoffMetadata, isMessengerAutomaticNotice, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
+import { evaluateCommercialVideoIntake, isCommercialVideoIntake } from '@/lib/chatbot-policy';
 
 export const maxDuration = 300;
 
@@ -240,7 +243,7 @@ export async function POST(request: NextRequest) {
                     try {
                         const { data: storedChatbotConfig, error: chatbotConfigError } = await supabase
                             .from('chatbot_configs')
-                            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+                            .select('*')
                             .eq('page_id', page.id)
                             .maybeSingle();
 
@@ -349,10 +352,20 @@ export async function POST(request: NextRequest) {
                                         }
                                         if (stageContact) {
                                             const state = await getChatbotContactState(supabase, page.id, stageContact.id);
+                                            const staffAt = event.timestamp != null && Number.isFinite(Number(event.timestamp))
+                                                ? new Date(Number(event.timestamp)).toISOString() : new Date().toISOString();
+                                            if (state?.messenger_history_reset_at && event.timestamp != null &&
+                                                Date.parse(staffAt) < Date.parse(state.messenger_history_reset_at)) continue;
+                                            // Delayed echoes from an acknowledged takeover must not stop a reviewed restart.
+                                            if (!stageSignal && state?.automation_resumed_at &&
+                                                Date.parse(staffAt) <= Date.parse(state.automation_resumed_at)) continue;
                                             const stopReason = stageSignal ||
-                                                (state?.status === 'stopped' ? state.stop_reason : null) || 'manual';
+                                                (state?.status === 'stopped' && state.stop_reason !== 'details_collected' ? state.stop_reason : null) || 'manual';
                                             await saveChatbotContactState(supabase, {
-                                                pageId: page.id, contactId: stageContact.id, existingState: state, stopReason
+                                                pageId: page.id, contactId: stageContact.id, existingState: state, stopReason,
+                                                pauseKind: state?.pause_kind === 'explicit_hold' || /^Lead stage set to /i.test(outboundMessageText)
+                                                    ? 'explicit_hold' : 'human_takeover',
+                                                humanActivityAt: staffAt
                                             });
                                             await cancelPendingChatbotFollowUps({ supabase, pageId: page.id,
                                                 contactId: stageContact.id, reason: `Messenger handoff: ${stopReason}` });
@@ -882,7 +895,7 @@ export async function POST(request: NextRequest) {
                                 const chatbotConfig = await loadChatbotConfig();
 
                                 if (chatbotConfig?.enabled && isChatbotContactAllowed(chatbotConfig, contact.id)) {
-                                    let chatbotState = null;
+                                    let chatbotState: ChatbotContactState | null = null;
                                     let chatbotConversationHistory: FacebookMessage[] = [];
                                     let liveStageStopReason: ChatbotStopReason | null = null;
                                     let conversationAuditFailed = false;
@@ -899,7 +912,7 @@ export async function POST(request: NextRequest) {
                                         const conversationMessages = await loadMessengerHistoryForStopCheck({
                                             facebookPageId: pageId, accessToken: page.access_token,
                                             initialPage: resolvedConversation?.messages, requireAvailable: true,
-                                            humanHandoffSince: chatbotState?.started_at || interactionAt
+                                            ...getChatbotHandoffOptions(chatbotState, interactionAt)
                                         });
                                         chatbotConversationHistory = conversationMessages.filter((message): message is FacebookMessage =>
                                             typeof message.id === 'string' && typeof message.message === 'string' &&
@@ -907,12 +920,13 @@ export async function POST(request: NextRequest) {
                                         );
                                         const liveLeadStageEvent = findLatestMessengerLeadStageEvent(
                                             conversationMessages,
-                                            pageId
+                                            pageId,
+                                            getChatbotHandoffOptions(chatbotState, interactionAt)
                                         );
                                         liveStageStopReason = findLatestMessengerSystemSignal(
                                             conversationMessages,
                                             pageId,
-                                            { humanHandoffSince: chatbotState?.started_at || interactionAt }
+                                            getChatbotHandoffOptions(chatbotState, interactionAt)
                                         );
                                         if (liveLeadStageEvent) {
                                             try {
@@ -940,7 +954,9 @@ export async function POST(request: NextRequest) {
                                             await saveChatbotContactState(supabase, {
                                                 pageId: page.id, contactId: contact.id,
                                                 existingState: await getChatbotContactState(supabase, page.id, contact.id),
-                                                stopReason: liveStageStopReason
+                                                stopReason: liveStageStopReason,
+                                                ...getMessengerHandoffMetadata(conversationMessages, pageId,
+                                                    getChatbotHandoffOptions(chatbotState, interactionAt))
                                             });
                                             await cancelPendingChatbotFollowUps({ supabase, pageId: page.id,
                                                 contactId: contact.id, reason: `Messenger lead stage: ${liveStageStopReason}` });
@@ -967,7 +983,8 @@ export async function POST(request: NextRequest) {
                                         ? 'manual'
                                         : chatbotStopReasonForPipelineStage(
                                             (contact as { pipeline_stage?: unknown }).pipeline_stage,
-                                            (contact as { pipeline_stage_source?: unknown }).pipeline_stage_source
+                                            (contact as { pipeline_stage_source?: unknown }).pipeline_stage_source,
+                                            chatbotConfig
                                         ) || liveStageStopReason;
                                     try {
                                         chatbotState = await getChatbotContactState(supabase, page.id, contact.id);
@@ -979,15 +996,15 @@ export async function POST(request: NextRequest) {
                                         } else if (!stateStopReason) {
                                             stateStopReason = storedStopReason;
                                         }
-                                        stateStopReason = stateStopReason || classifyChatbotStopIntent(inboundMessageText, {
+                                        stateStopReason = classifyChatbotStopIntent(inboundMessageText, {
                                                 stopOnOptOut: chatbotConfig.stop_on_opt_out,
                                                 stopOnRefusal: chatbotConfig.stop_on_refusal
-                                            });
+                                            }) || stateStopReason;
 
                                         if (
                                             stateStopReason &&
                                             stateStopReason !== 'manual' &&
-                                            chatbotState?.status !== 'stopped'
+                                            (chatbotState?.status !== 'stopped' || chatbotState.stop_reason !== stateStopReason)
                                         ) {
                                             await saveChatbotContactState(supabase, {
                                                 pageId: page.id,
@@ -1038,7 +1055,7 @@ export async function POST(request: NextRequest) {
                                     if (stateStopReason) {
                                         if (
                                             inboundMessageText && !conversationAuditFailed &&
-                                            ['details_collected', 'qualified', 'converted', 'order_created'].includes(stateStopReason) &&
+                                            (isCommercialVideoIntake(chatbotConfig) || ['details_collected', 'qualified', 'converted', 'order_created'].includes(stateStopReason)) &&
                                             chatbotConfig.details_to_collect.length > 0
                                         ) {
                                             try {
@@ -1046,7 +1063,10 @@ export async function POST(request: NextRequest) {
                                                     config: chatbotConfig, pageId, pageName: page.name,
                                                     contactName: contact.name, inboundMessage: inboundMessageText,
                                                     history: chatbotConversationHistory,
-                                                    collectedDetails: chatbotState?.collected_details || {}
+                                                    collectedDetails: chatbotState?.collected_details || {},
+                                                    hasClearRequest: chatbotState?.has_clear_request,
+                                                    requestType: chatbotState?.request_type,
+                                                    requestEvidence: chatbotState?.request_evidence
                                                 });
                                                 // Refresh the state before merging late answers so a
                                                 // concurrent human handoff remains stopped.
@@ -1057,7 +1077,10 @@ export async function POST(request: NextRequest) {
                                                     collectedDetails: details.collected_details,
                                                     missingDetails: details.missing_details,
                                                     inboundAt: interactionAt,
-                                                    stopReason: latestState?.stop_reason || stateStopReason
+                                                    stopReason: latestState?.stop_reason || stateStopReason,
+                                                    hasClearRequest: details.has_clear_request,
+                                                    requestType: details.request_type,
+                                                    requestEvidence: details.request_evidence
                                                 });
                                             } catch (detailError) {
                                                 logWarn('Stopped bot could not update customer details', {
@@ -1079,7 +1102,8 @@ export async function POST(request: NextRequest) {
                                             claimed = await claimChatbotReply(supabase, {
                                                 inboundMessageId,
                                                 pageId: page.id,
-                                                contactId: contact.id
+                                                contactId: contact.id,
+                                                inboundAt: interactionAt
                                             });
                                         } catch (claimError) {
                                             hadCriticalFailure = true;
@@ -1103,6 +1127,9 @@ export async function POST(request: NextRequest) {
                                             );
                                             let generatedStopReason: ChatbotStopReason | null = null;
                                             let detailsComplete = false;
+                                            let hasClearRequest = chatbotState?.has_clear_request || false;
+                                            let requestType = chatbotState?.request_type;
+                                            let requestEvidence = chatbotState?.request_evidence;
                                             let generatedMediaDocumentIds: string[] = [];
                                             let generatedDriveFileDocumentIds: string[] = [];
                                             let generatedLinkDocumentId: string | undefined;
@@ -1140,12 +1167,21 @@ export async function POST(request: NextRequest) {
                                                     pageId,
                                                     inboundMessage: chatbotInboundMessage,
                                                     history: chatbotConversationHistory,
-                                                    collectedDetails
+                                                    collectedDetails,
+                                                    detailTargetCount: chatbotState?.detail_collection_target,
+                                                    hasClearRequest,
+                                                    requestType,
+                                                    requestEvidence
                                                 });
                                                 replyMessages = generated.messages;
                                                 collectedDetails = generated.collected_details;
                                                 missingDetails = generated.missing_details;
                                                 detailsComplete = generated.details_complete;
+                                                hasClearRequest = generated.has_clear_request ?? hasClearRequest;
+                                                if (generated.has_clear_request !== undefined) {
+                                                    requestType = generated.request_type;
+                                                    requestEvidence = generated.request_evidence;
+                                                }
                                                 generatedMediaDocumentIds = generated.media_document_ids?.length
                                                     ? generated.media_document_ids
                                                     : generated.media_document_id
@@ -1164,8 +1200,9 @@ export async function POST(request: NextRequest) {
                                                 ) {
                                                     generatedStopReason = 'refusal';
                                                 } else if (
-                                                    generated.details_complete &&
-                                                    chatbotConfig.stop_when_details_collected
+                                                    isCommercialVideoIntake(chatbotConfig)
+                                                        ? !evaluateCommercialVideoIntake(collectedDetails, hasClearRequest).needsContinuation
+                                                        : generated.details_complete && chatbotConfig.stop_when_details_collected
                                                 ) {
                                                     generatedStopReason = 'details_collected';
                                                 }
@@ -1194,7 +1231,7 @@ export async function POST(request: NextRequest) {
                                             if (freshContactResult.error) throw freshContactResult.error;
                                             if (!freshContactResult.data) throw new Error('Contact unavailable before chatbot delivery');
                                             const freshPipelineStop = chatbotStopReasonForPipelineStage(
-                                                freshContactResult.data.pipeline_stage, freshContactResult.data.pipeline_stage_source);
+                                                freshContactResult.data.pipeline_stage, freshContactResult.data.pipeline_stage_source, chatbotConfig);
                                             const freshStateStop = getChatbotStateStopReason(freshState);
                                             if (freshPipelineStop || (freshStateStop && freshStateStop !== 'window_expired')) {
                                                 throw new ChatbotDeliveryStoppedError('Chatbot stopped during reply generation; automatic reply cancelled');
@@ -1206,13 +1243,18 @@ export async function POST(request: NextRequest) {
                                                 collectedDetails, missingDetails, inboundAt: interactionAt,
                                                 // Persist answers before delivery; apply this response's
                                                 // completion stop only after its final message is sent.
-                                                stopReason: generatedStopReason === 'details_collected' ? null : generatedStopReason
+                                                stopReason: generatedStopReason === 'details_collected' ? null : generatedStopReason,
+                                                hasClearRequest: isCommercialVideoIntake(chatbotConfig) ? hasClearRequest : undefined,
+                                                requestType: isCommercialVideoIntake(chatbotConfig) ? requestType : undefined,
+                                                requestEvidence: isCommercialVideoIntake(chatbotConfig) ? requestEvidence : undefined
                                             });
 
                                             const checkDelivery = () => assertChatbotDeliveryAllowed({
                                                 supabase, pageId: page.id, facebookPageId: pageId,
                                                 accessToken: page.access_token, contactId: contact.id, psid: senderId,
-                                                anchorInboundAt: interactionAt
+                                                anchorInboundAt: interactionAt,
+                                                automationEpoch: chatbotState?.automation_epoch || 0,
+                                                policyRevision: chatbotConfig.policy_revision || 1
                                             });
                                             let sentMedia = false;
                                             const knowledgePageId = getChatbotKnowledgePageId(chatbotConfig);
@@ -1248,7 +1290,11 @@ export async function POST(request: NextRequest) {
                                                     });
                                                 }
                                             }
-                                            for (const [messageIndex, replyText] of replyMessages.entries()) {
+                                            const deferQuestion = isCommercialVideoIntake(chatbotConfig) &&
+                                                (selectedDriveFiles.length > 0 || generatedMediaDocumentIds.length > 0) &&
+                                                replyMessages.length > 1 && /\?\s*$/.test(replyMessages[replyMessages.length - 1]);
+                                            const sendReplyPart = async (messageIndex: number) => {
+                                                const replyText = replyMessages[messageIndex];
                                                 await checkDelivery();
                                                 const isFinalMessage = messageIndex === replyMessages.length - 1;
                                                 const sendResult = await sendMessage(
@@ -1280,6 +1326,10 @@ export async function POST(request: NextRequest) {
                                                         : 'AI Chatbot',
                                                     messageKind: 'RESPONSE'
                                                 });
+                                            };
+                                            const initialPartCount = replyMessages.length - (deferQuestion ? 1 : 0);
+                                            for (let messageIndex = 0; messageIndex < initialPartCount; messageIndex++) {
+                                                await sendReplyPart(messageIndex);
                                             }
 
                                             if (selectedDriveFiles.length > 0 && !generatedStopReason) {
@@ -1374,6 +1424,8 @@ export async function POST(request: NextRequest) {
                                                 }
                                             }
 
+                                            if (deferQuestion) await sendReplyPart(replyMessages.length - 1);
+
                                             const latestDeliveryState = await getChatbotContactState(supabase, page.id, contact.id);
                                             await saveChatbotContactState(supabase, {
                                                 pageId: page.id,
@@ -1385,12 +1437,17 @@ export async function POST(request: NextRequest) {
                                                 botRepliedAt: replyMessages.length > 0 || sentMedia ? new Date().toISOString() : undefined,
                                                 stopReason: latestDeliveryState?.status === 'stopped'
                                                     ? latestDeliveryState.stop_reason || 'manual'
-                                                    : generatedStopReason
+                                                    : generatedStopReason,
+                                                pauseKind: generatedStopReason === 'details_collected' && isCommercialVideoIntake(chatbotConfig) && latestDeliveryState?.status !== 'stopped'
+                                                    ? 'ready_for_team' : undefined,
+                                                hasClearRequest: isCommercialVideoIntake(chatbotConfig) ? hasClearRequest : undefined,
+                                                requestType: isCommercialVideoIntake(chatbotConfig) ? requestType : undefined,
+                                                requestEvidence: isCommercialVideoIntake(chatbotConfig) ? requestEvidence : undefined
                                             });
 
                                             const chatbotPipelineStage = pipelineStageForChatbotProgress({
                                                 stopReason: generatedStopReason,
-                                                detailsComplete,
+                                                detailsComplete: isCommercialVideoIntake(chatbotConfig) ? detailsComplete && hasClearRequest : detailsComplete,
                                                 collectedDetails
                                             });
                                             try {
@@ -1412,7 +1469,7 @@ export async function POST(request: NextRequest) {
                                             if (
                                                 !generatedStopReason &&
                                                 latestDeliveryState?.status !== 'stopped' &&
-                                                !isPipelineClosedForAutomation(chatbotPipelineStage) &&
+                                                !isPipelineClosedForAutomation(chatbotPipelineStage, 'chatbot', chatbotConfig) &&
                                                 (replyMessages.length > 0 || sentMedia)
                                             ) {
                                                 try {
@@ -1426,7 +1483,8 @@ export async function POST(request: NextRequest) {
                                                             name: (contact as { name?: string | null }).name || null,
                                                             best_contact_hour: (contact as { best_contact_hour?: number | null }).best_contact_hour,
                                                             last_interaction_at: interactionAt,
-                                                            pipeline_stage: chatbotPipelineStage
+                                                            pipeline_stage: chatbotPipelineStage,
+                                                            pipeline_stage_source: 'chatbot'
                                                         },
                                                         config: chatbotConfig,
                                                         anchorInboundAt: interactionAt,

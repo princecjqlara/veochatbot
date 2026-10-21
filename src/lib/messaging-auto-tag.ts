@@ -1,5 +1,11 @@
 export type MessengerSystemSignal = 'order_created' | 'qualified' | 'not_qualified' | 'converted' | 'manual';
 
+export type MessengerHandoffOptions = {
+    humanHandoffSince?: string | null;
+    /** Only an explicit owner reset can acknowledge older durable stage events. */
+    historyResetAt?: string | null;
+};
+
 export type MessengerHistoryMessage = {
     id?: string;
     message?: string;
@@ -26,7 +32,9 @@ export async function loadMessengerHistoryForStopCheck(input: {
     initialPage?: { data?: MessengerHistoryMessage[]; paging?: { next?: string } } | null;
     maxPages?: number;
     requireAvailable?: boolean;
+    requireComplete?: boolean;
     humanHandoffSince?: string | null;
+    historyResetAt?: string | null;
 }): Promise<MessengerHistoryMessage[]> {
     if (input.requireAvailable && !Array.isArray(input.initialPage?.data)) {
         throw new Error('Messenger lead-stage history is unavailable; automatic delivery blocked');
@@ -36,7 +44,7 @@ export async function loadMessengerHistoryForStopCheck(input: {
     const seen = new Set<string>();
     const deadline = Date.now() + 20_000;
     const maxPages = input.maxPages ?? 10;
-    for (let page = 1; next && !findLatestMessengerSystemSignal(messages, input.facebookPageId, input); page++) {
+    for (let page = 1; next && (input.requireComplete || !findLatestMessengerSystemSignal(messages, input.facebookPageId, input)); page++) {
         if (page >= maxPages || Date.now() >= deadline) {
             throw new Error('Messenger lead-stage history check exceeded its safe limit');
         }
@@ -88,10 +96,13 @@ export function classifyMessengerSystemMessage(text: string): MessengerSystemSig
 export function classifyMessengerHistoryMessage(
     message: MessengerHistoryMessage,
     facebookPageId: string,
-    options: { humanHandoffSince?: string | null } = {}
+    options: MessengerHandoffOptions = {}
 ): MessengerSystemSignal | null {
     if (message.from?.id !== facebookPageId) return null;
     if (isMessengerAutomaticNotice(message.message || '')) return null;
+    const resetAt = Date.parse(options.historyResetAt || '');
+    const messageAt = Date.parse(message.created_time || '');
+    if (Number.isFinite(resetAt) && Number.isFinite(messageAt) && messageAt < resetAt) return null;
     const signal = typeof message.message === 'string' ? classifyMessengerSystemMessage(message.message) : null;
     // Explicit lead stages/orders remain durable. Ordinary staff replies belong
     // to the current intake, so an old chat does not undo an explicit bot reset.
@@ -110,7 +121,7 @@ export function classifyMessengerHistoryMessage(
 export function findLatestMessengerSystemSignal(
     messages: MessengerHistoryMessage[],
     facebookPageId: string,
-    options: { humanHandoffSince?: string | null } = {}
+    options: MessengerHandoffOptions = {}
 ): MessengerSystemSignal | null {
     const matches = messages.flatMap((message, index) => {
         const signal = classifyMessengerHistoryMessage(message, facebookPageId, options);
@@ -135,10 +146,27 @@ export function findLatestMessengerSystemSignal(
     return matches[0].signal;
 }
 
+/** Only real newer activity advances a temporary handoff; scans are not staff activity. */
+export function getMessengerHandoffMetadata(
+    messages: MessengerHistoryMessage[], facebookPageId: string,
+    options: MessengerHandoffOptions = {}
+): { pauseKind: 'human_takeover' | 'explicit_hold'; humanActivityAt?: string } {
+    const activity = messages.filter(message => classifyMessengerHistoryMessage(message, facebookPageId, options))
+        .sort((a, b) => Date.parse(b.created_time || '') - Date.parse(a.created_time || ''))[0];
+    const explicitStage = messages.some(message => message.from?.id === facebookPageId &&
+        /^Lead stage set to /i.test(message.message?.trim() || '') && classifyMessengerHistoryMessage(message, facebookPageId, options));
+    return {
+        pauseKind: explicitStage ? 'explicit_hold' : 'human_takeover',
+        ...(activity?.created_time && Number.isFinite(Date.parse(activity.created_time))
+            ? { humanActivityAt: new Date(activity.created_time).toISOString() } : {})
+    };
+}
+
 /** Find the newest explicit Lead Center stage change and keep its audit metadata. */
 export function findLatestMessengerLeadStageEvent(
     messages: MessengerHistoryMessage[],
-    facebookPageId: string
+    facebookPageId: string,
+    options: MessengerHandoffOptions = {}
 ): MessengerLeadStageEvent | null {
     const matches = messages.flatMap((message, index) => {
         if (
@@ -148,7 +176,7 @@ export function findLatestMessengerLeadStageEvent(
             typeof message.message !== 'string' ||
             !/^Lead stage set to /i.test(message.message.trim())
         ) return [];
-        const signal = classifyMessengerSystemMessage(message.message);
+        const signal = classifyMessengerHistoryMessage(message, facebookPageId, options);
         if (!signal) return [];
         const timestamp = typeof message.created_time === 'string'
             ? new Date(message.created_time).getTime()

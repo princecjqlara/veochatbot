@@ -1,7 +1,7 @@
 import { getConversationForPsid } from '@/lib/facebook';
-import { getChatbotContactState, saveChatbotContactState, isChatbotContactAllowed } from '@/lib/chatbot-control';
+import { getChatbotContactState, getChatbotHandoffOptions, saveChatbotContactState, isChatbotContactAllowed } from '@/lib/chatbot-control';
 import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateContactPipelineStage } from '@/lib/contact-pipeline';
-import { findLatestMessengerSystemSignal, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
+import { findLatestMessengerSystemSignal, getMessengerHandoffMetadata, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 
 export class ChatbotDeliveryStoppedError extends Error {}
 
@@ -16,6 +16,8 @@ export async function assertChatbotDeliveryAllowed(input: {
     anchorInboundAt?: string;
     followUp?: boolean;
     followUpJobId?: string;
+    automationEpoch?: number;
+    policyRevision?: number;
     /** Workflow/welcome sends share stop rules without requiring the AI bot to be enabled. */
     enforceChatbotSettings?: boolean;
 }): Promise<void> {
@@ -25,7 +27,7 @@ export async function assertChatbotDeliveryAllowed(input: {
         const [contactResult, configResult, state, jobResult] = await Promise.all([
             db.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at')
                 .eq('page_id', input.pageId).eq('id', input.contactId).maybeSingle(),
-            enforceChatbotSettings ? db.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id')
+            enforceChatbotSettings ? db.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id,commercial_video_intake_enabled,policy_revision')
                 .eq('page_id', input.pageId).maybeSingle() : null,
             getChatbotContactState(db, input.pageId, input.contactId),
             input.followUpJobId ? db.from('chatbot_follow_up_jobs').select('status')
@@ -39,7 +41,9 @@ export async function assertChatbotDeliveryAllowed(input: {
         if (!contact || (enforceChatbotSettings && (!config?.enabled || !isChatbotContactAllowed(config, input.contactId))) ||
             (input.followUpJobId && jobResult?.data?.status !== 'processing') ||
             (input.followUp && enforceChatbotSettings && !config?.follow_up_enabled) ||
-            state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source) ||
+            state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source, config) ||
+            (input.automationEpoch !== undefined && (state?.automation_epoch || 0) !== input.automationEpoch) ||
+            (input.policyRevision !== undefined && (config?.policy_revision || 1) !== input.policyRevision) ||
             (input.anchorInboundAt && new Date(contact.last_inbound_at || 0).getTime() > new Date(input.anchorInboundAt).getTime())) {
             throw new ChatbotDeliveryStoppedError('Chatbot eligibility changed; automatic delivery cancelled');
         }
@@ -54,18 +58,20 @@ export async function assertChatbotDeliveryAllowed(input: {
     try {
         history = await loadMessengerHistoryForStopCheck({ facebookPageId: input.facebookPageId,
             accessToken: input.accessToken, initialPage: conversation?.messages, requireAvailable: true,
-            humanHandoffSince: state?.started_at || input.anchorInboundAt });
+            ...getChatbotHandoffOptions(state, input.anchorInboundAt) });
     } catch (error) {
         await checkSavedEligibility();
         throw error;
     }
-    const signal = findLatestMessengerSystemSignal(history, input.facebookPageId, { humanHandoffSince: state?.started_at || input.anchorInboundAt });
+    const handoffOptions = getChatbotHandoffOptions(state, input.anchorInboundAt);
+    const signal = findLatestMessengerSystemSignal(history, input.facebookPageId, handoffOptions);
     if (!signal) {
         // A stop can also arrive while the Graph read is in flight.
         await checkSavedEligibility();
         return;
     }
-    await saveChatbotContactState(db, { pageId: input.pageId, contactId: input.contactId, existingState: state, stopReason: signal });
+    await saveChatbotContactState(db, { pageId: input.pageId, contactId: input.contactId, existingState: state,
+        stopReason: signal, ...getMessengerHandoffMetadata(history, input.facebookPageId, handoffOptions) });
     const { error } = await db.from('chatbot_follow_up_jobs')
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), claimed_at: null })
         .eq('page_id', input.pageId).eq('contact_id', input.contactId).in('status', ['pending', 'processing', 'ready_manual']);

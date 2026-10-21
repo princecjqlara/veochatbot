@@ -8,14 +8,18 @@ import {
     DEFAULT_CHATBOT_MODEL,
     generateChatbotFollowUp,
     generateChatbotResponse,
+    extractChatbotContactDetails,
+    analyzeChatbotContinuation,
     getChatbotKnowledgePageId,
     getOpenRouterModelContextLength,
     type ChatbotTokenUsage,
     type ChatbotConfig
 } from '@/lib/chatbot';
-import { createChatbotMediaPublicViewUrl, createChatbotMediaSignedUrl, getReadyChatbotMediaForDocument, getReadyChatbotMediaForDocuments } from '@/lib/chatbot-media';
+import { createChatbotMediaPublicViewUrl, createChatbotMediaSignedUrl, getReadyChatbotMediaForDocuments } from '@/lib/chatbot-media';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument } from '@/lib/chatbot-drive-folders';
 import { getMissingChatbotDetails } from '@/lib/chatbot-control';
+import { normalizeCommercialVideoDetails, normalizeCommercialVideoIntakeConfig } from '@/lib/chatbot-intake';
+import { evaluateCommercialVideoIntake, extractClearVideoRequest, isCommercialVideoIntake } from '@/lib/chatbot-policy';
 
 function defaultConfig(pageId: string): ChatbotConfig {
     return {
@@ -31,6 +35,10 @@ function defaultConfig(pageId: string): ChatbotConfig {
         follow_up_prompt: 'Ask one helpful question at a time. Once the required details are complete, thank the customer and explain that a team member will take over.',
         details_to_collect: [],
         details_completion_percent: 100,
+        commercial_video_intake_enabled: false,
+        continuation_review_enabled: false,
+        continuation_review_hour: 20,
+        continuation_review_minute: 0,
         bot_dos: '',
         bot_donts: '',
         follow_up_enabled: false,
@@ -55,7 +63,7 @@ function defaultConfig(pageId: string): ChatbotConfig {
 }
 
 function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): ChatbotConfig {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return stored;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return normalizeCommercialVideoIntakeConfig(stored);
     const draft = value as Record<string, unknown>;
     const optionalText = (key: string, maxLength: number, fallback: string) =>
         typeof draft[key] === 'string' ? draft[key].trim().slice(0, maxLength) : fallback;
@@ -83,7 +91,7 @@ function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): Chat
             : fallback;
     const completionPercent = Number(draft.details_completion_percent);
 
-    return {
+    return normalizeCommercialVideoIntakeConfig({
         ...stored,
         page_id: stored.page_id,
         enabled: booleanValue('enabled', stored.enabled),
@@ -97,6 +105,14 @@ function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): Chat
         fallback_reply: requiredText('fallback_reply', 1000, stored.fallback_reply),
         model: requiredText('model', 200, stored.model),
         rag_enabled: booleanValue('rag_enabled', stored.rag_enabled),
+        commercial_video_intake_enabled: booleanValue('commercial_video_intake_enabled', stored.commercial_video_intake_enabled === true),
+        continuation_review_enabled: booleanValue('continuation_review_enabled',
+            draft.commercial_video_intake_enabled === true && stored.commercial_video_intake_enabled !== true
+                ? true : stored.continuation_review_enabled === true),
+        continuation_review_hour: Number.isInteger(draft.continuation_review_hour)
+            ? Math.min(23, Math.max(0, Number(draft.continuation_review_hour))) : stored.continuation_review_hour ?? 20,
+        continuation_review_minute: Number.isInteger(draft.continuation_review_minute)
+            ? Math.min(59, Math.max(0, Number(draft.continuation_review_minute))) : stored.continuation_review_minute ?? 0,
         follow_up_prompt: optionalText('follow_up_prompt', 3000, stored.follow_up_prompt),
         details_to_collect: stringList('details_to_collect', 20, 80, stored.details_to_collect),
         details_completion_percent: Number.isFinite(completionPercent)
@@ -140,7 +156,7 @@ function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): Chat
         stop_on_not_qualified: booleanValue('stop_on_not_qualified', stored.stop_on_not_qualified),
         stop_on_converted: booleanValue('stop_on_converted', stored.stop_on_converted),
         stop_on_order_created: booleanValue('stop_on_order_created', stored.stop_on_order_created)
-    };
+    });
 }
 
 async function getAuthorizedPage(request: NextRequest, pageId: string) {
@@ -174,14 +190,14 @@ export async function GET(
 
         const { data, error } = await getSupabaseAdmin()
             .from('chatbot_configs')
-            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
             .eq('page_id', pageId)
             .maybeSingle();
 
         if (error) throw error;
 
         return NextResponse.json({
-            config: data || defaultConfig(pageId),
+            config: normalizeCommercialVideoIntakeConfig((data || defaultConfig(pageId)) as ChatbotConfig),
             provider: {
                 configured: Boolean(process.env.OPENROUTER_API_KEY),
                 default_model: process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL
@@ -206,6 +222,12 @@ export async function PUT(
         if (authorization.error) return authorization.error;
 
         const body = await request.json();
+        if (body.commercial_video_intake_enabled !== undefined && typeof body.commercial_video_intake_enabled !== 'boolean') {
+            return NextResponse.json({ error: 'Commercial video intake must be true or false' }, { status: 400 });
+        }
+        if (body.continuation_review_minute !== undefined && (!Number.isInteger(body.continuation_review_minute) || body.continuation_review_minute < 0 || body.continuation_review_minute > 59)) {
+            return NextResponse.json({ error: 'Review minute must be an integer between 0 and 59' }, { status: 400 });
+        }
         const instructions = typeof body.instructions === 'string' ? body.instructions.trim() : '';
         const fallbackReply = typeof body.fallback_reply === 'string' ? body.fallback_reply.trim() : '';
         const model = typeof body.model === 'string' ? body.model.trim() : '';
@@ -287,6 +309,18 @@ export async function PUT(
             );
         }
 
+        // Older clients may omit the policy switch. Preserve each target Page's
+        // current policy so they cannot silently overwrite its required form.
+        const existingPolicyByPage = new Map<string, boolean>();
+        if (typeof body.commercial_video_intake_enabled !== 'boolean') {
+            const { data: existingPolicies, error: existingPolicyError } = await supabase
+                .from('chatbot_configs')
+                .select('page_id, commercial_video_intake_enabled')
+                .in('page_id', targetPageIds);
+            if (existingPolicyError) throw existingPolicyError;
+            for (const row of existingPolicies || []) existingPolicyByPage.set(row.page_id, row.commercial_video_intake_enabled === true);
+        }
+
         const requestedKnowledgePageId = typeof body.knowledge_source_page_id === 'string' && body.knowledge_source_page_id.trim()
             ? body.knowledge_source_page_id.trim()
             : pageId;
@@ -324,6 +358,13 @@ export async function PUT(
                 follow_up_prompt: followUpPrompt,
                 details_to_collect: detailsToCollect,
                 details_completion_percent: detailsCompletionPercent,
+                ...(typeof body.continuation_review_enabled === 'boolean' ? {
+                    continuation_review_enabled: body.continuation_review_enabled,
+                    continuation_review_hour: Number.isInteger(body.continuation_review_hour)
+                        ? Math.min(23, Math.max(0, body.continuation_review_hour)) : 20,
+                    continuation_review_minute: Number.isInteger(body.continuation_review_minute)
+                        ? body.continuation_review_minute : 0
+                } : {}),
                 bot_dos: botDos,
                 bot_donts: botDonts,
                 follow_up_enabled: body.follow_up_enabled === true,
@@ -348,8 +389,18 @@ export async function PUT(
                 stop_on_order_created: true,
                 updated_at: new Date().toISOString()
         };
-        const payloads = targetPageIds.map((targetPageId) => ({
+        const payloads = targetPageIds.map((targetPageId) => normalizeCommercialVideoIntakeConfig({
             ...sharedSettings,
+            ...(typeof body.commercial_video_intake_enabled === 'boolean'
+                ? { commercial_video_intake_enabled: body.commercial_video_intake_enabled }
+                : {}),
+            ...((body.commercial_video_intake_enabled ?? existingPolicyByPage.get(targetPageId)) === true ? {
+                commercial_video_intake_enabled: true,
+                // Preserve an explicit review disable, but enable the nightly
+                // rule when the policy is first selected without that setting.
+                ...(typeof body.continuation_review_enabled !== 'boolean' && body.commercial_video_intake_enabled === true
+                    ? { continuation_review_enabled: true } : {})
+            } : {}),
             page_id: targetPageId,
             knowledge_source_page_id: shouldShareKnowledge
                 ? sharedKnowledgePageId
@@ -387,7 +438,7 @@ export async function POST(
         if (authorization.error) return authorization.error;
 
         const body = await request.json();
-        const testMode = body.mode === 'follow_up' ? 'follow_up' : 'reply';
+        const testMode = body.mode === 'continuation_review' ? 'continuation_review' : body.mode === 'follow_up' ? 'follow_up' : 'reply';
         const testContactName = typeof body.contact_name === 'string' && body.contact_name.trim()
             ? body.contact_name.trim().replace(/\s+/g, ' ').slice(0, 120)
             : 'Test Customer';
@@ -417,6 +468,9 @@ export async function POST(
         if (testMode === 'follow_up' && testHistory.length === 0) {
             return NextResponse.json({ error: 'Start a test conversation before generating a follow-up' }, { status: 400 });
         }
+        if (testMode === 'continuation_review' && testHistory.length === 0) {
+            return NextResponse.json({ error: 'A review requires customer conversation history' }, { status: 400 });
+        }
         const collectedDetails = body.collected_details && typeof body.collected_details === 'object' && !Array.isArray(body.collected_details)
             ? Object.fromEntries(
                 Object.entries(body.collected_details as Record<string, unknown>)
@@ -431,7 +485,7 @@ export async function POST(
         const [{ data, error }, { data: page, error: pageError }] = await Promise.all([
             supabase
                 .from('chatbot_configs')
-                .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+                .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
                 .eq('page_id', pageId)
                 .maybeSingle(),
             supabase.from('pages').select('name').eq('id', pageId).maybeSingle()
@@ -442,6 +496,22 @@ export async function POST(
         const storedConfig = (data || defaultConfig(pageId)) as ChatbotConfig;
         const knowledgePageId = getChatbotKnowledgePageId(storedConfig);
         const config = mergeDraftConfigForPreview(storedConfig, body.draft_config);
+        if (testMode === 'continuation_review') {
+            const refreshedDetails = isCommercialVideoIntake(config)
+                ? (await extractChatbotContactDetails({ config, pageId: 'test-page', history: testHistory,
+                    inboundMessage: '', collectedDetails })).collected_details
+                : collectedDetails;
+            const analysis = await analyzeChatbotContinuation({ config, pageId: 'test-page', history: testHistory, collectedDetails: refreshedDetails });
+            const policy = isCommercialVideoIntake(config)
+                ? evaluateCommercialVideoIntake(refreshedDetails, analysis.has_clear_request ?? extractClearVideoRequest(testHistory, 'test-page').has_clear_request)
+                : null;
+            return NextResponse.json({ mode: testMode, analysis,
+                ...(policy ? { policy, collected_details: normalizeCommercialVideoDetails(refreshedDetails) } : {}),
+                would_resume: policy
+                    ? config.continuation_review_enabled === true && policy.needsContinuation && analysis.purchase_status !== 'declined'
+                    : analysis.purchase_status === 'undecided' && analysis.confidence >= 0.8,
+                no_customer_messages_sent: true });
+        }
         if (testMode === 'follow_up') {
             const followUpType = body.follow_up_type === 'human_agent' ? 'human_agent' : 'quick';
             const sequenceNumber = Math.min(10, Math.max(1, Math.round(Number(body.sequence_number) || 1)));
@@ -452,7 +522,9 @@ export async function POST(
                 contactName: testContactName,
                 history: testHistory,
                 collectedDetails,
-                missingDetails: getMissingChatbotDetails(config.details_to_collect, collectedDetails),
+                missingDetails: isCommercialVideoIntake(config)
+                    ? evaluateCommercialVideoIntake(collectedDetails, false).missingRequiredFields
+                    : getMissingChatbotDetails(config.details_to_collect, collectedDetails),
                 sequenceNumber,
                 scheduleLabel: followUpType === 'human_agent' ? 'best-time day 2-7' : 'first 24 hours'
             });
@@ -490,7 +562,7 @@ export async function POST(
 
             return NextResponse.json({
                 reply: followUp.message,
-                messages: [followUp.message],
+                messages: followUp.messages?.length ? followUp.messages : [followUp.message],
                 mode: 'follow_up',
                 follow_up_type: followUpType,
                 personalization_basis: followUp.personalization_basis,
@@ -515,7 +587,9 @@ export async function POST(
             contactName: testContactName,
             inboundMessage: message,
             history: testHistory,
-            collectedDetails
+            collectedDetails,
+            detailTargetCount: !isCommercialVideoIntake(config) && Number.isInteger(body.detail_target_count) && body.detail_target_count >= 1 && body.detail_target_count <= 20
+                ? body.detail_target_count : undefined
         });
 
         const mediaIds = result.media_document_ids?.length
@@ -557,6 +631,9 @@ export async function POST(
             missing_details: result.missing_details,
             details_complete: result.details_complete,
             detected_stop_reason: result.detected_stop_reason,
+            intake_action: result.intake_action,
+            has_clear_request: result.has_clear_request,
+            request_type: result.request_type,
             media: selectedPreviews[0] || null,
             media_items: selectedPreviews,
             folder: folder ? {

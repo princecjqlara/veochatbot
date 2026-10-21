@@ -3,6 +3,8 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { processDueFollowUpAutomationSteps } from '@/lib/workflow-automations';
 import { processOneMessagingAutoTagPage } from '@/lib/messaging-auto-tag-worker';
 import { processDueChatbotFollowUps } from '@/lib/chatbot-follow-ups';
+import { processChatbotContinuationReviews } from '@/lib/chatbot-continuation';
+import { recoverMissingChatbotMessages } from '@/lib/chatbot-inbound-recovery';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +13,12 @@ export async function GET(_request: NextRequest) {
     const startTime = Date.now();
 
     try {
+        let inboundRecovery: Record<string, unknown>;
+        try { inboundRecovery = await recoverMissingChatbotMessages(); }
+        catch (error) {
+            inboundRecovery = { failed: true, message: error instanceof Error ? error.message : String(error) };
+            console.warn('Messenger inbound recovery needs retry:', error);
+        }
         // Sync handoffs on active chatbot Pages before queued messages. A stale
         // token on an unrelated Page must not consume this stop-check slot.
         let messagingAutoTag: Record<string, unknown> = { skipped: true };
@@ -19,6 +27,14 @@ export async function GET(_request: NextRequest) {
         } catch (error) {
             messagingAutoTag = { ok: false, message: error instanceof Error ? error.message : String(error) };
             console.warn('Messaging lead-stage sync failed; delivery still verifies each contact:', error);
+        }
+        // Reviewed handoffs must be resolved before any chatbot follow-up delivery.
+        let intakeReviews: Record<string, unknown>;
+        try {
+            intakeReviews = await processChatbotContinuationReviews({ limit: 2 });
+        } catch (error) {
+            intakeReviews = { failed: true, message: error instanceof Error ? error.message : String(error) };
+            console.warn('End-of-day intake review failed:', error);
         }
         // Follow-ups are this route's primary job. Run them before the nested
         // campaign worker, which can consume almost the entire external cron
@@ -64,6 +80,8 @@ export async function GET(_request: NextRequest) {
             chatbotFollowUps,
             campaignWorker,
             messagingAutoTag,
+            intakeReviews,
+            inboundRecovery,
             duration: Date.now() - startTime
         });
     } catch (error) {

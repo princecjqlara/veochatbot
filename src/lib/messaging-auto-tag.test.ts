@@ -7,6 +7,18 @@ import {
 } from './messaging-auto-tag';
 
 describe('classifyMessengerSystemMessage', () => {
+    it('acknowledges historical stages only after an explicit reset', () => {
+        const oldStage = { id: 'old-stage', message: 'Lead stage set to Not qualified',
+            from: { id: 'page-1' }, created_time: '2025-09-15T19:37:44Z' };
+        const options = { humanHandoffSince: '2026-10-17T07:00:00Z', historyResetAt: '2026-10-17T07:00:00Z' };
+        expect(findLatestMessengerSystemSignal([oldStage], 'page-1', { humanHandoffSince: options.humanHandoffSince })).toBe('not_qualified');
+        expect(findLatestMessengerSystemSignal([oldStage], 'page-1', options)).toBeNull();
+        expect(findLatestMessengerLeadStageEvent([oldStage], 'page-1', options)).toBeNull();
+        const newStage = { ...oldStage, id: 'new-stage', created_time: options.historyResetAt };
+        expect(findLatestMessengerSystemSignal([newStage, oldStage], 'page-1', options)).toBe('not_qualified');
+        expect(findLatestMessengerLeadStageEvent([newStage, oldStage], 'page-1', options)?.messageId).toBe('new-stage');
+        expect(findLatestMessengerSystemSignal([{ ...oldStage, created_time: undefined }], 'page-1', options)).toBe('not_qualified');
+    });
     it('accepts qualified, not-qualified, and converted stage records', () => {
         expect(classifyMessengerSystemMessage('Lead stage set to Qualified')).toBe('qualified');
         expect(classifyMessengerSystemMessage('Lead stage set to Not Qualified')).toBe('not_qualified');

@@ -30,6 +30,7 @@ import {
     Video
 } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabase';
+import { COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
 
 type PageSummary = {
     id: string;
@@ -49,6 +50,10 @@ type ChatbotConfig = {
     follow_up_prompt: string;
     details_to_collect: string[];
     details_completion_percent: number;
+    commercial_video_intake_enabled?: boolean;
+    continuation_review_enabled?: boolean;
+    continuation_review_hour?: number;
+    continuation_review_minute?: number;
     bot_dos: string;
     bot_donts: string;
     follow_up_enabled: boolean;
@@ -1767,6 +1772,26 @@ export default function ChatbotPage() {
                             </div>
                         </div>
 
+                        <label className="mb-4 flex items-start gap-3 border border-blue-500 bg-blue-50 p-4">
+                            <input type="checkbox" className="mt-1 h-4 w-4"
+                                checked={config.commercial_video_intake_enabled === true}
+                                onChange={(event) => updateConfig({
+                                    commercial_video_intake_enabled: event.target.checked,
+                                    ...(event.target.checked ? {
+                                        details_to_collect: [...COMMERCIAL_VIDEO_REQUIRED_DETAILS],
+                                        details_completion_percent: 100,
+                                        stop_when_details_collected: false,
+                                        continuation_review_enabled: true,
+                                        continuation_review_hour: 23,
+                                        continuation_review_minute: 59
+                                    } : {})
+                                })} />
+                            <span>
+                                <span className="block text-sm font-bold">Commercial video: free concept or free script</span>
+                                <span className="mt-1 block text-xs leading-5 text-gray-700">Ask about the business, send an existing sample, ask duration, then send pricing and the seven-step process before the form. Use natural Taglish, first names and no emojis. Pricing, process and form each stay in one message, followed by a relevant question. Your existing knowledge, samples and schedules stay available.</span>
+                            </span>
+                        </label>
+
                         <label className="font-mono text-xs font-bold uppercase text-gray-500 mb-2 block">
                             Follow-up prompt
                         </label>
@@ -1784,6 +1809,7 @@ export default function ChatbotPage() {
                         </label>
                         <textarea
                             value={config.details_to_collect.join('\n')}
+                            disabled={config.commercial_video_intake_enabled === true}
                             onChange={(event) => updateConfig({
                                 details_to_collect: event.target.value
                                     .split('\n')
@@ -1794,7 +1820,9 @@ export default function ChatbotPage() {
                             placeholder={'Full name\nMobile number\nService needed\nPreferred schedule\nBudget'}
                         />
                         <p className="mt-2 text-xs text-gray-500 font-mono">
-                            The bot remembers customer-provided values and asks for only one missing detail at a time.
+                            {config.commercial_video_intake_enabled
+                                ? 'All four fields are required. The bot remembers answers and asks only for missing information after introducing the form.'
+                                : 'The bot remembers customer-provided values and asks for only one missing detail at a time.'}
                         </p>
 
                         <div className="mt-4 border border-black p-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1813,6 +1841,7 @@ export default function ChatbotPage() {
                                     max={100}
                                     step={5}
                                     value={config.details_completion_percent}
+                                    disabled={config.commercial_video_intake_enabled === true}
                                     onChange={(event) => updateConfig({
                                         details_completion_percent: Math.min(100, Math.max(1, Number(event.target.value) || 100))
                                     })}
@@ -1822,12 +1851,41 @@ export default function ChatbotPage() {
                             </label>
                         </div>
 
+                        <div className="mt-4 border border-black p-3">
+                            <label className="flex items-start gap-2 cursor-pointer">
+                                <input type="checkbox" className="w-4 h-4 mt-0.5"
+                                    checked={config.continuation_review_enabled === true}
+                                    onChange={(event) => updateConfig({ continuation_review_enabled: event.target.checked })} />
+                                <span><span className="block text-sm font-bold">End-of-day AI review</span>
+                                    <span className="block text-xs text-gray-500 mt-1">{config.commercial_video_intake_enabled
+                                        ? 'Staff replies immediately pause the bot and follow-ups. At 11:59 PM Philippine time, review temporary takeovers and reopen if EITHER the form is incomplete OR the customer has not clearly requested a commercial video, free concept, or free script. Completed form plus a clear request stays with the team. Explicit holds, terminal stages, refusals, orders, and opt-outs stay stopped.'
+                                        : 'Review bot-completed intake. If the customer is still undecided, resume and collect up to three more missing details. Human stage changes, refusals, purchases, and opt-outs stay stopped.'}</span></span>
+                            </label>
+                            <label className="block text-xs mt-3">Review hour (Philippine time)
+                                <select className="input-wireframe ml-2" value={config.continuation_review_hour ?? 20}
+                                    disabled={!config.continuation_review_enabled || config.commercial_video_intake_enabled === true}
+                                    onChange={(event) => updateConfig({ continuation_review_hour: Number(event.target.value) })}>
+                                    {Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}</option>)}
+                                </select>
+                                <span className="ml-2">minute</span>
+                                <select className="input-wireframe ml-2" value={config.continuation_review_minute ?? 0}
+                                    aria-label="Review minute (Philippine time)"
+                                    disabled={!config.continuation_review_enabled || config.commercial_video_intake_enabled === true}
+                                    onChange={(event) => updateConfig({ continuation_review_minute: Number(event.target.value) })}>
+                                    {Array.from({ length: 60 }, (_, minute) => <option key={minute} value={minute}>{String(minute).padStart(2, '0')}</option>)}
+                                </select>
+                            </label>
+                            <p className="text-xs text-gray-500 mt-2">{config.commercial_video_intake_enabled
+                                ? 'Reviews become due at exactly 23:59 Asia/Manila. Worker processing may occur later. Outside the permitted reply window, the bot waits for a new customer message.'
+                                : 'Reviews can run earlier before the reply window closes. Outside that window, the bot waits for a new customer message.'}</p>
+                        </div>
+
                         <div className="grid md:grid-cols-2 gap-4 mt-4">
                             <label className="border border-black p-3 flex items-start gap-2 cursor-pointer">
                                 <input
                                     type="checkbox"
                                     checked={config.split_messages}
-                                    onChange={(event) => updateConfig({ split_messages: event.target.checked, max_message_parts: event.target.checked ? 2 : 1 })}
+                                    onChange={(event) => updateConfig({ split_messages: event.target.checked, max_message_parts: event.target.checked ? 0 : 1 })}
                                     className="w-4 h-4 mt-0.5"
                                 />
                                 <span>
@@ -1838,7 +1896,9 @@ export default function ChatbotPage() {
                             <div className="border border-black p-3">
                                 <span className="block text-sm font-bold">Automatic bubble count</span>
                                 <span className="block text-xs text-gray-500 mt-1">
-                                    Replies use one message by default, at most two short bubbles. Follow-ups retain their configured style.
+                                    {config.commercial_video_intake_enabled
+                                        ? 'Keep the full pricing, all seven process steps with the revision note, and the complete form in separate single messages. Follow with a relevant question. Structured messages stay complete regardless of the bubble setting.'
+                                        : 'Replies use one message by default, at most two short bubbles. Follow-ups retain their configured style.'}
                                 </span>
                             </div>
                         </div>
@@ -1861,7 +1921,9 @@ export default function ChatbotPage() {
                                 <span>
                                     <span className="block text-sm font-bold">No-reply follow-ups</span>
                                     <span className="block text-xs text-gray-500 mt-1">
-                                        Cancel immediately when the customer replies or the bot reaches a stop condition.
+                                        {config.commercial_video_intake_enabled
+                                            ? 'Keep relevant follow-ups while the form is incomplete OR a clear request is missing. A complete form alone does not stop them. Staff intervention pauses queued work.'
+                                            : 'Cancel immediately when the customer replies or the bot reaches a stop condition.'}
                                     </span>
                                 </span>
                             </label>
@@ -1938,7 +2000,7 @@ export default function ChatbotPage() {
                         <p className="font-mono text-xs font-bold uppercase text-gray-500 mt-5 mb-2">Stop the bot when</p>
                         <div className="grid sm:grid-cols-2 gap-2">
                             {([
-                                ['stop_when_details_collected', 'Collection percentage target is reached'],
+                                ['stop_when_details_collected', config.commercial_video_intake_enabled ? 'Form completion alone stops the bot (off for this intake)' : 'Collection percentage target is reached'],
                                 ['stop_on_opt_out', 'Customer asks the Page to stop'],
                                 ['stop_on_refusal', 'Customer clearly refuses or is not interested'],
                                 ['stop_on_qualified', 'Meta lead stage becomes Qualified', true],
@@ -1949,9 +2011,9 @@ export default function ChatbotPage() {
                                 <label key={key} className="border border-gray-400 p-2 flex items-start gap-2 text-xs cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={Boolean(config[key])}
+                                        checked={key === 'stop_when_details_collected' && config.commercial_video_intake_enabled ? false : Boolean(config[key])}
                                         onChange={(event) => updateConfig({ [key]: event.target.checked })}
-                                        disabled={alwaysOn}
+                                        disabled={alwaysOn || (key === 'stop_when_details_collected' && config.commercial_video_intake_enabled === true)}
                                         className="w-4 h-4 mt-0.5"
                                     />
                                     <span>{label}{alwaysOn && <span className="ml-1 font-bold text-green-700">(always on)</span>}</span>

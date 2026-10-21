@@ -120,7 +120,9 @@ describe('worker handoffs after an intake reset', () => {
         ['old mobile reply before first intake', 'We will handle this.', '2026-10-06T00:00:00Z', true, false],
         ['old takeover', 'You took over this chat from your AI agent.', '2026-10-06T00:00:00Z', false, false],
         ['recent mobile reply', 'We will handle this.', '2026-10-08T00:00:00Z', true, true],
-        ['durable qualified stage', 'Lead stage set to Qualified', '2026-10-06T00:00:00Z', false, true]
+        ['durable qualified stage', 'Lead stage set to Qualified', '2026-10-06T00:00:00Z', false, true],
+        ['explicit reset old stage', 'Lead stage set to Not qualified', '2025-09-15T19:37:44Z', false, false],
+        ['explicit reset recent stage', 'Lead stage set to Not qualified', '2026-10-08T00:00:00Z', false, true]
     ])('%s respects the current intake boundary', async (label, text, sentAt, mobile, shouldStop) => {
         vi.clearAllMocks();
         const mutations: Array<{ table: string; payload: any }> = [];
@@ -129,7 +131,8 @@ describe('worker handoffs after an intake reset', () => {
             const lookup = () => {
                 if (table === 'pages') return { data: { id: 'page-1', fb_page_id: 'fb-page', access_token: 'token', messaging_auto_tag_checked_at: '2026-10-01T00:00:00Z', messaging_auto_tag_cursor: null }, error: null };
                 if (table === 'contacts') return { data: { id: 'contact-1', pipeline_stage: 'engaged', pipeline_stage_source: 'chatbot', last_inbound_at: '2026-10-07T00:00:00Z' }, error: null };
-                if (table === 'chatbot_contact_states') return { data: label === 'old mobile reply before first intake' ? null : { status: 'active', started_at: '2026-10-07T00:00:00Z', collected_details: {} }, error: null };
+                if (table === 'chatbot_contact_states') return { data: label === 'old mobile reply before first intake' ? null : { status: 'active', started_at: '2026-10-07T00:00:00Z', collected_details: {},
+                    messenger_history_reset_at: String(label).startsWith('explicit reset') ? '2026-10-07T00:00:00Z' : null }, error: null };
                 return { data: [], error: null };
             };
             const chain: any = {

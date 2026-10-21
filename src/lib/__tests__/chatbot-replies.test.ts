@@ -27,4 +27,10 @@ describe('chatbot reply retries', () => {
         const { db } = fixture({ data: null, error: { message: 'Database unavailable' } });
         await expect(claimChatbotReply(db, input)).rejects.toThrow('Database unavailable');
     });
+    it('stores the original timestamp when claiming a new reply', async () => {
+        const insert=vi.fn().mockResolvedValue({error:null});
+        const db={from:()=>({insert})};
+        await expect(claimChatbotReply(db,{...input,inboundAt:'2026-10-17T19:01:47.825Z'})).resolves.toBe(true);
+        expect(insert).toHaveBeenCalledWith(expect.objectContaining({inbound_at:'2026-10-17T19:01:47.825Z'}));
+    });
 });

@@ -7,6 +7,7 @@ import {
     generateChatbotResponse,
     generateChatbotReply,
     extractChatbotContactDetails,
+    analyzeChatbotContinuation,
     getChatbotKnowledgePageId,
     includeKnownContactName,
     splitChatbotMessageBubbles,
@@ -51,6 +52,51 @@ const config: ChatbotConfig = {
     stop_on_converted: true,
     stop_on_order_created: true
 };
+
+describe('AI end-of-day review and resumed collection', () => {
+    const history = [{ id: 'customer-1', message: 'How much for a bakery video?', from: { id: 'customer', name: 'CJ' }, created_time: '2026-10-16T10:00:00Z' }];
+    it('requires a grounded customer quote before accepting an undecided decision', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+            purchase_status: 'undecided', confidence: 0.95, summary: 'Pricing question without agreement', customer_evidence: 'How much for a bakery video?'
+        }) } }] }) });
+        vi.stubGlobal('fetch', fetchMock);
+        expect((await analyzeChatbotContinuation({ config, pageId: 'page', history, collectedDetails: {} })).purchase_status).toBe('undecided');
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content).toContain('silence');
+    });
+    it.each(['Page-only sales pitch', '', 'invented quote'])('rejects unsupported evidence: %s', async customer_evidence => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+            purchase_status: 'undecided', confidence: 0.99, summary: 'reason', customer_evidence
+        }) } }] }) }));
+        await expect(analyzeChatbotContinuation({ config, pageId: 'page', history: [...history,
+            { id: 'page-1', message: 'Page-only sales pitch', from: { id: 'page', name: 'Page' }, created_time: '2026-10-16T11:00:00Z' }
+        ], collectedDetails: {} })).rejects.toThrow('unsupported');
+    });
+    it('keeps old customer purchase commitments when many newer Page messages exist', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+            purchase_status: 'agreed', confidence: 0.99, summary: 'Already agreed', customer_evidence: 'Yes, I will buy'
+        }) } }] }) });
+        vi.stubGlobal('fetch', fetchMock);
+        await analyzeChatbotContinuation({ config, pageId: 'page', collectedDetails: {}, history: [
+            { id: 'agreement', message: 'Yes, I will buy', from: { id: 'customer', name: 'CJ' }, created_time: '2026-10-16T09:00:00Z' },
+            ...Array.from({ length: 150 }, (_, i) => ({ id: String(i), message: 'Page promotion', from: { id: 'page', name: 'Page' }, created_time: new Date(Date.parse('2026-10-16T10:00:00Z') + i * 1000).toISOString() }))
+        ] });
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body).messages).toContainEqual({ role: 'user', content: 'Yes, I will buy' });
+    });
+    it('requires the raised six-detail target instead of stopping again at the Page three-detail target', async () => {
+        process.env.OPENROUTER_API_KEY = 'test-key';
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ messages: ['What deadline works?'], collected_details: {} }) } }] }) }));
+        const fields = ['name', 'business', 'product', 'duration', 'deadline', 'script', 'purpose', 'idea', 'budget'];
+        const input = { config: { ...config, details_to_collect: fields, details_completion_percent: 33 }, pageId: 'page', inboundMessage: 'Thanks', detailTargetCount: 6 };
+        const first = await generateChatbotResponse({ ...input, collectedDetails: { name: 'CJ', business: 'Bakery', product: 'Bread' } });
+        expect(first.details_complete).toBe(false);
+        const second = await generateChatbotResponse({ ...input, collectedDetails: Object.fromEntries(fields.slice(0, 6).map(k => [k, 'answer'])) });
+        expect(second.details_complete).toBe(true);
+        expect(second.missing_details).toEqual(['purpose', 'idea', 'budget']);
+    });
+});
 
 describe('shared chatbot knowledge library', () => {
     it('uses the configured source Page and otherwise falls back to the bot Page', () => {
@@ -317,7 +363,10 @@ describe('VeoBot chatbot', () => {
 
     it('keeps scheduled follow-ups short even when the model returns long copy', async () => {
         process.env.OPENROUTER_API_KEY = 'test-key';
-        const longFollowUp = 'Still interested in the haircut appointment next week? '.repeat(12);
+        const longFollowUp = 'You mentioned a haircut appointment next week, so I wanted to help narrow down a suitable day based on your plans. ' +
+            'If you already have a preferred time, you can share it here so the salon can check the relevant availability for you. ' +
+            'It also helps to know whether you have a particular style in mind before making the appointment request. ' +
+            'Would a weekday or weekend suit your schedule better?';
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
             ok: true,
             status: 200,
@@ -766,7 +815,7 @@ describe('VeoBot chatbot', () => {
             config,
             pageId: 'page-facebook-id',
             inboundMessage: 'What are my options?'
-        })).resolves.toBe('Here are your options.\nStarter, quick setup\nPro, full service!');
+        })).resolves.toBe('Here are your options.\nStarter. quick setup\nPro. full service!');
 
         const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
         expect(requestBody.messages[0].content).toContain('Write like a skilled Page representative texting naturally in Messenger');
@@ -916,7 +965,7 @@ describe('VeoBot chatbot', () => {
         expect(requestBody.messages[0].content).toContain('never ask the customer for their name');
     });
 
-    it('combines excessive model bubbles into one short reply by default', async () => {
+    it('bounds excessive model bubbles while preserving splitting in automatic mode', async () => {
         process.env.OPENROUTER_API_KEY = 'test-key';
         const bubbles = ['One', 'Two', 'Three', 'Four', 'Five', 'Six'];
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -938,18 +987,23 @@ describe('VeoBot chatbot', () => {
             inboundMessage: 'Please explain it naturally.'
         });
 
-        expect(result.messages).toEqual([bubbles.join(' ')]);
+        expect(result.messages).toEqual(bubbles);
     });
 
     it('caps reply length and count even when the model produces excessive copy', () => {
         const parts = Array.from({ length: 8 }, (_, i) => `Answer ${i}: ${'Useful customer information. '.repeat(10)}`);
         for (const max_message_parts of [0, 1, 2, 9]) {
             const messages = formatChatbotReplyMessages(parts, { split_messages: true, max_message_parts });
-            expect(messages.length).toBeLessThanOrEqual(max_message_parts === 0 ? 1 : Math.min(2, max_message_parts));
+            expect(messages.length).toBeLessThanOrEqual(max_message_parts === 0 ? 6 : Math.min(6, max_message_parts));
             expect(messages.join('\n\n').length).toBeLessThanOrEqual(320);
         }
         expect(formatChatbotReplyMessages(['Thanks', 'Thanks', 'What date works?'], { split_messages: false, max_message_parts: 0 }))
             .toEqual(['Thanks What date works?']);
+    });
+
+    it('keeps the answer and intake question separate through delivery formatting in automatic mode', () => {
+        expect(formatChatbotReplyMessages(['5000 pesos po ang package.', 'Saan po located ang business ninyo?'],
+            { split_messages: true, max_message_parts: 0 })).toEqual(['5000 pesos po ang package.', 'Saan po located ang business ninyo?']);
     });
 
     it('reaches a percentage detail target and includes explicit dos and donts', async () => {

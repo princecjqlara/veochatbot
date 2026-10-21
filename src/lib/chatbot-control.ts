@@ -24,7 +24,30 @@ export type ChatbotContactState = {
     stopped_at: string | null;
     last_inbound_at: string | null;
     last_bot_reply_at: string | null;
+    detail_collection_target?: number | null;
+    collection_round?: number;
+    updated_at?: string;
+    pause_kind?: 'human_takeover' | 'explicit_hold' | 'ready_for_team' | null;
+    last_human_activity_at?: string | null;
+    automation_resumed_at?: string | null;
+    messenger_history_reset_at?: string | null;
+    automation_epoch?: number;
+    has_clear_request?: boolean;
+    request_type?: 'commercial_video' | 'free_concept' | 'free_script' | null;
+    request_evidence?: string | null;
 };
+
+/** A reviewed restart acknowledges older staff replies without erasing intake history. */
+export function getChatbotHandoffBoundary(state: ChatbotContactState | null | undefined, fallback?: string | null) {
+    return state?.automation_resumed_at || state?.started_at || fallback || undefined;
+}
+
+export function getChatbotHandoffOptions(state: ChatbotContactState | null | undefined, fallback?: string | null) {
+    return {
+        humanHandoffSince: getChatbotHandoffBoundary(state, fallback),
+        historyResetAt: state?.messenger_history_reset_at
+    };
+}
 
 type SupabaseLike = {
     from: (table: string) => any;
@@ -149,7 +172,7 @@ export async function getChatbotContactState(
 ): Promise<ChatbotContactState | null> {
     const { data, error } = await supabase
         .from('chatbot_contact_states')
-        .select('id, page_id, contact_id, status, started_at, window_expires_at, collected_details, missing_details, stop_reason, stopped_at, last_inbound_at, last_bot_reply_at')
+        .select('*')
         .eq('page_id', pageId)
         .eq('contact_id', contactId)
         .maybeSingle();
@@ -173,6 +196,11 @@ export async function saveChatbotContactState(
         inboundAt?: string;
         botRepliedAt?: string;
         stopReason?: ChatbotStopReason | null;
+        pauseKind?: ChatbotContactState['pause_kind'];
+        humanActivityAt?: string;
+        hasClearRequest?: boolean;
+        requestType?: ChatbotContactState['request_type'];
+        requestEvidence?: string | null;
         now?: Date;
     }
 ): Promise<void> {
@@ -202,17 +230,24 @@ export async function saveChatbotContactState(
         stopped_at: stopReason ? input.existingState?.stopped_at || now.toISOString() : null,
         last_inbound_at: input.inboundAt || input.existingState?.last_inbound_at || null,
         last_bot_reply_at: input.botRepliedAt || input.existingState?.last_bot_reply_at || null,
-        updated_at: now.toISOString()
+        updated_at: now.toISOString(),
+        ...(input.pauseKind !== undefined ? { pause_kind: input.pauseKind } : {}),
+        ...(input.humanActivityAt ? { last_human_activity_at: input.humanActivityAt } : {}),
+        ...(input.hasClearRequest !== undefined ? { has_clear_request: input.hasClearRequest } : {}),
+        ...(input.requestType !== undefined ? { request_type: input.requestType } : {}),
+        ...(input.requestEvidence !== undefined ? { request_evidence: input.requestEvidence } : {})
     };
     const query = supabase.from('chatbot_contact_states');
-    const conditionalUpdate = input.existingState && (!stopReason || stopReason === 'details_collected');
+    const conditionalUpdate = input.existingState && (!stopReason || stopReason === 'details_collected' ||
+        (input.pauseKind === undefined && stopReason === input.existingState.stop_reason));
     let result;
     if (conditionalUpdate) {
         // A worker or a person may have stopped this row since it was read.
         // Intake completion and photo updates must not replace a human stop.
         let update = query.update(payload).eq('page_id', input.pageId).eq('contact_id', input.contactId)
             .eq('status', input.existingState!.status);
-        if (input.existingState!.status === 'stopped') update = update.eq('stop_reason', 'details_collected');
+        if (input.existingState!.status === 'stopped') update = update.eq('stop_reason', input.existingState!.stop_reason);
+        if (input.existingState!.updated_at) update = update.eq('updated_at', input.existingState!.updated_at);
         result = await update;
     } else {
         result = await query.upsert(payload, {
