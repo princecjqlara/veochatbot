@@ -38,7 +38,8 @@ describe('interactive commercial-video intake', () => {
         expect(mergeCommercialVideoChatDetails({ 'Preferred Video Length': '30 seconds' }, {}, ['16 seconds'], 'Pakisend ng form')['Preferred Video Length']).toBe('30 seconds');
         const history = [{ message: '30 seconds', from: { id: 'customer' }, created_time: '2026-10-21T01:01:00Z' }, { message: '16 seconds', from: { id: 'customer' }, created_time: '2026-10-21T01:00:00Z' }];
         expect(commercialVideoCustomerTexts(history, 'page')).toEqual(['16 seconds', '30 seconds']);
-        expect(mergeCommercialVideoChatDetails({}, { 'Preferred Style': 'Cinematic', 'Page / Social Media Link': 'https://example.com/invented', 'Preferred Video Length': '30 seconds' }, ['Hi po'], 'Hi po')).toEqual({});
+        expect(mergeCommercialVideoChatDetails({}, { 'Preferred Style': 'Cinematic', 'Page / Social Media Link': 'https://example.com/invented', 'Preferred Video Length': '30 seconds', 'Portrait or Landscape?': 'Portrait' }, ['Hi po'], 'Hi po')).toEqual({});
+        expect(mergeCommercialVideoChatDetails({}, {}, ['Portrait or Landscape? Portrait'], 'Portrait or Landscape? Portrait')['Portrait or Landscape?']).toBe('Portrait');
     });
     it('keeps simulated duration choices on the question after the actual sample carousel', () => {
         const messages = buildChatbotTestMessages({ messages: ['Ito ang samples.', 'Ilang seconds ang gusto mo?'], media_items: [{ id: 'sample', title: 'Bakery', media_type: 'video' }] }, { idPrefix: 'turn', commercialVideoIntake: true });

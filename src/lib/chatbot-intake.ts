@@ -67,6 +67,16 @@ export function getMissingCommercialVideoDetails(value: unknown): string[] {
     return COMMERCIAL_VIDEO_REQUIRED_DETAILS.filter(label => !details[label]);
 }
 
+function customerOrientation(text: string): 'Portrait' | 'Landscape' | null {
+    const field = text.match(/^(?:portrait or landscape\??|(?:video )?(?:orientation|format))\s*:?\s*([^\r\n]*)$/im);
+    const standalone = /^\s*(?:portrait|landscape|vertical|horizontal|9\s*:\s*16|16\s*:\s*9)(?:\s+(?:po|please))?[.!]?\s*$/i.test(text);
+    if (!field && !standalone && !/preferred.{0,25}(?:format|orientation)|(?:format|orientation).{0,25}(?:gusto|preferred)|(?:portrait|landscape).{0,30}(?:format|orientation|gusto)/i.test(text)) return null;
+    const answer = field ? field[1] : text;
+    const portrait = /\b(?:portrait|vertical)\b|9\s*:\s*16/i.test(answer);
+    const landscape = /\b(?:landscape|horizontal)\b|16\s*:\s*9/i.test(answer);
+    return portrait === landscape ? null : portrait ? 'Portrait' : 'Landscape';
+}
+
 /** A request for a video identifies the service, not its business objective.
  * Keep saved goals; accept new goals only in the customer's own words. */
 export function mergeCommercialVideoChatDetails(existing: unknown, candidate: unknown, customerTexts: string[], currentCustomerText?: string): Record<string, string> {
@@ -82,6 +92,8 @@ export function mergeCommercialVideoChatDetails(existing: unknown, candidate: un
     }
     if (proposed['Preferred Video Length'] && proposed['Preferred Video Length'] !== saved['Preferred Video Length'] &&
         !customerTexts.some(text => commercialVideoDurationSeconds(text) === commercialVideoDurationSeconds(proposed['Preferred Video Length']))) delete proposed['Preferred Video Length'];
+    if (proposed['Portrait or Landscape?'] && proposed['Portrait or Landscape?'] !== saved['Portrait or Landscape?'] &&
+        !customerTexts.some(text => customerOrientation(text) === proposed['Portrait or Landscape?'])) delete proposed['Portrait or Landscape?'];
     const merged = { ...saved, ...proposed };
     let inferredSeconds: number | null = null;
     let inferredOrientation: string | null = null;
@@ -89,8 +101,7 @@ export function mergeCommercialVideoChatDetails(existing: unknown, candidate: un
         const withoutLinks = text.replace(/https?:\/\/\S+/g, '');
         const seconds = commercialVideoDurationSeconds(withoutLinks);
         if (seconds && !/\?/.test(withoutLinks) && !/sample|example|reference|add.on/i.test(withoutLinks)) inferredSeconds = seconds;
-        if (/portrait|vertical|9\s*:\s*16/i.test(withoutLinks) && !/landscape|horizontal|\?/i.test(withoutLinks)) inferredOrientation = 'Portrait';
-        if (/landscape|horizontal|16\s*:\s*9/i.test(withoutLinks) && !/portrait|vertical|\?/i.test(withoutLinks)) inferredOrientation = 'Landscape';
+        inferredOrientation = customerOrientation(withoutLinks) || inferredOrientation;
     }
     if (!merged['Preferred Video Length'] && inferredSeconds) merged['Preferred Video Length'] = inferredSeconds + ' seconds';
     if (!merged['Portrait or Landscape?'] && inferredOrientation) merged['Portrait or Landscape?'] = inferredOrientation;
@@ -98,8 +109,8 @@ export function mergeCommercialVideoChatDetails(existing: unknown, candidate: un
     const currentSeconds = !/\?|sample|example|reference|add.on/i.test(current) ? commercialVideoDurationSeconds(current) : null;
     if (currentSeconds) merged['Preferred Video Length'] = currentSeconds + ' seconds';
     else if (saved['Preferred Video Length']) merged['Preferred Video Length'] = saved['Preferred Video Length'];
-    if (/portrait|vertical|9\s*:\s*16/i.test(current) && !/landscape|horizontal|\?/i.test(current)) merged['Portrait or Landscape?'] = 'Portrait';
-    if (/landscape|horizontal|16\s*:\s*9/i.test(current) && !/portrait|vertical|\?/i.test(current)) merged['Portrait or Landscape?'] = 'Landscape';
+    const currentOrientation = customerOrientation(current);
+    if (currentOrientation) merged['Portrait or Landscape?'] = currentOrientation;
     return merged;
 }
 
