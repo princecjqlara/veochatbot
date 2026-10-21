@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
     getOpenRouterModelContextLength: vi.fn(),
     getReadyChatbotMediaForDocument: vi.fn(),
     getReadyChatbotMediaForDocuments: vi.fn(),
-    createChatbotMediaSignedUrl: vi.fn()
+    createChatbotMediaSignedUrl: vi.fn(),
+    getReadyChatbotDriveFolderForDocument: vi.fn()
 }));
 
 vi.mock('@/lib/get-session', () => ({
@@ -43,6 +44,11 @@ vi.mock('@/lib/chatbot-media', () => ({
     getReadyChatbotMediaForDocument: mocks.getReadyChatbotMediaForDocument,
     getReadyChatbotMediaForDocuments: mocks.getReadyChatbotMediaForDocuments,
     createChatbotMediaSignedUrl: mocks.createChatbotMediaSignedUrl
+}));
+
+vi.mock('@/lib/chatbot-drive-folders', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/lib/chatbot-drive-folders')>(),
+    getReadyChatbotDriveFolderForDocument: mocks.getReadyChatbotDriveFolderForDocument
 }));
 
 import { GET, POST, PUT } from './route';
@@ -110,6 +116,7 @@ describe('chatbot Page-member access', () => {
         mocks.userHasPageAccess.mockResolvedValue(true);
         mocks.getOpenRouterModelContextLength.mockResolvedValue(1_048_576);
         mocks.getReadyChatbotMediaForDocuments.mockResolvedValue([]);
+        mocks.getReadyChatbotDriveFolderForDocument.mockResolvedValue(null);
     });
 
     it('lets any user_pages collaborator load the shared bot configuration', async () => {
@@ -365,6 +372,26 @@ describe('chatbot Page-member access', () => {
             scheduleLabel: 'best-time day 2-7'
         }));
         expect(mocks.generateChatbotFollowUp.mock.calls[0][0]).not.toHaveProperty('fallbackMessage');
+    });
+
+    it('previews the selected follow-up folder button without writing contacts or schedules', async () => {
+        const configBuilder = selectBuilder({ data: { ...savedConfig, knowledge_source_page_id: 'shared_library' }, error: null });
+        const pageBuilder = selectBuilder({ data: { name: 'Test Page' }, error: null });
+        const from = vi.fn((table: string) => table === 'chatbot_configs' ? configBuilder : pageBuilder);
+        mocks.getSupabaseAdmin.mockReturnValue({ from });
+        const folder = { id: 'folder_1', name: 'Bakery samples', folder_url: 'https://example.com/samples', button_text: 'View samples' };
+        mocks.getReadyChatbotDriveFolderForDocument.mockResolvedValue(folder);
+        mocks.generateChatbotFollowUp.mockResolvedValue({
+            message: 'Ito ang bakery samples. Anong style ang gusto mo?',
+            messages: ['Ito ang bakery samples.', 'Anong style ang gusto mo?'],
+            link_document_id: 'folder_document', knowledge: []
+        });
+        const response = await POST(configRequest({ mode: 'follow_up', history: [{ role: 'user', content: 'Bakery samples po.' }] }, 'POST'),
+            { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual(expect.objectContaining({ folder, messages: ['Ito ang bakery samples.', 'Anong style ang gusto mo?'] }));
+        expect(mocks.getReadyChatbotDriveFolderForDocument).toHaveBeenCalledWith({ pageId: 'shared_library', documentId: 'folder_document' });
+        expect(from.mock.calls.map(([table]) => table)).toEqual(['chatbot_configs', 'pages']);
     });
 
     it('rejects a signed-in user without a user_pages membership', async () => {

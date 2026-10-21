@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabase';
 import { COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
+import { buildChatbotTestMessages, getChatbotTestHistory, type TestChatMessage, type TestMedia, type TestSource } from '@/lib/chatbot-test-preview';
 
 type PageSummary = {
     id: string;
@@ -88,12 +89,6 @@ type KnowledgeDocument = {
     created_at: string;
 };
 
-type TestSource = {
-    document_id: string;
-    title: string;
-    similarity: number;
-};
-
 type MediaAsset = {
     id: string;
     knowledge_document_id: string | null;
@@ -121,12 +116,6 @@ type PendingMediaUpload = {
     sourceFolder: string;
     status: 'queued' | 'uploading' | 'analyzing' | 'failed';
     error?: string;
-};
-
-type TestMedia = Pick<MediaAsset, 'id' | 'title' | 'media_type'> & {
-    usage_notes?: string;
-    preview_url?: string | null;
-    target_url?: string | null;
 };
 
 type DriveFolder = {
@@ -164,8 +153,6 @@ type DriveSyncStatus = {
     message?: string;
 };
 
-type TestFolder = Pick<DriveFolder, 'id' | 'name' | 'folder_url' | 'button_text'>;
-
 type TestTokenUsage = {
     prompt_tokens: number;
     completion_tokens: number;
@@ -173,17 +160,6 @@ type TestTokenUsage = {
     context_length: number | null;
     remaining_tokens: number | null;
     model: string | null;
-};
-
-type TestChatMessage = {
-    id: string;
-    role: 'user' | 'assistant';
-    content: string;
-    label?: string;
-    sources?: TestSource[];
-    media?: TestMedia | null;
-    mediaItems?: TestMedia[];
-    folder?: TestFolder | null;
 };
 
 type LiveTrialContact = {
@@ -349,25 +325,25 @@ function MessengerCarouselPreview({ mediaItems }: { mediaItems: TestMedia[] }) {
         <div className="mt-3 border-t border-gray-300 pt-3">
             <div className="mb-2 flex items-center justify-between gap-3">
                 <p className="font-mono text-[9px] font-bold uppercase text-gray-500">
-                    Messenger carousel · swipe or use arrows
+                    {mediaItems.length > 1 ? 'Messenger carousel · swipe or use arrows' : 'Messenger sample card'}
                 </p>
-                <div className="hidden gap-1 sm:flex">
+                {mediaItems.length > 1 && <div className="hidden gap-1 sm:flex">
                     <button type="button" onClick={() => slide(-1)} className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-400 bg-white hover:border-black hover:bg-gray-100" aria-label="Previous carousel card">
                         <ChevronLeft className="h-4 w-4" />
                     </button>
                     <button type="button" onClick={() => slide(1)} className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-400 bg-white hover:border-black hover:bg-gray-100" aria-label="Next carousel card">
                         <ChevronRight className="h-4 w-4" />
                     </button>
-                </div>
+                </div>}
             </div>
-            <div ref={carouselRef} className="flex w-[min(72vw,540px)] touch-pan-x snap-x snap-mandatory gap-2 overflow-x-auto overscroll-x-contain pb-2" aria-label="Messenger media carousel preview">
+            <div ref={carouselRef} className={`flex ${mediaItems.length > 1 ? 'w-[min(72vw,540px)]' : 'w-[188px] max-w-full'} touch-pan-x snap-x snap-mandatory gap-2 overflow-x-auto overscroll-x-contain pb-2`} aria-label={mediaItems.length > 1 ? 'Messenger media carousel preview' : 'Messenger sample card preview'}>
                 {mediaItems.map((mediaItem) => (
                     <article key={mediaItem.id} className="min-w-[188px] max-w-[188px] snap-start overflow-hidden rounded-xl border border-gray-300 bg-white shadow-sm">
-                        {mediaItem.media_type === 'image' && mediaItem.preview_url ? (
+                        {(mediaItem.media_type === 'image' || mediaItem.source === 'google_drive') && mediaItem.preview_url ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={mediaItem.preview_url} alt={mediaItem.title} className="h-32 w-full border-b border-gray-200 object-cover" />
                         ) : mediaItem.media_type === 'video' && mediaItem.preview_url ? (
-                            <video src={mediaItem.preview_url} preload="metadata" muted playsInline className="h-32 w-full border-b border-gray-200 bg-black object-cover" />
+                            <video src={mediaItem.preview_url} controls preload="metadata" playsInline className="h-32 w-full border-b border-gray-200 bg-black object-cover" />
                         ) : (
                             <div className="flex h-32 items-center justify-center border-b border-gray-200 bg-gradient-to-br from-blue-50 to-gray-200">
                                 {mediaItem.media_type === 'image' ? <ImageIcon className="h-9 w-9 text-gray-500" /> : <Video className="h-9 w-9 text-gray-500" />}
@@ -378,8 +354,8 @@ function MessengerCarouselPreview({ mediaItems }: { mediaItems: TestMedia[] }) {
                             <p className="mt-1 line-clamp-2 min-h-8 text-[10px] leading-4 text-gray-500">
                                 {mediaItem.usage_notes || `${mediaItem.media_type === 'image' ? 'Image' : 'Video'} sample`}
                             </p>
-                            {mediaItem.preview_url ? (
-                                <a href={mediaItem.target_url || mediaItem.preview_url} target="_blank" rel="noreferrer" className="mt-2 flex h-9 items-center justify-center border-t border-gray-200 text-[11px] font-bold text-blue-700 hover:bg-blue-50">
+                            {mediaItem.target_url || mediaItem.preview_url ? (
+                                <a href={mediaItem.target_url || mediaItem.preview_url || undefined} target="_blank" rel="noreferrer" className="mt-2 flex h-9 items-center justify-center border-t border-gray-200 text-[11px] font-bold text-blue-700 hover:bg-blue-50">
                                     {mediaItem.media_type === 'image' ? 'View image' : 'Watch video'}
                                 </a>
                             ) : (
@@ -391,7 +367,7 @@ function MessengerCarouselPreview({ mediaItems }: { mediaItems: TestMedia[] }) {
                     </article>
                 ))}
             </div>
-            <p className="mt-1 font-mono text-[9px] text-gray-400">{mediaItems.length} cards · actual Messenger layout may vary slightly by device</p>
+            <p className="mt-1 font-mono text-[9px] text-gray-400">{mediaItems.length} {mediaItems.length === 1 ? 'card' : 'cards'} · actual Messenger layout may vary slightly by device</p>
         </div>
     );
 }
@@ -760,7 +736,7 @@ export default function ChatbotPage() {
     const testChatbot = async () => {
         const message = testMessage.trim();
         if (!selectedPageId || !message || testing) return;
-        const history = testConversation.map(({ role, content }) => ({ role, content }));
+        const history = getChatbotTestHistory(testConversation);
         const userMessage: TestChatMessage = {
             id: `user-${Date.now()}`,
             role: 'user',
@@ -785,24 +761,18 @@ export default function ChatbotPage() {
             });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Chatbot test failed');
-            const replies = (Array.isArray(body.messages) ? body.messages : [body.reply])
-                .filter((reply: unknown): reply is string => typeof reply === 'string' && reply.trim().length > 0);
-            const sources = Array.isArray(body.sources) ? body.sources : [];
-            const assistantMessages: TestChatMessage[] = replies.map((reply: string, index: number) => ({
-                id: `assistant-${Date.now()}-${index}`,
-                role: 'assistant',
-                content: reply,
-                ...(index === replies.length - 1 ? {
-                    sources,
-                    media: body.media || null,
-                    mediaItems: Array.isArray(body.media_items) ? body.media_items : body.media ? [body.media] : [],
-                    folder: body.folder || null
-                } : {})
-            }));
+            const assistantMessages = buildChatbotTestMessages(body, {
+                idPrefix: `assistant-${Date.now()}`,
+                commercialVideoIntake: config?.commercial_video_intake_enabled
+            });
             setTestConversation((current) => [...current, ...assistantMessages]);
             setTestCollectedDetails(body.collected_details || {});
             setTestTokenUsage(body.token_usage || null);
-            if (body.retrieval_warning) setStatus('Reply generated, but knowledge retrieval was unavailable: ' + body.retrieval_warning);
+            setStatus([
+                body.retrieval_warning && 'Knowledge retrieval was unavailable: ' + body.retrieval_warning,
+                body.generation_warning && 'Reply generation warning: ' + body.generation_warning,
+                body.intake_action === 'handoff' && 'Ready for team handoff. In Messenger, the bot would pause for the team.'
+            ].filter(Boolean).join(' '));
         } catch (testError) {
             setError((testError as Error).message);
             setTestConversation((current) => current.filter((entry) => entry.id !== userMessage.id));
@@ -842,7 +812,8 @@ export default function ChatbotPage() {
                 usage_notes: `${file.media_type === 'image' ? 'Image' : 'Video'} sample from Google Drive`,
                 media_type: file.media_type,
                 preview_url: file.thumbnail_url,
-                target_url: file.web_view_url
+                target_url: file.web_view_url,
+                source: 'google_drive'
             }));
         const readyMedia = [...indexedDriveMedia, ...uploadedMedia].slice(0, 10);
         const sampleMedia: TestMedia[] = [
@@ -860,13 +831,14 @@ export default function ChatbotPage() {
                 ? 'Here are a few samples you can browse.'
                 : 'This is how multiple media cards will appear after you upload at least two relevant assets.',
             label: readyMedia.length >= 2 ? 'Messenger carousel preview' : 'UI demo · not sent',
+            previewOnly: true,
             media: mediaItems[0],
             mediaItems
         }]);
     };
 
     const testFollowUp = async () => {
-        if (!selectedPageId || testConversation.length === 0 || testing) return;
+        if (!selectedPageId || getChatbotTestHistory(testConversation).length === 0 || testing) return;
         setTesting(true);
         setError('');
         setStatus('');
@@ -879,26 +851,25 @@ export default function ChatbotPage() {
                     contact_name: testContactName,
                     follow_up_type: testFollowUpType,
                     sequence_number: testFollowUpCount + 1,
-                    history: testConversation.map(({ role, content }) => ({ role, content })),
+                    history: getChatbotTestHistory(testConversation),
                     collected_details: testCollectedDetails,
                     draft_config: config
                 })
             });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Follow-up test failed');
-            const sources = Array.isArray(body.sources) ? body.sources : [];
-            setTestConversation((current) => [...current, {
-                id: `follow-up-${Date.now()}`,
-                role: 'assistant',
-                content: body.reply,
+            const messages = buildChatbotTestMessages(body, {
+                idPrefix: `follow-up-${Date.now()}`,
                 label: body.follow_up_label || 'Follow-up preview',
-                sources,
-                media: body.media || null,
-                mediaItems: Array.isArray(body.media_items) ? body.media_items : body.media ? [body.media] : []
-            }]);
+                commercialVideoIntake: config?.commercial_video_intake_enabled
+            });
+            setTestConversation((current) => [...current, ...messages]);
             setTestTokenUsage(body.token_usage || null);
             setTestFollowUpCount((current) => current + 1);
-            if (body.retrieval_warning) setStatus('Follow-up generated, but knowledge retrieval was unavailable: ' + body.retrieval_warning);
+            setStatus([
+                body.retrieval_warning && 'Knowledge retrieval was unavailable: ' + body.retrieval_warning,
+                body.generation_warning && 'Follow-up generation warning: ' + body.generation_warning
+            ].filter(Boolean).join(' '));
         } catch (followUpError) {
             setError((followUpError as Error).message);
         } finally {
@@ -2485,8 +2456,9 @@ export default function ChatbotPage() {
                                 <MessageSquare className="w-5 h-5" />
                             </div>
                             <div>
-                                <h2 className="font-bold text-base">Test before enabling</h2>
-                                <p className="mt-1 text-xs text-gray-500">Try a realistic customer message and review the answer, media, and knowledge sources.</p>
+                                <h2 className="font-bold text-base">Test chatbot</h2>
+                                <p className="mt-1 text-xs text-gray-500">Test the current editor settings with the same reply and follow-up logic used in Messenger. This preview does not send messages or change contacts.</p>
+                                {config.commercial_video_intake_enabled && <p className="mt-2 text-xs text-gray-600">Business → sample → duration → pricing and full process → proceed confirmation → form. Pricing, process, and form each stay in one message, with a separate follow-up question.</p>}
                             </div>
                         </div>
 
@@ -2687,14 +2659,9 @@ export default function ChatbotPage() {
                                             {chatMessage.label && (
                                                 <p className="mb-1 font-mono text-[9px] font-bold uppercase text-blue-700">{chatMessage.label}</p>
                                             )}
-                                            <p className="whitespace-pre-wrap">{chatMessage.content}</p>
-                                            {chatMessage.mediaItems && chatMessage.mediaItems.length > 1 && (
+                                            {chatMessage.content && <p className="whitespace-pre-wrap">{chatMessage.content}</p>}
+                                            {chatMessage.mediaItems && chatMessage.mediaItems.length > 0 && (
                                                 <MessengerCarouselPreview mediaItems={chatMessage.mediaItems} />
-                                            )}
-                                            {chatMessage.media && (!chatMessage.mediaItems || chatMessage.mediaItems.length <= 1) && (
-                                                <p className="mt-2 border-t border-gray-300 pt-2 font-mono text-[10px]">
-                                                    Would attach: {chatMessage.media.title} ({chatMessage.media.media_type})
-                                                </p>
                                             )}
                                             {chatMessage.folder && (
                                                 <div className="mt-2 border-t border-gray-300 pt-2">
@@ -2774,7 +2741,7 @@ export default function ChatbotPage() {
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
                                     <p className="text-xs font-bold">Preview the next automated follow-up</p>
-                                    <p className="mt-1 text-[10px] text-gray-500">Uses this test conversation and your saved AI follow-up instructions. It will not schedule or send anything.</p>
+                                    <p className="mt-1 text-[10px] text-gray-500">Uses this test conversation and the current editor settings. It will not schedule or send anything.</p>
                                 </div>
                                 <div className="flex flex-col gap-2 sm:flex-row">
                                     <select
@@ -2790,7 +2757,7 @@ export default function ChatbotPage() {
                                     <button
                                         type="button"
                                         onClick={() => void testFollowUp()}
-                                        disabled={testing || !providerConfigured || testConversation.length === 0}
+                                        disabled={testing || !providerConfigured || getChatbotTestHistory(testConversation).length === 0}
                                         className="btn-wireframe flex h-10 items-center justify-center gap-2 bg-white px-4 text-xs font-bold disabled:opacity-40"
                                     >
                                         <Clock3 className="h-4 w-4" />

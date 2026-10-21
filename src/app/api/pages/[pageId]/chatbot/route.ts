@@ -559,6 +559,9 @@ export async function POST(
                 source: 'google_drive'
             }));
             const followUpPreviews = followUpDrivePreviews.length > 0 ? followUpDrivePreviews : followUpMediaPreviews;
+            const followUpFolder = followUp.link_document_id
+                ? await getReadyChatbotDriveFolderForDocument({ pageId: knowledgePageId, documentId: followUp.link_document_id })
+                : null;
 
             return NextResponse.json({
                 reply: followUp.message,
@@ -569,6 +572,12 @@ export async function POST(
                 follow_up_label: followUpType === 'human_agent' ? 'Day 2–7 Human Agent preview' : 'Quick follow-up preview',
                 media: followUpPreviews[0] || null,
                 media_items: followUpPreviews,
+                folder: followUpFolder ? {
+                    id: followUpFolder.id,
+                    name: followUpFolder.name,
+                    folder_url: followUpFolder.folder_url,
+                    button_text: followUpFolder.button_text
+                } : null,
                 sources: followUp.knowledge.map((match) => ({
                     document_id: match.document_id,
                     title: match.title,
