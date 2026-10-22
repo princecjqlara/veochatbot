@@ -43,6 +43,7 @@ function defaultConfig(pageId: string): ChatbotConfig {
         bot_dos: '',
         bot_donts: '',
         follow_up_enabled: false,
+        follow_up_first_day_mode: 'fixed',
         follow_up_quick_delays_minutes: [60, 240, 720, 1380],
         follow_up_best_time_days: [2, 3, 5, 7],
         follow_up_messages: [],
@@ -122,6 +123,8 @@ function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): Chat
         bot_dos: optionalText('bot_dos', 3000, stored.bot_dos),
         bot_donts: optionalText('bot_donts', 3000, stored.bot_donts),
         follow_up_enabled: booleanValue('follow_up_enabled', stored.follow_up_enabled),
+        follow_up_first_day_mode: draft.follow_up_first_day_mode === 'adaptive' || draft.follow_up_first_day_mode === 'fixed'
+            ? draft.follow_up_first_day_mode : stored.follow_up_first_day_mode || 'fixed',
         follow_up_quick_delays_minutes: integerList(
             'follow_up_quick_delays_minutes', 1, 1439, 10, stored.follow_up_quick_delays_minutes
         ),
@@ -191,7 +194,7 @@ export async function GET(
 
         const { data, error } = await getSupabaseAdmin()
             .from('chatbot_configs')
-            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_first_day_mode, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
             .eq('page_id', pageId)
             .maybeSingle();
 
@@ -252,6 +255,10 @@ export async function PUT(
                 .filter((item) => Number.isFinite(item) && item >= min && item <= max)
         )).sort((a, b) => a - b).slice(0, limit);
         const quickDelays = normalizeIntegerList(body.follow_up_quick_delays_minutes, 1, 1439, 10);
+        if (body.follow_up_first_day_mode !== undefined &&
+            body.follow_up_first_day_mode !== 'fixed' && body.follow_up_first_day_mode !== 'adaptive') {
+            return NextResponse.json({ error: 'First-day timing must be fixed or adaptive' }, { status: 400 });
+        }
         const bestTimeDays = normalizeIntegerList(body.follow_up_best_time_days, 2, 7, 6);
         const followUpAiInstructions = typeof body.follow_up_ai_instructions === 'string'
             ? body.follow_up_ai_instructions.trim().slice(0, 3000)
@@ -313,6 +320,15 @@ export async function PUT(
         // Older clients may omit the policy switch. Preserve each target Page's
         // current policy so they cannot silently overwrite its required form.
         const existingPolicyByPage = new Map<string, boolean>();
+        const existingFirstDayModeByPage = new Map<string, 'fixed' | 'adaptive'>();
+        if (body.follow_up_first_day_mode === undefined) {
+            const existingModes = await supabase.from('chatbot_configs')
+                .select('page_id,follow_up_first_day_mode').in('page_id', targetPageIds);
+            if (existingModes.error) throw existingModes.error;
+            for (const row of existingModes.data || []) {
+                existingFirstDayModeByPage.set(row.page_id, row.follow_up_first_day_mode === 'adaptive' ? 'adaptive' : 'fixed');
+            }
+        }
         if (typeof body.commercial_video_intake_enabled !== 'boolean') {
             const { data: existingPolicies, error: existingPolicyError } = await supabase
                 .from('chatbot_configs')
@@ -392,6 +408,7 @@ export async function PUT(
         };
         const payloads = targetPageIds.map((targetPageId) => normalizeCommercialVideoIntakeConfig({
             ...sharedSettings,
+            follow_up_first_day_mode: body.follow_up_first_day_mode ?? existingFirstDayModeByPage.get(targetPageId) ?? 'fixed',
             ...(typeof body.commercial_video_intake_enabled === 'boolean'
                 ? { commercial_video_intake_enabled: body.commercial_video_intake_enabled }
                 : {}),
@@ -488,7 +505,7 @@ export async function POST(
         const [{ data, error }, { data: page, error: pageError }] = await Promise.all([
             supabase
                 .from('chatbot_configs')
-                .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+                .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_first_day_mode, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
                 .eq('page_id', pageId)
                 .maybeSingle(),
             supabase.from('pages').select('name').eq('id', pageId).maybeSingle()

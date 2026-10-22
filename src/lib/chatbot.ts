@@ -65,6 +65,7 @@ export type ChatbotConfig = {
     bot_dos: string;
     bot_donts: string;
     follow_up_enabled: boolean;
+    follow_up_first_day_mode?: 'fixed' | 'adaptive';
     follow_up_quick_delays_minutes: number[];
     follow_up_best_time_days: number[];
     follow_up_messages: string[];

@@ -474,7 +474,7 @@ export async function POST(request: NextRequest) {
                         // Check if contact exists BEFORE upsert (to detect new contacts)
                         const { data: existingContact, error: existingContactError } = await supabase
                             .from('contacts')
-                            .select('id, name, last_inbound_at, best_contact_hour, pipeline_stage, pipeline_stage_source')
+                            .select('id, name, first_interaction_at, last_inbound_at, best_contact_hour, pipeline_stage, pipeline_stage_source')
                             .eq('page_id', page.id)
                             .eq('psid', senderId)
                             .maybeSingle();
@@ -1494,12 +1494,13 @@ export async function POST(request: NextRequest) {
                                                             name: (contact as { name?: string | null }).name || null,
                                                             best_contact_hour: (contact as { best_contact_hour?: number | null }).best_contact_hour,
                                                             last_interaction_at: interactionAt,
+                                                            first_interaction_at: existingContact?.first_interaction_at || (isNewContact ? interactionAt : null),
                                                             pipeline_stage: chatbotPipelineStage,
                                                             pipeline_stage_source: 'chatbot'
                                                         },
                                                         config: chatbotConfig,
                                                         anchorInboundAt: interactionAt,
-                                                        now: interactionTime
+                                                        now: new Date()
                                                     });
                                                     if (scheduledFollowUps > 0) {
                                                         logInfo('Scheduled chatbot follow-ups', {

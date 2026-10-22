@@ -252,6 +252,7 @@ function createPhotoChatbotSupabaseMock(options: {
     detailsToCollect?: string[];
     deliveryStage?: string;
     knownContact?: boolean;
+    firstInteractionAt?: string;
     outboundSource?: string;
     attributionError?: string;
     knowledgeSource?: string;
@@ -267,6 +268,7 @@ function createPhotoChatbotSupabaseMock(options: {
 } = {}) {
     const pipelineStage = options.pipelineStage || 'engaged';
     const followUpCancelLt = vi.fn();
+    const followUpJobsUpsert = vi.fn().mockResolvedValue({ error: null });
     const contactStateUpsert = vi.fn().mockResolvedValue({ error: null });
     const outboundEventsUpsert = vi.fn().mockResolvedValue({ error: null });
     const interruptionEventsUpsert = vi.fn().mockResolvedValue({ error: null });
@@ -333,7 +335,8 @@ function createPhotoChatbotSupabaseMock(options: {
                                 data: columns.startsWith('pipeline_stage') ? {
                                     pipeline_stage: options.deliveryStage || pipelineStage,
                                     pipeline_stage_source: options.pipelineSource || 'chatbot'
-                                } : options.knownContact ? { id: 'contact_row_1', name: 'Photo Contact', pipeline_stage: pipelineStage } : null,
+                                } : options.knownContact ? { id: 'contact_row_1', name: 'Photo Contact', pipeline_stage: pipelineStage,
+                                    first_interaction_at: options.firstInteractionAt } : null,
                                 error: null
                             })
                         })
@@ -374,7 +377,8 @@ function createPhotoChatbotSupabaseMock(options: {
                 lt: (key: string, value: unknown) => { followUpCancelLt(key, value); return chain; },
                 in: async () => ({ error: null }) };
             return {
-                update: vi.fn().mockReturnValue(chain)
+                update: vi.fn().mockReturnValue(chain),
+                upsert: followUpJobsUpsert
             };
         }
         if (table === 'chatbot_contact_states') {
@@ -440,7 +444,7 @@ function createPhotoChatbotSupabaseMock(options: {
         throw new Error(`Unexpected table: ${table}`);
     });
 
-    return { from, welcomeSelect, contactStateUpsert, replyEventUpdate, outboundEventsUpsert, followUpCancelLt, chatbotConfig };
+    return { from, welcomeSelect, contactStateUpsert, replyEventUpdate, outboundEventsUpsert, followUpCancelLt, followUpJobsUpsert, chatbotConfig };
 }
 
 function createCustomerPhotoRequest(text?: string) {
@@ -1277,6 +1281,41 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.generateChatbotResponse).toHaveBeenCalledWith(expect.objectContaining({ inboundMessage: 'hello there' }));
         expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
         expect(supabase.welcomeSelect).not.toHaveBeenCalled();
+    });
+
+    it('enrolls a new inquiry using its actual inbound timestamp and delivered initial answer', async () => {
+        const supabase = createPhotoChatbotSupabaseMock();
+        Object.assign(supabase.chatbotConfig, { follow_up_enabled: true, follow_up_first_day_mode: 'adaptive' });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        const timestamp = Date.now();
+        const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+            sender: { id: 'contact_psid_1' }, recipient: { id: 'fb_page_1' }, timestamp,
+            message: { mid: 'new-timing-inquiry', text: 'How much for a video?' }
+        }] }] }));
+        expect(response.status).toBe(200);
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(supabase.followUpJobsUpsert).toHaveBeenCalledTimes(1);
+        const jobs = supabase.followUpJobsUpsert.mock.calls[0][0];
+        expect(jobs.length).toBeGreaterThan(0);
+        expect(jobs.every((job: any) => job.purpose === 'first_day_adaptive' &&
+            Date.parse(job.anchor_inbound_at) === timestamp &&
+            Date.parse(job.due_at) >= timestamp + 45 * 60000 &&
+            Date.parse(job.due_at) >= Date.parse(job.timing_context.initial_reply_end) + 30 * 60000)).toBe(true);
+    });
+
+    it('does not restart first-day reminders when an existing client returns', async () => {
+        const timestamp = Date.now();
+        const supabase = createPhotoChatbotSupabaseMock({ knownContact: true,
+            firstInteractionAt: new Date(timestamp - 60 * 60000).toISOString() });
+        Object.assign(supabase.chatbotConfig, { follow_up_enabled: true, follow_up_first_day_mode: 'adaptive' });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+            sender: { id: 'contact_psid_1' }, recipient: { id: 'fb_page_1' }, timestamp,
+            message: { mid: 'returning-timing-inquiry', text: 'My business is a bakery' }
+        }] }] }));
+        expect(response.status).toBe(200);
+        expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(supabase.followUpJobsUpsert).not.toHaveBeenCalled();
     });
 
     it('cancels only older follow-up sequences when the same inbound webhook is replayed', async () => {

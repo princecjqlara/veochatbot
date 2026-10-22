@@ -59,6 +59,7 @@ type ChatbotConfig = {
     bot_dos: string;
     bot_donts: string;
     follow_up_enabled: boolean;
+    follow_up_first_day_mode?: 'fixed' | 'adaptive';
     follow_up_quick_delays_minutes: number[];
     follow_up_best_time_days: number[];
     follow_up_messages: string[];
@@ -1919,6 +1920,22 @@ export default function ChatbotPage() {
                                 </span>
                             </label>
 
+                            <label className="block text-xs font-mono mt-4">
+                                First-day timing
+                                <select className="input-wireframe w-full mt-2 text-sm"
+                                    value={config.follow_up_first_day_mode || 'fixed'}
+                                    disabled={!config.follow_up_enabled}
+                                    onChange={event => updateConfig({ follow_up_first_day_mode: event.target.value as 'fixed' | 'adaptive' })}>
+                                    <option value="fixed">Fixed delays</option>
+                                    <option value="adaptive">Adaptive timing for silent new clients</option>
+                                </select>
+                                {config.follow_up_first_day_mode === 'adaptive' && <span className="block text-[10px] text-gray-500 mt-1">
+                                    First reminder after 45 minutes, then gaps of 3, 4.5 and up to 6 hours.
+                                    Sends fit within the original first 24 hours, from 08:00 to 21:00 Manila time.
+                                    The count varies with available time. A customer reply ends this sequence.
+                                    These are experimental timing settings.
+                                </span>}
+                            </label>
                             <div className="grid md:grid-cols-2 gap-3 mt-4">
                                 <label className="text-xs font-mono">
                                     First 24 hours — delays in minutes
@@ -1932,7 +1949,7 @@ export default function ChatbotPage() {
                                                 .sort((a, b) => a - b)
                                                 .slice(0, 10)
                                         })}
-                                        disabled={!config.follow_up_enabled}
+                                        disabled={!config.follow_up_enabled || config.follow_up_first_day_mode === 'adaptive'}
                                         className="input-wireframe w-full mt-2 text-sm"
                                         placeholder="60, 240, 720, 1380"
                                     />

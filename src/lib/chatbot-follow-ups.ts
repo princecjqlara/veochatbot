@@ -19,6 +19,7 @@ import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateC
 import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib/chatbot-delivery';
 import { ChatbotFollowUpRepeatedError, hasRepeatedChatbotCopy } from '@/lib/chatbot-message-copy';
 import { getCommercialVideoMessageControls } from '@/lib/chatbot-interactions';
+import { buildFirstDaySchedule, firstDayDeadline, getFirstDayCandidate, nextFirstDayWakingTime } from '@/lib/chatbot-first-day-timing';
 
 const RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * RESPONSE_WINDOW_MS;
@@ -36,6 +37,7 @@ type ScheduleContact = {
     best_contact_hour?: number | null;
     last_interaction_at?: string | null;
     last_inbound_at?: string | null;
+    first_interaction_at?: string | null;
     pipeline_stage?: ContactPipelineStage | null;
     pipeline_stage_source?: ContactPipelineSource | null;
 };
@@ -52,9 +54,10 @@ type FollowUpJob = {
     message_id?: string | null;
     attempt_count: number;
     media_asset_id?: string | null;
-    purpose?: 'scheduled' | 'nightly_continuation';
+    purpose?: 'scheduled' | 'nightly_continuation' | 'first_day_adaptive';
     automation_epoch?: number;
     policy_revision?: number;
+    timing_context?: { initial_reply_end?: string; carried_sent_times?: string[] } | null;
 };
 
 export function normalizeQuickFollowUpDelays(value: unknown): number[] {
@@ -180,14 +183,25 @@ export async function scheduleChatbotFollowUps(input: {
         now
     });
 
-    const quickJobs = normalizeQuickFollowUpDelays(input.config.follow_up_quick_delays_minutes)
-        .map((delay, index) => ({
+    const firstInquiry = Date.parse(input.contact.first_interaction_at || '');
+    const useAdaptive = input.config.follow_up_first_day_mode === 'adaptive' && firstInquiry === anchor.getTime();
+    const unknownFirstInquiry = input.config.follow_up_first_day_mode === 'adaptive' && !Number.isFinite(firstInquiry);
+    const returnedDuringFirstDay = input.config.follow_up_first_day_mode === 'adaptive' &&
+        Number.isFinite(firstInquiry) && firstInquiry < anchor.getTime() && anchor.getTime() < firstInquiry + RESPONSE_WINDOW_MS;
+    const quickTimes = useAdaptive
+        ? buildFirstDaySchedule({ firstInquiry, initialReplyEnd: now.getTime(), lastOutbound: now.getTime(), now: now.getTime() })
+        : returnedDuringFirstDay || unknownFirstInquiry ? [] : normalizeQuickFollowUpDelays(input.config.follow_up_quick_delays_minutes)
+            .map((delay, sequenceIndex) => ({ sequenceIndex, dueAt: new Date(anchor.getTime() + delay * 60 * 1000).toISOString() }));
+    const quickJobs = quickTimes
+        .map((delay) => ({
             page_id: input.pageId,
             contact_id: input.contact.id,
             anchor_inbound_at: input.anchorInboundAt,
             schedule_type: 'response',
-            sequence_index: index,
-            due_at: new Date(anchor.getTime() + delay * 60 * 1000).toISOString(),
+            sequence_index: delay.sequenceIndex,
+            due_at: delay.dueAt,
+            purpose: useAdaptive ? 'first_day_adaptive' : 'scheduled',
+            timing_context: useAdaptive ? { initial_reply_end: now.toISOString() } : null,
             message_text: 'AI-generated from conversation at send time',
             status: 'pending'
         }));
@@ -197,13 +211,15 @@ export async function scheduleChatbotFollowUps(input: {
             contact_id: input.contact.id,
             anchor_inbound_at: input.anchorInboundAt,
             schedule_type: 'human_agent',
+            purpose: 'scheduled',
+            timing_context: null,
             sequence_index: index,
             due_at: getBestTimeFollowUpDueAt(anchor, day, input.contact.best_contact_hour),
             message_text: 'AI-generated from conversation at send time',
             status: 'pending'
         }));
     const jobs = [...quickJobs, ...bestTimeJobs].filter((job) => new Date(job.due_at).getTime() > now.getTime())
-        .map(job => ({ ...job, purpose: 'scheduled', automation_epoch: scopedState?.automation_epoch || 0,
+        .map(job => ({ ...job, automation_epoch: scopedState?.automation_epoch || 0,
             policy_revision: input.config.policy_revision || 1 }));
     if (jobs.length === 0) return 0;
     const { error } = await input.supabase.from('chatbot_follow_up_jobs').upsert(jobs, {
@@ -283,7 +299,7 @@ export async function processDueChatbotFollowUps(input: {
             };
             const eligibility = await Promise.all([
                 supabase.from('pages').select('id, name, fb_page_id, access_token').eq('id', job.page_id).maybeSingle(),
-                supabase.from('contacts').select('id, page_id, psid, name, last_interaction_at, last_inbound_at, pipeline_stage,pipeline_stage_source').eq('id', job.contact_id).maybeSingle(),
+                supabase.from('contacts').select('id, page_id, psid, name, first_interaction_at, last_interaction_at, last_inbound_at, pipeline_stage,pipeline_stage_source').eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_configs').select('*').eq('page_id', job.page_id).maybeSingle(),
                 supabase.from('chatbot_contact_states').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle()
             ]);
@@ -304,6 +320,10 @@ export async function processDueChatbotFollowUps(input: {
                 (isCommercialVideoIntake(config) && ((job.automation_epoch || 0) !== (state?.automation_epoch || 0) ||
                     (job.policy_revision || 1) !== (config.policy_revision || 1))) ||
                 latestInboundTime > anchorTime ||
+                (job.purpose === 'first_day_adaptive' && config?.follow_up_first_day_mode !== 'adaptive') ||
+                (job.schedule_type === 'response' && job.purpose === 'scheduled' &&
+                    config?.follow_up_first_day_mode === 'adaptive' &&
+                    Date.parse(contact?.first_interaction_at || '') === anchorTime) ||
                 (!messagingType && job.schedule_type !== 'manual_human_agent')) {
                 if (state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source, config)) {
                     await cancelPendingChatbotFollowUps({ supabase, pageId: job.page_id, contactId: job.contact_id,
@@ -385,6 +405,63 @@ export async function processDueChatbotFollowUps(input: {
                 result.cancelled++;
                 continue;
             }
+            const recheckAdaptiveTiming = async () => {
+                if (job.purpose !== 'first_day_adaptive') return true;
+                const clock = input.now || new Date();
+                if (clock.getTime() >= firstDayDeadline(anchorTime)) {
+                    await markJob(supabase, job.id, { status: 'cancelled', claimed_at: null,
+                        cancelled_at: clock.toISOString(), error_message: 'Original first-day deadline ended' });
+                    result.cancelled++;
+                    return false;
+                }
+                let previousSentAt: number | undefined;
+                if (job.sequence_index > 0) {
+                    const previous = await supabase.from('chatbot_follow_up_jobs')
+                        .select('status,sent_at,due_at,message_id')
+                        .eq('page_id', job.page_id).eq('contact_id', job.contact_id)
+                        .eq('anchor_inbound_at', job.anchor_inbound_at).eq('purpose', 'first_day_adaptive')
+                        .eq('automation_epoch', job.automation_epoch || 0)
+                        .eq('sequence_index', job.sequence_index - 1).maybeSingle();
+                    if (previous.error) throw new Error(previous.error.message || 'Could not check preceding first-day follow-up');
+                    if (previous.data?.status === 'pending' || previous.data?.status === 'processing') {
+                        await markJob(supabase, job.id, { status: 'pending', claimed_at: null,
+                            due_at: new Date(clock.getTime() + 60_000).toISOString(),
+                            error_message: 'Waiting for the preceding first-day reminder' });
+                        return false;
+                    }
+                    const carried = job.timing_context?.carried_sent_times || [];
+                    if (!previous.data && carried.length === job.sequence_index && carried.length > 0) {
+                        previousSentAt = Date.parse(carried[carried.length - 1]);
+                    } else if (previous.data?.status !== 'sent' || !previous.data.message_id ||
+                        !Number.isFinite(Date.parse(previous.data.sent_at))) {
+                        await markJob(supabase, job.id, { status: 'cancelled', claimed_at: null,
+                            cancelled_at: clock.toISOString(), error_message: 'Preceding first-day reminder was not delivered' });
+                        result.cancelled++;
+                        return false;
+                    } else {
+                        previousSentAt = Date.parse(previous.data.sent_at);
+                    }
+                }
+                const initialReplyEnd = Math.max(anchorTime, Date.parse(job.timing_context?.initial_reply_end || state?.last_bot_reply_at || '') || anchorTime);
+                const lastOutbound = Math.max(initialReplyEnd, ...conversationHistory
+                    .filter(message => message.from.id === page.fb_page_id)
+                    .map(message => Date.parse(message.created_time)).filter(Number.isFinite));
+                const candidate = getFirstDayCandidate({ firstInquiry: anchorTime, initialReplyEnd,
+                    lastOutbound, now: clock.getTime(), sequenceIndex: job.sequence_index, previousSentAt });
+                if (candidate === null) {
+                    await markJob(supabase, job.id, { status: 'cancelled', claimed_at: null,
+                        cancelled_at: clock.toISOString(), error_message: 'No remaining first-day timing opportunity' });
+                    result.cancelled++;
+                    return false;
+                }
+                if (candidate > clock.getTime()) {
+                    await markJob(supabase, job.id, { status: 'pending', claimed_at: null,
+                        due_at: new Date(candidate).toISOString(), error_message: 'Adjusted to actual delivery gap and waking hours' });
+                    return false;
+                }
+                return true;
+            };
+            if (!await recheckAdaptiveTiming()) continue;
             const request = resolveCommercialVideoRequest({ history: conversationHistory, pageId: page.fb_page_id,
                 hasClearRequest: state?.has_clear_request, requestType: state?.request_type, requestEvidence: state?.request_evidence });
             if (isCommercialVideoIntake(config) && !evaluateCommercialVideoIntake(state?.collected_details || {}, request.has_clear_request).needsContinuation) {
@@ -465,7 +542,7 @@ export async function processDueChatbotFollowUps(input: {
             const freshEligibility = await Promise.all([
                 supabase.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at').eq('page_id', job.page_id).eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_contact_states').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle(),
-                supabase.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id,commercial_video_intake_enabled,policy_revision').eq('page_id', job.page_id).maybeSingle()
+                supabase.from('chatbot_configs').select('enabled,follow_up_enabled,follow_up_first_day_mode,trial_mode_enabled,trial_contact_id,commercial_video_intake_enabled,policy_revision').eq('page_id', job.page_id).maybeSingle()
             ]);
             for (const lookup of freshEligibility) {
                 if (lookup.error) throw new Error(lookup.error.message || 'Could not recheck follow-up eligibility');
@@ -488,6 +565,13 @@ export async function processDueChatbotFollowUps(input: {
                 result.cancelled += 1;
                 continue;
             }
+            if (job.purpose === 'first_day_adaptive' && freshConfig.follow_up_first_day_mode !== 'adaptive') {
+                await markJob(supabase, job.id, { status: 'cancelled', claimed_at: null,
+                    cancelled_at: (input.now || new Date()).toISOString(), error_message: 'First-day timing mode changed during generation' });
+                result.cancelled++;
+                continue;
+            }
+            if (!await recheckAdaptiveTiming()) continue;
 
             if (job.schedule_type === 'manual_human_agent') {
                 await markJob(supabase, job.id, {
@@ -519,12 +603,19 @@ export async function processDueChatbotFollowUps(input: {
                 ? 'AI Chatbot day 2-7 follow-up'
                 : 'AI Chatbot quick follow-up';
             let lastSendResult: { message_id: string } | null = null;
-            const checkDelivery = () => assertChatbotDeliveryAllowed({
+            const checkDelivery = () => {
+                const clock = (input.now || new Date()).getTime();
+                if (job.purpose === 'first_day_adaptive' &&
+                    (clock >= firstDayDeadline(anchorTime) || nextFirstDayWakingTime(clock) !== clock)) {
+                    throw new ChatbotDeliveryStoppedError('First-day timing window ended before delivery');
+                }
+                return assertChatbotDeliveryAllowed({
                 supabase, pageId: job.page_id, facebookPageId: page.fb_page_id, accessToken: page.access_token,
                 contactId: job.contact_id, psid: contact.psid, followUp: true, followUpJobId: job.id, anchorInboundAt: job.anchor_inbound_at,
                 automationEpoch: isCommercialVideoIntake(config) ? job.automation_epoch || 0 : undefined,
                 policyRevision: isCommercialVideoIntake(config) ? job.policy_revision || 1 : undefined
-            });
+                });
+            };
             const deferQuestion = isCommercialVideoIntake(config) &&
                 (selectedDriveFiles.length > 0 || selectedMediaItems.length > 0) &&
                 messageParts.length > 1 && /\?\s*$/.test(messageParts[messageParts.length - 1]);
@@ -658,7 +749,7 @@ export async function processDueChatbotFollowUps(input: {
                 message_id: (lastSendResult as { message_id: string }).message_id,
                 message_text: messageParts.join('\n\n'),
                 media_asset_id: selectedMedia?.id || null,
-                sent_at: now.toISOString(),
+                sent_at: (input.now || new Date()).toISOString(),
                 claimed_at: null,
                 error_message: null
             });

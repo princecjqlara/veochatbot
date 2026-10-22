@@ -95,7 +95,7 @@ function selectBuilder(result: { data: unknown; error: unknown }) {
     return builder;
 }
 
-function updateBuilder(existingPolicies: Array<{ page_id: string; commercial_video_intake_enabled: boolean }> = []) {
+function updateBuilder(existingPolicies: Array<{ page_id: string; commercial_video_intake_enabled: boolean; follow_up_first_day_mode?: 'fixed' | 'adaptive' }> = []) {
     const builder: Record<string, any> = {};
     builder.select = vi.fn(() => builder);
     builder.in = vi.fn().mockResolvedValue({ data: existingPolicies, error: null });
@@ -168,6 +168,31 @@ describe('chatbot Page-member access', () => {
             { onConflict: 'page_id' }
         );
         expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
+    });
+
+    it('saves the first-day timing mode', async () => {
+        const builder = updateBuilder();
+        mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
+        const response = await PUT(configRequest({ ...savedConfig, follow_up_first_day_mode: 'adaptive' }),
+            { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        expect(builder.upsert).toHaveBeenCalledWith(expect.objectContaining({ follow_up_first_day_mode: 'adaptive' }),
+            { onConflict: 'page_id' });
+    });
+
+    it('preserves the active timing mode when an older dashboard omits it', async () => {
+        const builder = updateBuilder([{ page_id: 'page_1', commercial_video_intake_enabled: true, follow_up_first_day_mode: 'adaptive' }]);
+        mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
+        const response = await PUT(configRequest(savedConfig), { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        expect(builder.upsert).toHaveBeenCalledWith(expect.objectContaining({ follow_up_first_day_mode: 'adaptive' }),
+            { onConflict: 'page_id' });
+    });
+
+    it('rejects unsupported first-day timing modes', async () => {
+        const response = await PUT(configRequest({ ...savedConfig, follow_up_first_day_mode: 'random' }),
+            { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(400);
     });
 
     it('enforces the four-field policy without changing knowledge or follow-up switches', async () => {

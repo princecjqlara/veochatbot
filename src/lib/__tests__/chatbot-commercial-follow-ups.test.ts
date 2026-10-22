@@ -25,7 +25,7 @@ function fixture(formComplete = false, clearRequest = false) {
         request_evidence: clearRequest ? 'Free script please' : null };
     const contact: any = { id: 'contact', page_id: 'page', psid: 'customer', name: 'CJ', pipeline_stage: 'engaged',
         pipeline_stage_source: 'chatbot', last_inbound_at: anchor };
-    const inserts: any[] = [], writes: any[] = [], sentJobs: any[] = [];
+    const inserts: any[] = [], writes: any[] = [], sentJobs: any[] = [], predecessors: any[] = [];
     const db: any = { from: (table: string) => {
         let selected = '';
         const chain: any = {
@@ -33,19 +33,20 @@ function fixture(formComplete = false, clearRequest = false) {
             limit: async () => ({ data: selected === 'id,message_text,message_id' ? sentJobs : [job], error: null }),
             update: (payload: any) => { writes.push({ table, payload });
                 // Lease maintenance is a bulk SQL operation, not this test row's new claim.
-                if (table === 'chatbot_follow_up_jobs' && payload.status !== 'pending') Object.assign(job, payload);
+                if (table === 'chatbot_follow_up_jobs' && (payload.status !== 'pending' || payload.due_at)) Object.assign(job, payload);
                 if (table === 'chatbot_contact_states') Object.assign(state, payload);
                 return chain;
             },
             upsert: async (rows: any) => { inserts.push(...(Array.isArray(rows) ? rows : [rows])); return { error: null }; },
             maybeSingle: async () => ({ data: table === 'pages' ? { id: 'page', name: 'Bakery Page', fb_page_id: 'fb-page', access_token: 'test' }
                 : table === 'contacts' ? contact : table === 'chatbot_configs' ? config
-                    : table === 'chatbot_contact_states' ? state : job, error: null }),
+                    : table === 'chatbot_contact_states' ? state
+                        : selected === 'status,sent_at,due_at,message_id' ? predecessors[0] || null : job, error: null }),
             then: (resolve: any, reject: any) => Promise.resolve({ error: null }).then(resolve, reject)
         };
         return chain;
     } };
-    return { db, job, config, state, contact, inserts, writes, sentJobs };
+    return { db, job, config, state, contact, inserts, writes, sentJobs, predecessors };
 }
 beforeEach(() => {
     vi.clearAllMocks();
@@ -55,6 +56,88 @@ beforeEach(() => {
     mocks.send.mockResolvedValue({ message_id: 'sent' });
 });
 describe('commercial-video follow-up continuity', () => {
+    it('uses computed first-day opportunities for a silent new client', async () => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        f.contact.first_interaction_at = anchor;
+        await scheduleChatbotFollowUps({ supabase: f.db, pageId: 'page', contact: f.contact,
+            config: f.config, anchorInboundAt: anchor, now });
+        expect(f.inserts).toHaveLength(3);
+        expect(f.inserts[0]).toMatchObject({ purpose: 'first_day_adaptive',
+            due_at: '2026-10-17T05:45:00.000Z', timing_context: { initial_reply_end: now.toISOString() } });
+    });
+    it('does not restart the cold first-day sequence after a customer returns', async () => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        f.contact.first_interaction_at = '2026-10-17T04:00:00Z';
+        expect(await scheduleChatbotFollowUps({ supabase: f.db, pageId: 'page', contact: f.contact,
+            config: f.config, anchorInboundAt: anchor, now })).toBe(0);
+        expect(f.inserts).toEqual([]);
+    });
+    it('delivers an eligible adaptive reminder with the ordinary conversation guards', async () => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        Object.assign(f.job, { purpose: 'first_day_adaptive', timing_context: { initial_reply_end: anchor } });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-17T05:45:00Z') }))
+            .toMatchObject({ sent: 1, failed: 0 });
+    });
+    it('moves a delayed overnight reminder to the next waking slot', async () => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        Object.assign(f.job, { purpose: 'first_day_adaptive', timing_context: { initial_reply_end: anchor } });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-17T13:00:00Z') }))
+            .toMatchObject({ sent: 0, failed: 0 });
+        expect(f.job).toMatchObject({ status: 'pending', due_at: '2026-10-18T00:00:00.000Z' });
+        expect(mocks.generate).not.toHaveBeenCalled();
+    });
+    it('spaces a second reminder from actual delivery instead of its old planned time', async () => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        Object.assign(f.job, { purpose: 'first_day_adaptive', sequence_index: 1,
+            timing_context: { initial_reply_end: anchor } });
+        f.predecessors.push({ status: 'sent', message_id: 'earlier', sent_at: '2026-10-17T06:00:00Z' });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-17T08:00:00Z') }))
+            .toMatchObject({ sent: 0, failed: 0 });
+        expect(f.job.due_at).toBe('2026-10-17T09:00:00.000Z');
+        expect(mocks.generate).not.toHaveBeenCalled();
+    });
+    it('honors previously delivered reminders carried into the new timing policy', async () => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        Object.assign(f.job, { purpose: 'first_day_adaptive', sequence_index: 1,
+            timing_context: { initial_reply_end: anchor, carried_sent_times: ['2026-10-17T06:00:00Z'] } });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-17T09:00:00Z') }))
+            .toMatchObject({ sent: 1, failed: 0 });
+    });
+    it.each(['failed', 'cancelled'])('ends the sequence after a %s preceding reminder', async status => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        Object.assign(f.job, { purpose: 'first_day_adaptive', sequence_index: 1 });
+        f.predecessors.push({ status });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-17T09:00:00Z') }))
+            .toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.generate).not.toHaveBeenCalled();
+    });
+    it('cancels adaptive work when its mode changes during generation', async () => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        Object.assign(f.job, { purpose: 'first_day_adaptive', timing_context: { initial_reply_end: anchor } });
+        mocks.generate.mockImplementationOnce(async () => {
+            f.config.follow_up_first_day_mode = 'fixed';
+            return { message: 'New copy', messages: ['New copy'] };
+        });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-17T05:45:00Z') }))
+            .toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.send).not.toHaveBeenCalled();
+    });
+    it('expires at the original first-day boundary without extending from later sends', async () => {
+        const f = fixture();
+        f.config.follow_up_first_day_mode = 'adaptive';
+        Object.assign(f.job, { purpose: 'first_day_adaptive', timing_context: { initial_reply_end: anchor } });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-18T04:50:00Z') }))
+            .toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.generate).not.toHaveBeenCalled();
+    });
     it.each([[false, false, 1], [false, true, 1], [true, false, 1], [true, true, 0]])(
         'schedules required continuation for form=%s request=%s', async (form, request, count) => {
             const f = fixture(Boolean(form), Boolean(request));

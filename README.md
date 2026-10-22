@@ -83,6 +83,8 @@ TELEGRAM_MEDIA_ROUTES={"-1001234567890":"00000000-0000-4000-8000-000000000000"}
 
 ### Telegram group media bridge
 
+For adaptive first-day chatbot timing, follow [the migration and rollout instructions](docs/first-day-follow-up-timing-2026-10-22.md). Apply the additive migration before deployment, then activate the timing mode after the updated application is ready.
+
 VeoBot can automatically import supported photos and videos from approved Telegram groups into a Page's chatbot media library and RAG knowledge.
 
 1. Create a bot with BotFather and add it to the source group. Make the bot an administrator or disable privacy mode so it receives group media messages.
