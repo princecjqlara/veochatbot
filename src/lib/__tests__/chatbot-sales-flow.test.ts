@@ -54,6 +54,17 @@ describe('selected-duration pricing from the existing knowledge', () => {
     }));
     it('parses minute durations and thousands separators', () => expect(getCommercialVideoPricing(knowledge, 60)?.pricePHP).toBe(1499));
     it('does not invent a package for an unsupported duration', () => expect(getCommercialVideoPricing(knowledge, 30)).toBeNull());
+    it('prefers the current approved promo over an older reference and keeps the original price separate', () => {
+        const approved = { ...knowledge[0], content: 'Current owner-approved promo catalog\n| Best Seller | 24 seconds | PHP899 | 1 x 8 seconds | 1 | Included | PHP1,099 |' };
+        expect(getCommercialVideoPricing([...knowledge, approved], 24)).toEqual({
+            packageName: 'Best Seller', durationSeconds: 24, pricePHP: 899, regularPricePHP: 1099,
+            referenceOnly: false, addonCount: 1, addonDurationSeconds: 8, posters: 1, caption: true
+        });
+    });
+    it('does not label a live quote as historical because an unrelated reference was retrieved', () => {
+        const live = { ...knowledge[0], content: '| Starter Pack | 16 seconds | PHP699 | 1 x 8 seconds | 1 | Included | PHP899 |' };
+        expect(getCommercialVideoPricing([live, { ...knowledge[0], content: 'Historical reference price: confirm old offers.' }], 16)?.referenceOnly).toBe(false);
+    });
 });
 
 describe('first-name and emoji cleanup', () => {

@@ -494,13 +494,23 @@ function parseChatbotPlan(
         : typeof parsed?.reply === 'string'
             ? [parsed.reply]
             : []);
-    if (commercialIntake && hasForbiddenFreeVideoOffer(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content)) {
+    const request = commercialIntake && intakeContext ? resolveCommercialVideoRequest({ ...intakeContext.requestInput, requestCandidate: parsed }) : undefined;
+    const policy = commercialIntake ? evaluateCommercialVideoIntake(collectedDetails, request?.has_clear_request === true) : null;
+    const salesFlow = commercialIntake && intakeContext ? resolveCommercialVideoSalesFlow({
+        ...intakeContext.requestInput, details: collectedDetails, businessType: parsed?.business_type,
+        hasClearRequest: request?.has_clear_request, requestType: request?.request_type
+    }) : undefined;
+    const pricing = getCommercialVideoPricing(knowledge, salesFlow?.durationSeconds || null);
+    // At this step all generated copy is replaced by the verified package,
+    // production process and proceed question. Validate that delivered copy.
+    const canonicalPricing = salesFlow?.step === 'pricing_process' && pricing !== null && parsed?.stop_reason !== 'opt_out' && parsed?.stop_reason !== 'refusal';
+    if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content)) {
         throw new Error('Unauthorized free personalized video offer');
     }
-    if (commercialIntake && hasForbiddenFreePreproductionCharge(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content)) {
+    if (commercialIntake && !canonicalPricing && hasForbiddenFreePreproductionCharge(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content)) {
         throw new Error('Unauthorized charge or quote for free concept/script');
     }
-    if (commercialIntake && hasCommercialVideoPriceList(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content)) {
+    if (commercialIntake && !canonicalPricing && hasCommercialVideoPriceList(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content)) {
         throw new Error('Multiple package prices are not allowed');
     }
     const rawMessages = unsanitizedMessages.map(message => commercialIntake ? cleanCommercialVideoCopy(sanitizeGeneratedMessage(message, true), intakeContext?.contactName) : sanitizeGeneratedMessage(message))
@@ -513,12 +523,6 @@ function parseChatbotPlan(
     const detectedStopReason = rawStopReason === 'opt_out' || rawStopReason === 'refusal'
         ? rawStopReason
         : undefined;
-    const request = commercialIntake && intakeContext ? resolveCommercialVideoRequest({ ...intakeContext.requestInput, requestCandidate: parsed }) : undefined;
-    const policy = commercialIntake ? evaluateCommercialVideoIntake(collectedDetails, request?.has_clear_request === true) : null;
-    const salesFlow = commercialIntake && intakeContext ? resolveCommercialVideoSalesFlow({
-        ...intakeContext.requestInput, details: collectedDetails, businessType: parsed?.business_type,
-        hasClearRequest: request?.has_clear_request, requestType: request?.request_type
-    }) : undefined;
     const intakeAction: CommercialVideoIntakeAction | undefined = salesFlow
         ? salesFlow.step === 'form' ? intakeContext?.formPreviouslySent && !salesFlow.formRequested ? 'ask_missing_field' : 'send_form'
             : salesFlow.step === 'complete' ? policy?.nextAction : 'none'
@@ -532,7 +536,7 @@ function parseChatbotPlan(
     const messages = commercialIntake && !detectedStopReason ? renderCommercialVideoMessages({
         parts: rawMessages.length > 0 ? rawMessages : [messageContent], details: collectedDetails,
         contactName: intakeContext?.contactName, salesFlow, hasSample, repeatForm: parsed?.intake_action === 'send_form',
-        pricing: getCommercialVideoPricing(knowledge, salesFlow?.durationSeconds || null),
+        pricing,
         action: intakeAction || 'none', customerMessage: intakeContext?.requestInput.inboundMessage, requestType: request?.request_type, formPreviouslySent: intakeContext?.formPreviouslySent,
         answerRequested: /\?|\b(?:magkano|price|presyo|bayad|how|what|where|when|why|which|can|does|pwede|puwede|paano|gaano|ilang|meron|kasama)\b/i.test(intakeContext?.requestInput.inboundMessage || ''),
         summaryRequested: /\b(?:summary|summari[sz]e|recap|buod)\b/i.test(intakeContext?.requestInput.inboundMessage || '') ||
@@ -542,6 +546,9 @@ function parseChatbotPlan(
             .filter(message => message.role === 'assistant').map(message => message.content) : [],
         splitMessages: config.split_messages, maxMessageParts: config.max_message_parts
     }) : formatChatbotReplyMessages(rawMessages.length > 0 ? rawMessages : [messageContent], config);
+    if (canonicalPricing && (hasForbiddenFreeVideoOffer(messages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')) || hasCommercialVideoPriceList(messages.join('\n')))) {
+        throw new Error('Invalid rendered commercial pricing');
+    }
     if (messages.length === 0 && !detectedStopReason) throw new Error('OpenRouter returned an empty reply');
     const requestedMediaDocumentIds = [...new Set(
         (Array.isArray(parsed?.media_document_ids)
@@ -1211,20 +1218,22 @@ export async function generateChatbotFollowUp(input: {
                 : typeof parsed.message === 'string'
                     ? [parsed.message]
                     : []);
-            if (commercialIntake && hasForbiddenFreeVideoOffer(unsanitizedMessages.join('\n'))) throw new Error('Unauthorized free personalized video offer');
-            if (commercialIntake && hasForbiddenFreePreproductionCharge(unsanitizedMessages.join('\n'))) throw new Error('Unauthorized charge or quote for free concept/script');
-            if (commercialIntake && hasCommercialVideoPriceList(unsanitizedMessages.join('\n'))) throw new Error('Multiple package prices are not allowed');
+            const followUpFlow = commercialIntake ? resolveCommercialVideoSalesFlow({ history: input.history, pageId: input.pageId,
+                details: collectedDetails, hasClearRequest: intakeRequest?.has_clear_request, requestType: intakeRequest?.request_type }) : undefined;
+            const pricing = getCommercialVideoPricing(knowledge, followUpFlow?.durationSeconds || null);
+            const canonicalPricing = followUpFlow?.step === 'pricing_process' && pricing !== null;
+            if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.join('\n'))) throw new Error('Unauthorized free personalized video offer');
+            if (commercialIntake && !canonicalPricing && hasForbiddenFreePreproductionCharge(unsanitizedMessages.join('\n'))) throw new Error('Unauthorized charge or quote for free concept/script');
+            if (commercialIntake && !canonicalPricing && hasCommercialVideoPriceList(unsanitizedMessages.join('\n'))) throw new Error('Multiple package prices are not allowed');
             const rawMessages = unsanitizedMessages
                 .map(value => commercialIntake ? cleanCommercialVideoCopy(sanitizeGeneratedMessage(value, true), input.contactName) : sanitizeGeneratedMessage(value))
                 .filter(Boolean);
             if (hasRepeatedChatbotCopy(commercialIntake ? rawMessages : rawMessages.flatMap(splitConversationalCopy), [], { allowRepeatedFormsAndSamples: commercialIntake })) throw new Error('follow-up repeated copy within its draft');
             const cappedRawMessages = capCombinedMessageLength(rawMessages, FOLLOW_UP_MAX_CHARS);
-            const followUpFlow = commercialIntake ? resolveCommercialVideoSalesFlow({ history: input.history, pageId: input.pageId,
-                details: collectedDetails, hasClearRequest: intakeRequest?.has_clear_request, requestType: intakeRequest?.request_type }) : undefined;
             if (followUpFlow?.step === 'sample') ensureCommercialVideoSampleSelection(parsed, knowledge, followUpFlow.business);
             const messages = commercialIntake ? renderCommercialVideoMessages({
                 contactName: input.contactName, customerMessage: latestCustomerMessage, repeatForm: parsed.intake_action === 'send_form',
-                pricing: getCommercialVideoPricing(knowledge, followUpFlow?.durationSeconds || null),
+                pricing,
                 salesFlow: followUpFlow,
                 hasSample: hasVerifiedCommercialVideoSample(parsed, knowledge),
                 parts: rawMessages, details: collectedDetails, action: formPreviouslySent && intakePolicy?.nextAction === 'send_form' ? 'ask_missing_field' : intakePolicy?.nextAction || 'none', requestType: intakeRequest?.request_type, formPreviouslySent,
@@ -1236,6 +1245,9 @@ export async function generateChatbotFollowUp(input: {
                     : splitChatbotMessageBubbles(cappedRawMessages.join('\n\n'), false),
                 followUpMaxMessageParts
             ), FOLLOW_UP_MAX_CHARS);
+            if (canonicalPricing && (hasForbiddenFreeVideoOffer(messages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')) || hasCommercialVideoPriceList(messages.join('\n')))) {
+                throw new Error('Invalid rendered commercial pricing');
+            }
             const message = messages.join('\n\n').trim();
             if (!message || messages.length === 0) throw new Error('missing message');
             const personalizationBasis = typeof parsed.personalization_basis === 'string'

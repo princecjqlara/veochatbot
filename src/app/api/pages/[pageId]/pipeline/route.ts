@@ -11,6 +11,7 @@ import {
 } from '@/lib/contact-pipeline';
 import { getChatbotContactState, saveChatbotContactState } from '@/lib/chatbot-control';
 import { cancelPendingChatbotFollowUps } from '@/lib/chatbot-follow-ups';
+import { getChatbotDetailProgress } from '@/lib/chatbot-form-progress';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,7 @@ export async function GET(
         const pageSize = positiveInteger(searchParams.get('pageSize'), 25, 100);
         const requestedStage = searchParams.get('stage');
         const stage = isContactPipelineStage(requestedStage) ? requestedStage : null;
+        const withDetails = searchParams.get('details') === 'with_details';
         const search = (searchParams.get('search') || '')
             .trim()
             .replace(/[^\p{L}\p{N}\s@._+-]/gu, ' ')
@@ -55,23 +57,28 @@ export async function GET(
         let contactsQuery = db
             .from('contacts')
             .select(
-                'id,page_id,psid,name,profile_pic,last_interaction_at,last_inbound_at,created_at,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at',
-                search ? { count: 'exact' } : {}
+                withDetails
+                    ? 'id,page_id,psid,name,profile_pic,last_interaction_at,last_inbound_at,created_at,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at,chatbot_contact_states!inner(contact_id)'
+                    : 'id,page_id,psid,name,profile_pic,last_interaction_at,last_inbound_at,created_at,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at',
+                search || withDetails ? { count: 'exact' } : {}
             )
             .eq('page_id', pageId)
             .order('pipeline_stage_updated_at', { ascending: false })
             .order('last_interaction_at', { ascending: false, nullsFirst: false });
         if (stage) contactsQuery = contactsQuery.eq('pipeline_stage', stage);
+        if (withDetails) contactsQuery = contactsQuery.neq('chatbot_contact_states.collected_details', '{}');
         if (search) contactsQuery = contactsQuery.or(`name.ilike.*${search}*,psid.ilike.*${search}*`);
 
-        const [contactsResult, stageCountResult] = await Promise.all([
+        const [contactsResult, stageCountResult, configResult] = await Promise.all([
             contactsQuery.range(from, to),
-            db.rpc('get_contact_pipeline_counts', { p_page_id: pageId })
+            db.rpc('get_contact_pipeline_counts', { p_page_id: pageId }),
+            db.from('chatbot_configs').select('commercial_video_intake_enabled,details_to_collect').eq('page_id', pageId).maybeSingle()
         ]);
         if (contactsResult.error) throw contactsResult.error;
         if (stageCountResult.error) throw stageCountResult.error;
+        if (configResult.error) throw configResult.error;
 
-        const contacts = contactsResult.data || [];
+        const contacts = (contactsResult.data || []) as unknown as Array<{ id: string; [key: string]: unknown }>;
         const contactIds = contacts.map((contact) => contact.id);
         const { data: chatbotStates, error: stateError } = contactIds.length > 0
             ? await db
@@ -90,7 +97,7 @@ export async function GET(
             pipelineStage,
             Math.max(0, Number(returnedCounts[pipelineStage]) || 0)
         ]));
-        const totalForView = search
+        const totalForView = search || withDetails
             ? contactsResult.count || 0
             : stage
                 ? stageCounts[stage]
@@ -99,7 +106,8 @@ export async function GET(
         return NextResponse.json({
             contacts: contacts.map((contact) => ({
                 ...contact,
-                chatbot_state: stateByContactId.get(contact.id) || null
+                chatbot_state: stateByContactId.get(contact.id) || null,
+                detail_progress: getChatbotDetailProgress(configResult.data, stateByContactId.get(contact.id)?.collected_details)
             })),
             page,
             pageSize,

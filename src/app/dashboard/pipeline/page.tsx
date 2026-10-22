@@ -30,6 +30,7 @@ type PipelineContact = {
     pipeline_stage_source: 'system' | 'chatbot' | 'messenger' | 'manual';
     pipeline_stage_updated_at: string;
     chatbot_state: ChatbotState | null;
+    detail_progress: { collected_details: Record<string, string>; saved_count: number; collected_count: number; required_count: number; missing_details: string[]; complete: boolean };
 };
 
 type PipelineResponse = {
@@ -72,7 +73,7 @@ function formatDetailLabel(value: string) {
         .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function contactReadiness(state: ChatbotState | null) {
+function contactReadiness(state: ChatbotState | null, progress: PipelineContact['detail_progress']) {
     if (!state) {
         return {
             label: 'Bot not started',
@@ -82,13 +83,12 @@ function contactReadiness(state: ChatbotState | null) {
         };
     }
 
-    const collectedCount = Object.values(state.collected_details || {})
-        .filter((value) => typeof value === 'string' && value.trim().length > 0).length;
-    const missingCount = state.missing_details?.length || 0;
+    const collectedCount = progress.collected_count;
+    const missingCount = progress.missing_details.length;
 
-    if (collectedCount > 0 && missingCount === 0) {
+    if (progress.complete) {
         return {
-            label: 'Contact details complete',
+            label: 'Form complete',
             description: `${collectedCount} detail${collectedCount === 1 ? '' : 's'} available`,
             className: 'border-green-700 bg-green-50 text-green-900',
             icon: CheckCircle2
@@ -97,8 +97,8 @@ function contactReadiness(state: ChatbotState | null) {
 
     if (missingCount > 0) {
         return {
-            label: 'Needs more details',
-            description: `${missingCount} field${missingCount === 1 ? '' : 's'} still missing`,
+            label: 'Form incomplete',
+            description: `${collectedCount} / ${progress.required_count} details saved · ${missingCount} still missing`,
             className: 'border-amber-600 bg-amber-50 text-amber-900',
             icon: AlertCircle
         };
@@ -118,6 +118,7 @@ export default function PipelinePage() {
     const [contacts, setContacts] = useState<PipelineContact[]>([]);
     const [counts, setCounts] = useState(emptyCounts);
     const [stage, setStage] = useState<ContactPipelineStage | 'all'>('all');
+    const [detailsFilter, setDetailsFilter] = useState('all');
     const [searchInput, setSearchInput] = useState('');
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
@@ -127,6 +128,12 @@ export default function PipelinePage() {
     const [error, setError] = useState('');
     const [savingContactId, setSavingContactId] = useState('');
     const [expandedContactId, setExpandedContactId] = useState('');
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('details') === 'with_details') setDetailsFilter('with_details');
+        if (params.get('pageId')) setPageId(params.get('pageId')!);
+    }, []);
 
     useEffect(() => {
         const timer = window.setTimeout(() => {
@@ -161,6 +168,7 @@ export default function PipelinePage() {
         try {
             const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
             if (stage !== 'all') params.set('stage', stage);
+            if (detailsFilter === 'with_details') params.set('details', detailsFilter);
             if (search) params.set('search', search);
             const response = await fetch(`/api/pages/${pageId}/pipeline?${params}`);
             const data = await response.json();
@@ -174,7 +182,7 @@ export default function PipelinePage() {
         } finally {
             setLoading(false);
         }
-    }, [pageId, page, pageSize, stage, search]);
+    }, [pageId, page, pageSize, stage, search, detailsFilter]);
 
     useEffect(() => { void loadPipeline(); }, [loadPipeline]);
 
@@ -320,7 +328,14 @@ export default function PipelinePage() {
                         <option key={pipelineStage} value={pipelineStage}>{CONTACT_PIPELINE_LABELS[pipelineStage]} ({counts[pipelineStage] || 0})</option>
                     ))}
                 </select>
+                <select aria-label="Saved client details" value={detailsFilter}
+                    onChange={(event) => { setDetailsFilter(event.target.value); setPage(1); }}
+                    className="h-9 border border-black bg-white px-3 text-sm font-semibold">
+                    <option value="all">All clients</option>
+                    <option value="with_details">Clients with details</option>
+                </select>
             </div>
+            {detailsFilter === 'with_details' && <p className="text-sm text-gray-600">Partial forms are included and stay marked incomplete. Saved answers are retained as the conversation continues.</p>}
 
             {error && <div className="border border-red-600 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
 
@@ -337,11 +352,11 @@ export default function PipelinePage() {
                     </thead>
                     <tbody>
                         {!loading && contacts.map((contact) => {
-                            const collectedDetails = Object.entries(contact.chatbot_state?.collected_details || {})
+                            const collectedDetails = Object.entries(contact.detail_progress.collected_details)
                                 .filter(([, value]) => typeof value === 'string' && value.trim().length > 0);
                             const collectedCount = collectedDetails.length;
-                            const missingCount = contact.chatbot_state?.missing_details?.length || 0;
-                            const readiness = contactReadiness(contact.chatbot_state);
+                            const missingCount = contact.detail_progress.missing_details.length;
+                            const readiness = contactReadiness(contact.chatbot_state, contact.detail_progress);
                             const ReadinessIcon = readiness.icon;
                             const expanded = expandedContactId === contact.id;
                             return (
@@ -444,7 +459,7 @@ export default function PipelinePage() {
                                                         <p className="font-mono text-[10px] font-bold uppercase text-gray-500">Still missing</p>
                                                         {missingCount > 0 ? (
                                                             <div className="mt-2 flex flex-wrap gap-1.5">
-                                                                {contact.chatbot_state?.missing_details?.map((detail) => (
+                                                                {contact.detail_progress.missing_details.map((detail) => (
                                                                     <span key={detail} className="border border-amber-500 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">{formatDetailLabel(detail)}</span>
                                                                 ))}
                                                             </div>

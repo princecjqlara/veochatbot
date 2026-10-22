@@ -1506,6 +1506,7 @@ export default function ChatbotPage() {
 
                                     <div className="border border-black p-4">
                                         <h3 className="flex items-center gap-2 text-sm font-bold"><ListChecks className="h-4 w-4" /> Detail capture</h3>
+                                        <a href={`/dashboard/pipeline?pageId=${encodeURIComponent(selectedPageId)}&details=with_details`} className="mt-2 inline-block text-xs font-bold underline underline-offset-2">View clients with saved details, including incomplete forms</a>
                                         <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden border border-gray-300 bg-gray-300 sm:grid-cols-4">
                                             {[
                                                 ['With details', analytics.conversations.contacts_with_details],

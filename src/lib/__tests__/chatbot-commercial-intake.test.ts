@@ -194,6 +194,22 @@ describe('commercial generation and follow-ups', () => {
         const result = mode === 'reply' ? await generateChatbotResponse({ ...input, inboundMessage: 'Magkano po?', knowledge: prices }) : await generateChatbotFollowUp({ ...input, sequenceNumber: 1, scheduleLabel: '5 minutes' });
         expect(fetchMock).toHaveBeenCalledTimes(2); expect(result.messages.join(' ')).not.toMatch(/399|699/); expect(result.messages.join(' ')).toContain('PHP899'); expect(result.messages.at(-1)).toMatch(/\?$/);
     });
+    it.each(['reply', 'follow_up'])('renders the approved selected package in a %s even when the model confuses regular and promo amounts', async mode => {
+        const fetchMock = mockPlan({ messages: ['Regular PHP899, promo PHP899, corrected promo PHP699. A free personalized commercial video.'], collected_details: {}, personalization_basis:'Customer asked bakery video pricing' });
+        const knowledge = [{ document_id:'approved',chunk_id:'approved-1',title:'Approved promo',similarity:1,
+            content:'Current owner-approved promo catalog\n| Starter Pack | 16 seconds | PHP699 | 1 x 8 seconds | 1 | Included | PHP899 |' }];
+        vi.mocked(retrieveChatbotKnowledge).mockResolvedValue(knowledge);
+        const input = { config, pageId: 'page', history: [customer('Bakery po'), page('Ito ang existing sample namin para sa bakery.', 2), customer('16 seconds po. Magkano at ano ang inclusions?', 3)], collectedDetails: { 'Business Name': 'CJ Bakery' } };
+        const result = mode === 'reply' ? await generateChatbotResponse({ ...input, inboundMessage: '16 seconds po. Magkano at ano ang inclusions?', knowledge })
+            : await generateChatbotFollowUp({ ...input, config:{...config,rag_enabled:true}, sequenceNumber:1, scheduleLabel:'5 minutes' });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(result.messages[0]).toContain('From PHP899. Promo price: PHP699.');
+        expect(result.messages[0]).toContain('FREE 1 add-on video');
+        expect(result.messages[0]).toContain('balance na PHP549');
+        expect(result.messages.join(' ')).not.toContain('free personalized');
+        expect(hasCommercialVideoPriceList(result.messages.join('\n'))).toBe(false);
+        expect(hasForbiddenFreeVideoOffer(result.messages.join('\n'))).toBe(false);
+    });
     it('keeps scheduled follow-ups on the current flow without introducing a form early', async () => {
         mockPlan({ messages: ['Para sa bakery video mo, anong duration ang gusto mo?'], personalization_basis: 'Customer asked about bakery video' });
         const result = await generateChatbotFollowUp({ config, contactName: 'CJ Lara', pageId: 'page', history: [customer('Bakery po'), page('Ito ang existing sample namin para sa bakery.', 2)], sequenceNumber: 1, scheduleLabel: '5 minutes' });
@@ -239,6 +255,12 @@ describe('offer validation', () => {
     it.each(['PHP899 po ang 24-second video. PHP150 ang deposit, PHP749 ang balance.', 'The selected package is 699 pesos.', 'Wala pong bayad ang free script.'])('allows a selected rate or its payment breakdown: %s', text => {
         expect(hasCommercialVideoPriceList(text)).toBe(false);
     });
+    it('allows an original From price and one current promo, but still rejects two package promos', () => {
+        expect(hasCommercialVideoPriceList('Best Seller: 24-second main video. From PHP1,099. Promo price: PHP899. PHP150 down payment. Balance PHP749.')).toBe(false);
+        expect(hasCommercialVideoPriceList('Para sa 24 seconds, Best Seller package: regular PHP1,099, promo price PHP899. PHP150 down payment at PHP749 ang balance.')).toBe(false);
+        expect(hasCommercialVideoPriceList('Starter Pack: From PHP899. Promo price: PHP699. Best Seller: From PHP1,099. Promo price: PHP899.')).toBe(true);
+        expect(hasCommercialVideoPriceList('16 seconds from PHP699; 24 seconds from PHP899.')).toBe(true);
+    });
     it.each(['A quote for the free script.', 'Exact quote para sa free script ninyo.', 'Payment for your free concept.'])('rejects charging or quoting a free output: %s', text => {
         expect(hasForbiddenFreePreproductionCharge(text)).toBe(true);
     });
@@ -248,7 +270,10 @@ describe('offer validation', () => {
     it.each(['Free concept for your video', 'Free script', 'FREE poster ads for the commercial video.', 'The personalized video is not free.', 'You may view our existing portfolio samples for free.'])('allows authorized offer or clarification: %s', text => {
         expect(hasForbiddenFreeVideoOffer(text)).toBe(false);
     });
-    it.each(['We offer a free personalized video sample.', 'Gagawan ka namin ng libreng video.', 'We can create a custom video for free.'])('rejects unauthorized offer: %s', text => {
+    it.each(['Includes FREE 1 pc 8-sec video add-on.', 'Kasama ang FREE 2 add-on videos na tig-8 seconds.', 'FREE 8-sec video add-ons can be added to the main video or used as extra short promo clips.'])('allows the approved eight-second video add-ons: %s', text => {
+        expect(hasForbiddenFreeVideoOffer(text)).toBe(false);
+    });
+    it.each(['We offer a free personalized video sample.', 'Gagawan ka namin ng libreng video.', 'We can create a custom video for free.', 'FREE 1 pc 8-sec video add-on plus a free personalized commercial video.'])('rejects unauthorized offer: %s', text => {
         expect(hasForbiddenFreeVideoOffer(text)).toBe(true);
     });
 });

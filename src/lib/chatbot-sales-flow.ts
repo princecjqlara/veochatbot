@@ -39,23 +39,27 @@ export function ensureCommercialVideoSampleSelection(plan: Record<string, unknow
 export type CommercialVideoPricing = {
     packageName: string; durationSeconds: number; pricePHP: number; referenceOnly: boolean;
     addonCount: number; addonDurationSeconds: number; posters: number; caption: boolean;
+    regularPricePHP?: number;
 };
 
 /** Read one duration row from the existing knowledge, without copying its
  * catalog into code or confusing short add-ons with the main video. */
 export function getCommercialVideoPricing(knowledge: ChatbotKnowledgeMatch[], durationSeconds: number | null): CommercialVideoPricing | null {
     if (!durationSeconds) return null;
-    const content = knowledge.map(match => match.content).join('\n');
-    for (const line of content.split('\n')) {
+    const approvedCatalog = /current owner-approved promo catalog|owner-approved promo price list/i;
+    const sources = [...knowledge].sort((a, b) => Number(approvedCatalog.test(b.content)) - Number(approvedCatalog.test(a.content)));
+    for (const source of sources) for (const line of source.content.split('\n')) {
         const columns = line.split('|').map(column => column.trim()).filter(Boolean);
         if (columns.length < 6 || durationIn(columns[1]) !== durationSeconds) continue;
         const price = columns[2].match(/(?:PHP|P|\u20b1)\s*([\d,]+(?:\.\d{1,2})?)/i);
         if (!price) continue;
         const addon = columns[3].match(/(\d+)\s*[x\u00d7]\s*(\d+)/i);
+        const regularPrice = columns[6]?.match(/(?:PHP|P|\u20b1)\s*([\d,]+(?:\.\d{1,2})?)/i);
         return { packageName: columns[0], durationSeconds, pricePHP: Number(price[1].replace(/,/g, '')),
-            referenceOnly: /historical reference price|reference terms|reference price|default package template|working reference/i.test(content),
+            referenceOnly: !approvedCatalog.test(source.content) && /historical reference price|reference terms|reference price|default package template|working reference/i.test(source.content),
             addonCount: Number(addon?.[1] || 0), addonDurationSeconds: Number(addon?.[2] || 0),
-            posters: Number(columns[4]) || 0, caption: /^included|yes|true$/i.test(columns[5]) };
+            posters: Number(columns[4]) || 0, caption: /^included|yes|true$/i.test(columns[5]),
+            ...(regularPrice ? { regularPricePHP: Number(regularPrice[1].replace(/,/g, '')) } : {}) };
     }
     return null;
 }
@@ -203,7 +207,7 @@ export function commercialVideoSalesFlowPrompt(flow: CommercialVideoSalesFlow, c
         'Answer direct questions first; an explicit request for the form or a free concept/script can proceed to intake immediately. Save any supplied form details at every step. ' +
         'For step=business ask what business they want the video for. Include business_type in JSON only as an exact short quote from their messages; this is context, not the Business Name field. ' +
         'For step=sample select the most relevant existing portfolio media or indexed Drive file using its verified document_id, even if the customer did not separately ask for samples. Do not claim a sample is attached without selecting a valid asset. If no suitable sample is available say so honestly and ask duration. ' +
-        'For step=duration ask how many seconds they want. For step=pricing_process provide the verified selected-duration price in one intact messages entry, including known inclusions; distinguish total, PHP150 down payment, and balance. A changed duration requires updated pricing before the form, even if the process was already explained. Do not repeat that process unless requested. A main 24-second video and two 8-second ADD-ON videos are different deliverables; never replace the main duration with the add-ons. Clearly label historical/template/reference rates as reference only, pending team confirmation, never as approved live quotes. If no applicable rate is available, say the team must confirm it, never invent a price. The app adds the exact seven-step process when needed and a separate buying question. ' +
+        'For step=duration ask how many seconds they want. For step=pricing_process provide the verified selected-duration price in one intact messages entry, including known inclusions; distinguish original From price, current promo total, PHP150 down payment, and balance. A changed duration requires updated pricing before the form, even if the process was already explained. Do not repeat that process unless requested. The main commercial video and its FREE 8-second ADD-ON videos are different deliverables; use the exact counts in the current approved catalog and never replace the main duration with the add-ons. The add-ons can be added to the main video or used as extra short promo clips. Clearly label historical/template/reference rates as reference only, pending team confirmation, never as approved live quotes. If no applicable rate is available, say the team must confirm it, never invent a price. The app adds the exact seven-step process when needed and a separate buying question. ' +
         'For step=decision ask whether they want to proceed; the app adds a Fill out form button. Clicking it asks for the form only, never buying consent. Duration questions have 16s, 20s, 24s, 30s and 1 min choices; other typed lengths are accepted. For step=form the app sends the exact eight-field form prefilled with known answers, then one missing-field question. Set intake_action=send_form for a useful repeat. Every form and price explains the free concept needs no fee/purchase; paid production is separate. ' +
         'Every active response and scheduled reminder ends with one relevant question. Full pricing, the numbered process plus revision note, and the entire form are each single messages, exempt from sentence splitting and short-answer caps. Follow them with a separate relevant question. ' +
         'Write the current factual answer in messages. Do not duplicate the form or process: the app renders those. Use natural Taglish and no emojis. Respect opt-outs, refusals, and team handoff stops.\n';

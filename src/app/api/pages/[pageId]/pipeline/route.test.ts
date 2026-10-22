@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: mocks.getSessionFromRequest }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: mocks.getSupabaseAdmin }));
 vi.mock('@/lib/page-access', () => ({ userHasPageAccess: mocks.userHasPageAccess }));
-vi.mock('@/lib/chatbot-control', () => ({ getChatbotContactState: mocks.getChatbotContactState, saveChatbotContactState: mocks.saveChatbotContactState }));
+vi.mock('@/lib/chatbot-control', async original => ({ ...await original<typeof import('@/lib/chatbot-control')>(), getChatbotContactState: mocks.getChatbotContactState, saveChatbotContactState: mocks.saveChatbotContactState }));
 vi.mock('@/lib/chatbot-follow-ups', () => ({ cancelPendingChatbotFollowUps: mocks.cancelPendingChatbotFollowUps }));
 vi.mock('@/lib/contact-pipeline', async (importOriginal) => {
     const original = await importOriginal<typeof import('@/lib/contact-pipeline')>();
@@ -69,6 +69,25 @@ describe('pipeline Page-member access', () => {
 
         expect(response.status).toBe(403);
         expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
+    });
+
+    it('lists partial forms with an exact filtered total and recomputes incomplete status without stopping the bot', async () => {
+        const contacts: any = { select:vi.fn(()=>contacts),eq:vi.fn(()=>contacts),order:vi.fn(()=>contacts),neq:vi.fn(()=>contacts),
+            range:vi.fn(async()=>({data:[{id:'partial',pipeline_stage:'collecting_details'}],count:1,error:null})) };
+        const states: any = { select:()=>states,eq:()=>states,in:async()=>({data:[{contact_id:'partial',status:'active',collected_details:{'Business Name':'Cafe'},missing_details:[]}],error:null}) };
+        const config: any = {select:()=>config,eq:()=>config,maybeSingle:async()=>({data:{commercial_video_intake_enabled:true},error:null})};
+        mocks.getSupabaseAdmin.mockReturnValue({from:(table:string)=>table==='contacts'?contacts:table==='chatbot_configs'?config:states,
+            rpc:async()=>({data:{new:100,collecting_details:20},error:null})});
+        const response=await GET(new Request('http://localhost/api/pages/page_1/pipeline?details=with_details&pageSize=1') as NextRequest,{params:Promise.resolve({pageId:'page_1'})});
+        expect(response.status).toBe(200);
+        const body=await response.json();
+        expect(body.total).toBe(1);expect(body.stageCounts.new).toBe(100);
+        expect(body.contacts[0].chatbot_state.status).toBe('active');
+        expect(body.contacts[0].detail_progress).toMatchObject({complete:false,collected_count:1,required_count:8});
+        expect(body.contacts[0].detail_progress.missing_details).toHaveLength(7);
+        expect(contacts.select).toHaveBeenCalledWith(expect.stringContaining('chatbot_contact_states!inner'),{count:'exact'});
+        expect(contacts.neq).toHaveBeenCalledWith('chatbot_contact_states.collected_details','{}');
+        expect(mocks.saveChatbotContactState).not.toHaveBeenCalled();expect(mocks.cancelPendingChatbotFollowUps).not.toHaveBeenCalled();
     });
 
     it.each(['new', 'engaged', 'collecting_details', 'qualified'])(

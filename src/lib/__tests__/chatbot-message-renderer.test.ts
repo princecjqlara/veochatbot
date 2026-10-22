@@ -72,6 +72,26 @@ describe('natural commercial-video replies and intact structured messages', () =
         expect(messages[0]).toContain('2 add-on videos na tig-8 seconds');
         expect(messages[0]).toContain('reference rate'); expect(messages[0]).toContain('final price at inclusions bago ang payment');
     });
+    it.each([
+        ['Starter Pack', 16, 899, 699, 1, 1], ['Best Seller', 24, 1099, 899, 1, 1],
+        ['Pro Boost', 32, 1399, 1099, 2, 1], ['High Impact', 40, 1499, 1299, 2, 1],
+        ['Brand Level', 60, 2499, 1499, 3, 2], ['Full Campaign', 120, 4999, 2499, 3, 2]
+    ] as const)('shows the approved promo breakdown for %s without mixing the original price into the balance', (packageName, durationSeconds, regularPricePHP, pricePHP, addonCount, posters) => {
+        const messages = render({ salesFlow: flow('pricing_process', { durationSeconds }), pricing: {
+            packageName, durationSeconds, regularPricePHP, pricePHP, addonCount, posters,
+            referenceOnly: false, addonDurationSeconds: 8, caption: true
+        } });
+        const quote = messages[0];
+        expect(quote).toContain('From PHP' + regularPricePHP + '. Promo price: PHP' + pricePHP);
+        expect(quote).toContain('1 ' + durationSeconds + '-second main commercial video');
+        expect(quote).toContain('FREE ' + addonCount + ' add-on video');
+        expect(quote).toContain('May ' + posters + ' poster ad');
+        expect(quote).toContain('Facebook/TikTok Ads');
+        expect(quote).toContain('idagdag sa main video o gamitin bilang extra short promo clips');
+        expect(quote).toContain('balance na PHP' + (pricePHP - 150));
+        expect(quote).not.toContain('reference rate');
+        expect(formatChatbotReplyMessages(messages, { split_messages: true, max_message_parts: 1 })).toEqual(messages);
+    });
     it('answers a direct process request without sending the form early', () => {
         const messages = render({ salesFlow: flow('duration', { durationSeconds: null, processRequested: true }) });
         expect(messages.filter(m => m.includes('STEP-BY-STEP'))).toHaveLength(1); expect(messages.at(-1)).toContain('seconds');

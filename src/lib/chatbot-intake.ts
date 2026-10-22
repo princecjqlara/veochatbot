@@ -67,6 +67,28 @@ export function getMissingCommercialVideoDetails(value: unknown): string[] {
     return COMMERCIAL_VIDEO_REQUIRED_DETAILS.filter(label => !details[label]);
 }
 
+/** Read only explicitly labelled customer answers; blank fields never erase
+ * answers already saved. This also works when AI generation is unavailable. */
+export function extractCommercialVideoFormDetails(text: string): Record<string, string> {
+    const answers: Record<string, string> = {};
+    for (const line of text.split(/\r?\n/)) {
+        const trimmed = line.trim().replace(/^\d+[.)]\s*/, '');
+        for (const field of COMMERCIAL_VIDEO_FIELDS) {
+            const aliases = [field.label, field.displayLabel, field.key, ...field.aliases];
+            const label = aliases.find(alias => {
+                const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                return new RegExp('^' + escaped + (alias.endsWith('?') ? '\\s*:?' : '\\s*:') + '\\s*', 'i').test(trimmed);
+            });
+            if (!label) continue;
+            const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const answer = trimmed.replace(new RegExp('^' + escaped + (label.endsWith('?') ? '\\s*:?' : '\\s*:') + '\\s*', 'i'), '').trim();
+            if (answer) answers[field.label] = answer;
+            break;
+        }
+    }
+    return normalizeCommercialVideoDetails(answers);
+}
+
 function customerOrientation(text: string): 'Portrait' | 'Landscape' | null {
     const field = text.match(/^(?:portrait or landscape\??|(?:video )?(?:orientation|format))\s*:?\s*([^\r\n]*)$/im);
     const standalone = /^\s*(?:portrait|landscape|vertical|horizontal|9\s*:\s*16|16\s*:\s*9)(?:\s+(?:po|please))?[.!]?\s*$/i.test(text);
@@ -95,6 +117,12 @@ export function mergeCommercialVideoChatDetails(existing: unknown, candidate: un
     if (proposed['Portrait or Landscape?'] && proposed['Portrait or Landscape?'] !== saved['Portrait or Landscape?'] &&
         !customerTexts.some(text => customerOrientation(text) === proposed['Portrait or Landscape?'])) delete proposed['Portrait or Landscape?'];
     const merged = { ...saved, ...proposed };
+    for (const text of customerTexts) {
+        for (const [label, answer] of Object.entries(extractCommercialVideoFormDetails(text))) {
+            if (!merged[label]) merged[label] = answer;
+        }
+    }
+    Object.assign(merged, extractCommercialVideoFormDetails(currentCustomerText || ''));
     let inferredSeconds: number | null = null;
     let inferredOrientation: string | null = null;
     for (const text of customerTexts) {
@@ -199,9 +227,14 @@ export function commercialVideoOwnerGuidance(text: string): string {
  * selected package remain a useful answer and are not a package list. */
 export function hasCommercialVideoPriceList(text: string): boolean {
     const money = /(?:₱|\bPHP\s*|\bP\s*)(?:\d[\d,]*)(?:\.\d{1,2})?|\b\d[\d,]*(?:\.\d{1,2})?\s*(?:pesos|PHP)\b/gi;
-    const offers = text.split(/\n|;|(?<=[.!?])\s+/).filter(clause => !/\b(?:deposit|down\s*payment|balance|discount|previous|original|revisions?)\b/i.test(clause));
+    // An original amount can share a sentence with its replacement promo.
+    // Keep every promo amount, so two different package promos still fail.
+    const activePrices = /\bpromo(?:\s+price)?\s*:?\s*(?:PHP|P|\u20b1)\s*\d/i.test(text)
+        ? text.replace(/\b(?:from|regular(?:\s+price)?|original(?:\s+price)?)\s*:?\s*(?:PHP|P|\u20b1)\s*\d[\d,]*(?:\.\d{1,2})?/gi, '')
+        : text;
+    const offers = activePrices.split(/\n|;|(?<=[.!?])\s+/).filter(clause => !/\b(?:deposit|down\s*payment|balance|discount|previous|original|revisions?)\b/i.test(clause));
     if ((offers.join(' ').match(money) || []).length > 1) return true;
-    return (text.match(/\b\d+\s*(?:s|secs?|seconds?|segundo|mins?|minutes?)\b\s*[:=–—-]?\s*(?:(?:₱|PHP|P)\s*)?\d[\d,]*/gi) || []).length > 1;
+    return (activePrices.match(/\b\d+\s*(?:s|secs?|seconds?|segundo|mins?|minutes?)\b\s*[:=–—-]?\s*(?:(?:₱|PHP|P)\s*)?\d[\d,]*/gi) || []).length > 1;
 }
 
 export function hasForbiddenFreePreproductionCharge(content: string): boolean {
@@ -218,9 +251,12 @@ export function hasForbiddenFreeVideoOffer(content: string): boolean {
         if (!/\b(?:free|libre|libreng|walang bayad)\b/i.test(clause)) return false;
         if (/\b(?:not free|no free|never|cannot|can't|don't|do not|hindi|di po|walang free|hindi libre|hindi po libre)\b/i.test(clause)) return false;
         if (/\b(?:portfolio|previous work|past work|existing samples?|existing work|past samples?|previous samples?)\b/i.test(clause) && !/\b(?:personalized|personalised|custom|gagawa|gawan|create|make|produce)\b/i.test(clause)) return false;
-        return /\b(?:free|libre|libreng|walang bayad)\b[^.!?\n]{0,55}\b(?:personalized|personalised|custom|sample|video|commercial)\b/i.test(clause
+        const offers = clause
+            .replace(/\b(?:free|libre|libreng)\s+(?:\d+\s*(?:pcs?\.?|pieces?)?\s*)?8[\s-]*(?:s|secs?|seconds?)\s+(?:video\s+)?add[\s-]?ons?(?:\s+videos?)?\b/gi, 'included add-ons')
+            .replace(/\b(?:free|libre|libreng)\s+(?:\d+\s*(?:pcs?\.?|pieces?)?\s*)?(?:video\s+)?add[\s-]?ons?(?:\s+videos?)?\s+(?:na\s+)?(?:tig[\s-]?)?8[\s-]*(?:s|secs?|seconds?)\b/gi, 'included add-ons');
+        return /\b(?:free|libre|libreng|walang bayad)\b[^.!?\n]{0,55}\b(?:personalized|personalised|custom|sample|video|commercial)\b/i.test(offers
             .replace(/\b(?:free|libre|libreng)\s+(?:video\s+)?(?:concept|script)\b/gi, 'authorized offer')
             .replace(/\b(?:free|libre|libreng)\s+(?:poster(?:\s+ads?)?|ad\s+posters?)\b/gi, 'included poster')) ||
-            /\b(?:personalized|personalised|custom|sample|video|commercial)\b[^.!?\n]{0,55}\b(?:for free|libre|libreng|walang bayad)\b/i.test(clause);
+            /\b(?:personalized|personalised|custom|sample|video|commercial)\b[^.!?\n]{0,55}\b(?:for free|libre|libreng|walang bayad)\b/i.test(offers);
     });
 }

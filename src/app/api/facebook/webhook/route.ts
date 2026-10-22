@@ -47,6 +47,7 @@ import {
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../lib/contact-names';
 import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, getMessengerHandoffMetadata, isMessengerAutomaticNotice, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 import { evaluateCommercialVideoIntake, isCommercialVideoIntake } from '@/lib/chatbot-policy';
+import { captureCommercialVideoFormProgress } from '@/lib/chatbot-form-progress';
 
 export const maxDuration = 300;
 
@@ -1121,6 +1122,12 @@ export async function POST(request: NextRequest) {
                                     if (claimed) {
                                         let lastOutboundMessageId: string | undefined;
                                         try {
+                                            if (isCommercialVideoIntake(chatbotConfig)) {
+                                                chatbotState = await captureCommercialVideoFormProgress(supabase, {
+                                                    pageId: page.id, contactId: contact.id, existingState: chatbotState,
+                                                    customerText: inboundMessageText, inboundAt: interactionAt
+                                                });
+                                            }
                                             let replyMessages: string[] = [];
                                             let collectedDetails = chatbotState?.collected_details || {};
                                             let missingDetails = getMissingChatbotDetails(

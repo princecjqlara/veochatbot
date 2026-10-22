@@ -138,9 +138,12 @@ export function renderCommercialVideoMessages(input: {
             const duration = flow?.durationSeconds ? flow.durationSeconds + '-second video' : 'napiling video';
             const rate = input.pricing;
             const verifiedPrice = rate ? [
-                rate.packageName + ': ' + rate.durationSeconds + '-second main commercial video, ' + (rate.referenceOnly ? 'reference rate na ' : '') + 'PHP' + rate.pricePHP + '.',
-                rate.addonCount ? 'Kasama ang ' + rate.addonCount + ' add-on videos na tig-' + rate.addonDurationSeconds + ' seconds.' : '',
-                rate.posters ? 'May ' + rate.posters + ' poster ads' + (rate.caption ? ' at ready-to-post caption.' : '.') : '',
+                rate.packageName + ': 1 ' + rate.durationSeconds + '-second main commercial video.',
+                rate.regularPricePHP && !rate.referenceOnly ? 'From PHP' + rate.regularPricePHP + '. Promo price: PHP' + rate.pricePHP + '.' :
+                    (rate.referenceOnly ? 'reference rate na PHP' : 'Package price: PHP') + rate.pricePHP + '.',
+                rate.addonCount ? 'Kasama ang FREE ' + rate.addonCount + ' add-on video' + (rate.addonCount === 1 ? '' : 's') + ' na tig-' + rate.addonDurationSeconds + ' seconds.' : '',
+                rate.posters ? 'May ' + rate.posters + ' poster ad' + (rate.posters === 1 ? '' : 's') + (rate.caption ? ' at ready-to-post caption for Facebook/TikTok Ads.' : '.') : '',
+                rate.addonCount ? 'Ang FREE ' + rate.addonDurationSeconds + '-sec video add-ons ay pwedeng idagdag sa main video o gamitin bilang extra short promo clips.' : '',
                 'PHP150 muna ang down payment' + (rate.pricePHP >= 150 ? ', ' + (rate.referenceOnly ? 'reference ' : '') + 'balance na PHP' + (rate.pricePHP - 150) : '') + '.',
                 rate.referenceOnly ? 'Iko-confirm muna ng team ang final price at inclusions bago ang payment.' : ''
             ].filter(Boolean).join(' ') : null;

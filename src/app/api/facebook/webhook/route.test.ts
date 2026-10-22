@@ -1148,6 +1148,16 @@ describe('POST /api/facebook/webhook', () => {
         }), expect.anything());
     });
 
+    it('saves a partial labelled form and leaves collection active even when AI generation fails', async () => {
+        const supabase=createPhotoChatbotSupabaseMock({commercialVideo:true,activeState:true});
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        mocks.generateChatbotResponse.mockRejectedValueOnce(new Error('Provider unavailable'));
+        await POST(createCustomerPhotoRequest('Business Name: Partial Bakery\nLocation: Manila\nContact Number:'));
+        expect(supabase.contactStateUpsert).toHaveBeenCalledWith(expect.objectContaining({status:'active',stop_reason:null,
+            collected_details:expect.objectContaining({'Business Name':'Partial Bakery','Business Location':'Manila'}),
+            missing_details:expect.arrayContaining(['Contact Number'])}),expect.anything());
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
     it('passes saved commercial request evidence into generation and preserves it when collecting missing details', async () => {
         const supabase = createPhotoChatbotSupabaseMock({ commercialVideo: true, activeState: true,
             savedRequest: true, savedRequestType: 'free_script', savedRequestEvidence: 'Free script please', automationEpoch: 3,
