@@ -43,6 +43,9 @@ try {
         assert.equal(body.packages.length, 4);
         assert.equal(body.metrics.length, 4);
         assert.equal(body.experiment.status, 'active');
+        assert.equal(body.promotion_timing.hold_hours, 24);
+        assert.deepEqual(body.promotion_timing.days, page.follow_up_best_time_days);
+        assert.equal(typeof body.promotion_timing.waiting_response, 'number');
         assert.ok(body.packages.every(pkg => pkg.tag_id && pkg.options.length === 6));
         const filtered = await fetch(origin + '/api/pages/' + page.page_id + '/chatbot/pricing?duration=24', { headers, signal: AbortSignal.timeout(30000) });
         assert.equal(filtered.status, 200);
@@ -54,7 +57,7 @@ try {
             const chunk = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(match => match[1]).find(src => src.includes('/app/dashboard/pricing/page-'));
             assert.ok(chunk, 'Pricing dashboard bundle exists');
             const bundle = await (await fetch(new URL(chunk, origin), { signal: AbortSignal.timeout(20000) })).text();
-            for (const marker of ['Pricing packages', 'Load current + 3 approved catalogs', 'Starting duration', 'Results by starting package']) {
+            for (const marker of ['Pricing packages', 'Load current + 3 approved catalogs', 'Starting duration', 'Results by starting package', 'One package for the first 24 hours', 'at least 24 hours apart']) {
                 assert.ok(bundle.includes(marker), 'Dashboard includes ' + marker);
             }
             const unauthorized = await fetch(origin + '/api/pages/' + page.page_id + '/chatbot/pricing', { signal: AbortSignal.timeout(20000) });
@@ -70,8 +73,11 @@ try {
     const permissions = (await db.query(`SELECT p.proname, has_function_privilege('anon',p.oid,'EXECUTE') AS anon,
         has_function_privilege('authenticated',p.oid,'EXECUTE') AS authenticated, has_function_privilege('service_role',p.oid,'EXECUTE') AS service
         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN
-        ('reserve_chatbot_pricing_offer','get_chatbot_pricing_contact_catalog','create_chatbot_pricing_experiment','get_chatbot_pricing_analytics')`)).rows;
-    assert.equal(permissions.length, 4);
+        ('reserve_chatbot_pricing_offer','get_chatbot_pricing_contact_catalog','create_chatbot_pricing_experiment','get_chatbot_pricing_analytics','schedule_chatbot_pricing_promotion')`)).rows;
+    assert.equal(permissions.length, 5);
+    assert.equal((await db.query("SELECT count(*)::int n FROM app_private.schema_migrations WHERE version='20261022_003'")).rows[0].n, 1);
+    const reserveFunction = (await db.query("SELECT pg_get_functiondef('public.reserve_chatbot_pricing_offer(uuid,uuid,text,boolean,boolean,integer)'::regprocedure) body")).rows[0].body;
+    assert.ok(reserveFunction.includes("assignment.first_exposed_at > now() - interval '24 hours'"));
     assert.ok(permissions.every(row => !row.anon && !row.authenticated && row.service));
     assert.equal((await db.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname LIKE 'chatbot_pricing_%' AND c.relkind='r' AND c.relrowsecurity")).rows[0].n, 5);
     await db.query('ROLLBACK');

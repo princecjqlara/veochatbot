@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/get-session';
 import { userHasPageAccess } from '@/lib/page-access';
 import { getSupabaseAdmin } from '@/lib/supabase';
-import { validatePricingExperiment } from '@/lib/chatbot-pricing';
+import { PRICING_PACKAGE_HOLD_HOURS, validatePricingExperiment } from '@/lib/chatbot-pricing';
 import { currentPricingCatalog, OWNER_PRICING_CATALOGS } from '@/lib/chatbot-pricing-catalogs';
 
 export const dynamic = 'force-dynamic';
@@ -64,19 +64,23 @@ export async function GET(request: NextRequest, context: Context) {
             experiment = older.data;
         }
         if (requestedId && !experiment) return NextResponse.json({ error: 'Experiment not found' }, { status: 404 });
-        const config = await db.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled').eq('page_id', pageId).maybeSingle();
+        const config = await db.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,follow_up_best_time_days').eq('page_id', pageId).maybeSingle();
         if (config.error) throw config.error;
         if (!experiment) return NextResponse.json({ experiments: runs.data || [], experiment: null, packages: [], metrics: [], bot: config.data });
-        const [packages, analytics, reviews] = await Promise.all([
+        const [packages, analytics, reviews, waiting] = await Promise.all([
             db.from('chatbot_pricing_packages').select('*').eq('experiment_id', experiment.id).order('position', { ascending: true }),
             db.rpc('get_chatbot_pricing_analytics', { p_page_id: pageId, p_experiment_id: experiment.id, p_duration_seconds: duration }),
             db.from('chatbot_pricing_deliveries').select('id', { count: 'exact', head: true })
-                .eq('experiment_id', experiment.id).eq('status', 'sending')
+                .eq('experiment_id', experiment.id).eq('status', 'sending'),
+            db.from('chatbot_follow_up_jobs').select('id', { count: 'exact', head: true })
+                .eq('page_id', pageId).eq('purpose', 'pricing_promotion').eq('status', 'waiting_response')
         ]);
         if (packages.error) throw packages.error;
         if (analytics.error) throw analytics.error;
         if (reviews.error) throw reviews.error;
-        return NextResponse.json({ experiments: runs.data || [], experiment, packages: packages.data || [], metrics: analytics.data || [], duration_seconds: duration, delivery_reviews: reviews.count || 0, bot: config.data });
+        if (waiting.error) throw waiting.error;
+        return NextResponse.json({ experiments: runs.data || [], experiment, packages: packages.data || [], metrics: analytics.data || [], duration_seconds: duration, delivery_reviews: reviews.count || 0,
+            promotion_timing: { hold_hours: PRICING_PACKAGE_HOLD_HOURS, days: config.data?.follow_up_best_time_days || [2, 3, 5, 7], waiting_response: waiting.count || 0 }, bot: config.data });
     } catch (error) { return failure(error); }
 }
 

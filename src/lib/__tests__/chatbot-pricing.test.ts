@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyPricingOffer, assertPricingOfferActive, getPricingQuoteContext, pricingRate, renderPricingOffer, reservePricingOffer, validatePricingExperiment, type PricingOffer } from '@/lib/chatbot-pricing';
+import { applyPricingOffer, assertPricingOfferActive, getPricingQuoteContext, pricingRate, renderPricingOffer, reservePricingOffer, schedulePricingPromotion, validatePricingExperiment, type PricingOffer } from '@/lib/chatbot-pricing';
 import type { ChatbotConfig } from '@/lib/chatbot';
 
 const draft = { name: 'October test', mode: 'fair_test_sequence', duration_seconds: 24, follow_up_gap_minutes: 120,
@@ -12,6 +12,14 @@ const offer: PricingOffer = { delivery_id: 'delivery', experiment_id: 'experimen
     duration_seconds: 24, kind: 'initial' };
 
 describe('pricing experiments', () => {
+    it('passes later-day timing and automation scope to the pricing scheduler', async () => {
+        const scheduled = { managed: true, scheduled: 1, waiting_response: true, due_at: '2026-10-23T04:00:00Z' };
+        const rpc = vi.fn().mockResolvedValue({ data: scheduled });
+        expect(await schedulePricingPromotion({ rpc }, { pageId: 'page', contactId: 'contact', anchorInboundAt: '2026-10-22T04:00:00Z',
+            days: [2, 3, 5], bestHour: 15, automationEpoch: 3, policyRevision: 2 })).toEqual(scheduled);
+        expect(rpc).toHaveBeenCalledWith('schedule_chatbot_pricing_promotion', { p_page_id: 'page', p_contact_id: 'contact',
+            p_anchor_inbound_at: '2026-10-22T04:00:00Z', p_days: [2, 3, 5], p_best_hour: 15, p_epoch: 3, p_revision: 2 });
+    });
     it('preserves exact approved prices and package order', () => {
         expect(validatePricingExperiment(draft)).toEqual(draft);
     });

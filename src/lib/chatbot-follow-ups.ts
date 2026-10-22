@@ -20,7 +20,7 @@ import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib
 import { ChatbotFollowUpRepeatedError, hasRepeatedChatbotCopy } from '@/lib/chatbot-message-copy';
 import { getCommercialVideoMessageControls } from '@/lib/chatbot-interactions';
 import { buildFirstDaySchedule, firstDayDeadline, getFirstDayCandidate, nextFirstDayWakingTime } from '@/lib/chatbot-first-day-timing';
-import { assertPricingOfferActive, beginPricingDelivery, getContactPricingCatalog, getPricingQuoteContext, PricingDeliveryUncertainError, recordPricingDelivery, releasePricingOffer, renderPricingOffer, reservePricingOffer, type PricingOffer } from '@/lib/chatbot-pricing';
+import { assertPricingOfferActive, beginPricingDelivery, getContactPricingCatalog, getPricingQuoteContext, PricingDeliveryUncertainError, recordPricingDelivery, releasePricingOffer, renderPricingOffer, reservePricingOffer, schedulePricingPromotion, type PricingOffer } from '@/lib/chatbot-pricing';
 
 const RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * RESPONSE_WINDOW_MS;
@@ -55,7 +55,7 @@ type FollowUpJob = {
     message_id?: string | null;
     attempt_count: number;
     media_asset_id?: string | null;
-    purpose?: 'scheduled' | 'nightly_continuation' | 'first_day_adaptive';
+    purpose?: 'scheduled' | 'nightly_continuation' | 'first_day_adaptive' | 'pricing_promotion';
     automation_epoch?: number;
     policy_revision?: number;
     timing_context?: { initial_reply_end?: string; carried_sent_times?: string[] } | null;
@@ -148,7 +148,7 @@ export async function cancelPendingChatbotFollowUps(input: {
         .eq('contact_id', input.contactId);
     if (input.exceptJobId) query = query.neq('id', input.exceptJobId);
     if (input.beforeAnchorInboundAt) query = query.lt('anchor_inbound_at', input.beforeAnchorInboundAt);
-    const { error } = await query.in('status', ['pending', 'processing', 'ready_manual']);
+    const { error } = await query.in('status', ['pending', 'processing', 'ready_manual', 'waiting_response']);
     if (error) throw new Error(error.message || 'Could not cancel chatbot follow-ups');
 }
 
@@ -206,7 +206,12 @@ export async function scheduleChatbotFollowUps(input: {
             message_text: 'AI-generated from conversation at send time',
             status: 'pending'
         }));
-    const bestTimeJobs = normalizeBestTimeFollowUpDays(input.config.follow_up_best_time_days)
+    const pricingSchedule = await schedulePricingPromotion(input.supabase, {
+        pageId: input.pageId, contactId: input.contact.id, anchorInboundAt: input.anchorInboundAt,
+        days: normalizeBestTimeFollowUpDays(input.config.follow_up_best_time_days), bestHour: input.contact.best_contact_hour,
+        automationEpoch: scopedState?.automation_epoch, policyRevision: input.config.policy_revision
+    });
+    const bestTimeJobs = (pricingSchedule.managed ? [] : normalizeBestTimeFollowUpDays(input.config.follow_up_best_time_days))
         .map((day, index) => ({
             page_id: input.pageId,
             contact_id: input.contact.id,
@@ -222,14 +227,14 @@ export async function scheduleChatbotFollowUps(input: {
     const jobs = [...quickJobs, ...bestTimeJobs].filter((job) => new Date(job.due_at).getTime() > now.getTime())
         .map(job => ({ ...job, automation_epoch: scopedState?.automation_epoch || 0,
             policy_revision: input.config.policy_revision || 1 }));
-    if (jobs.length === 0) return 0;
+    if (jobs.length === 0) return pricingSchedule.scheduled;
     const { error } = await input.supabase.from('chatbot_follow_up_jobs').upsert(jobs, {
         onConflict: 'contact_id,anchor_inbound_at,schedule_type,sequence_index,automation_epoch,purpose',
         // A replay must never revive a sent/cancelled job or reset its claim.
         ignoreDuplicates: true
     });
     if (error) throw new Error(error.message || 'Could not schedule chatbot follow-ups');
-    return jobs.length;
+    return jobs.length + pricingSchedule.scheduled;
 }
 
 async function markJob(
@@ -302,7 +307,7 @@ export async function processDueChatbotFollowUps(input: {
             };
             const eligibility = await Promise.all([
                 supabase.from('pages').select('id, name, fb_page_id, access_token').eq('id', job.page_id).maybeSingle(),
-                supabase.from('contacts').select('id, page_id, psid, name, first_interaction_at, last_interaction_at, last_inbound_at, pipeline_stage,pipeline_stage_source').eq('id', job.contact_id).maybeSingle(),
+                supabase.from('contacts').select('id, page_id, psid, name, best_contact_hour, first_interaction_at, last_interaction_at, last_inbound_at, pipeline_stage,pipeline_stage_source').eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_configs').select('*').eq('page_id', job.page_id).maybeSingle(),
                 supabase.from('chatbot_contact_states').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle()
             ]);
@@ -327,7 +332,7 @@ export async function processDueChatbotFollowUps(input: {
                 (job.schedule_type === 'response' && job.purpose === 'scheduled' &&
                     config?.follow_up_first_day_mode === 'adaptive' &&
                     Date.parse(contact?.first_interaction_at || '') === anchorTime) ||
-                (!messagingType && job.schedule_type !== 'manual_human_agent')) {
+                (!messagingType && job.schedule_type !== 'manual_human_agent' && job.purpose !== 'pricing_promotion')) {
                 if (state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source, config)) {
                     await cancelPendingChatbotFollowUps({ supabase, pageId: job.page_id, contactId: job.contact_id,
                         reason: 'Contact stopped or handed off', now });
@@ -339,6 +344,11 @@ export async function processDueChatbotFollowUps(input: {
                     error_message: 'Follow-up no longer eligible'
                 });
                 result.cancelled += 1;
+                continue;
+            }
+            if (job.purpose === 'pricing_promotion' && (!messagingType || job.schedule_type !== 'response')) {
+                await markJob(supabase, job.id, { status: 'waiting_response', claimed_at: null,
+                    error_message: 'Later-day promotion is waiting for an eligible Messenger response window' });
                 continue;
             }
 
@@ -483,9 +493,18 @@ export async function processDueChatbotFollowUps(input: {
             const quote = getPricingQuoteContext({ config, pageId: page.fb_page_id, history: conversationHistory,
                 collectedDetails: state?.collected_details || {}, hasClearRequest: request.has_clear_request });
             // Promotional catalogs use RESPONSE only, including when the ordinary scheduler permits HUMAN_AGENT.
-            if (job.schedule_type === 'response' && messagingType === 'RESPONSE') {
+            if (job.purpose === 'pricing_promotion' && job.schedule_type === 'response' && messagingType === 'RESPONSE') {
                 pricingOffer = await reservePricingOffer(supabase, { pageId: job.page_id, contactId: job.contact_id,
                     sourceKey: 'follow-up:' + job.id, followUp: true, quoteEligible: quote.eligible, durationSeconds: quote.durationSeconds });
+            }
+            if (job.purpose === 'pricing_promotion' && !pricingOffer) {
+                const next = await schedulePricingPromotion(supabase, { pageId: job.page_id, contactId: job.contact_id,
+                    anchorInboundAt: job.anchor_inbound_at, days: normalizeBestTimeFollowUpDays(config.follow_up_best_time_days),
+                    bestHour: contact.best_contact_hour, automationEpoch: state?.automation_epoch, policyRevision: config.policy_revision });
+                await markJob(supabase, job.id, next.managed && next.due_at ? { status: next.waiting_response ? 'waiting_response' : 'pending',
+                    due_at: next.due_at, claimed_at: null, error_message: 'Keeping the current package for its full day' }
+                    : { status: 'cancelled', claimed_at: null, cancelled_at: now.toISOString(), error_message: 'No remaining eligible pricing day' });
+                continue;
             }
             if (pricingOffer) {
                 personalizedMessages = [renderPricingOffer(pricingOffer, { commercial: isCommercialVideoIntake(config), followUp: true,
@@ -786,6 +805,11 @@ export async function processDueChatbotFollowUps(input: {
                 error_message: null
             });
             result.sent += 1;
+            if (pricingOffer) {
+                await schedulePricingPromotion(supabase, { pageId: job.page_id, contactId: job.contact_id,
+                    anchorInboundAt: job.anchor_inbound_at, days: normalizeBestTimeFollowUpDays(config.follow_up_best_time_days),
+                    bestHour: contact.best_contact_hour, automationEpoch: state?.automation_epoch, policyRevision: config.policy_revision });
+            }
         } catch (sendError) {
             if (sendError instanceof ChatbotDeliveryStoppedError || sendError instanceof ChatbotFollowUpRepeatedError) {
                 await markJob(supabase, job.id, {

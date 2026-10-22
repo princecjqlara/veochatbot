@@ -74,7 +74,7 @@ export async function assertChatbotDeliveryAllowed(input: {
         stopReason: signal, ...getMessengerHandoffMetadata(history, input.facebookPageId, handoffOptions) });
     const { error } = await db.from('chatbot_follow_up_jobs')
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), claimed_at: null })
-        .eq('page_id', input.pageId).eq('contact_id', input.contactId).in('status', ['pending', 'processing', 'ready_manual']);
+        .eq('page_id', input.pageId).eq('contact_id', input.contactId).in('status', ['pending', 'processing', 'ready_manual', 'waiting_response']);
     if (error) throw new Error(error.message);
     await updateContactPipelineStage(db, { pageId: input.pageId, contactId: input.contactId, stage: pipelineStageForMessengerSignal(signal), source: 'messenger' });
     throw new ChatbotDeliveryStoppedError(`Messenger lead stage: ${signal}; automatic delivery cancelled`);

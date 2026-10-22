@@ -9,8 +9,9 @@ const { currentPricingCatalog, OWNER_PRICING_CATALOGS } = module.currentPricingC
 const pricingModule = await import('../src/lib/chatbot-pricing.ts');
 const { validatePricingExperiment } = pricingModule.validatePricingExperiment ? pricingModule : pricingModule.default;
 const applySchema = process.argv.includes('--apply-schema');
+const applyDailySchema = process.argv.includes('--apply-daily-schema');
 const activate = process.argv.includes('--activate');
-assert.ok(!(applySchema && activate), 'Schema and activation are separate steps');
+assert.ok([applySchema, applyDailySchema, activate].filter(Boolean).length <= 1, 'Schema and activation are separate steps');
 const out = new URL('../../data/', import.meta.url);
 const db = new pg.Client({ connectionString: process.env.DATABASE_POOLER_URL_6543 || process.env.DATABASE_POOLER_URL_5432 || process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 15000, query_timeout: 45000 });
@@ -22,10 +23,27 @@ try {
     const selected = configs.filter(row => row.commercial_video_intake_enabled);
     assert.ok(selected.length, 'No configured commercial video Pages');
     const snapshot = await readFile(new URL('../supabase/migrations/202610220002_chatbot_pricing_experiments.sql', import.meta.url), 'utf8');
-    if (applySchema) {
+    if (applyDailySchema) {
+        const dailySchema = await readFile(new URL('../supabase/migrations/202610220003_chatbot_pricing_day_sequence.sql', import.meta.url), 'utf8');
+        const runs = (await db.query('SELECT * FROM public.chatbot_pricing_experiments ORDER BY id')).rows;
+        const packages = (await db.query('SELECT * FROM public.chatbot_pricing_packages ORDER BY id')).rows;
+        const assignments = (await db.query('SELECT * FROM public.chatbot_pricing_assignments ORDER BY id')).rows;
+        const jobs = (await db.query("SELECT * FROM public.chatbot_follow_up_jobs WHERE status IN ('pending','processing','ready_manual','waiting_response') ORDER BY id")).rows;
+        const backup = 'pricing-daily-schema-before-' + Date.now() + '.json';
+        await writeFile(new URL(backup, out), JSON.stringify({ at: new Date().toISOString(), configs, runs, packages, assignments, jobs,
+            migrationSha256: digest(dailySchema) }, null, 2), { flag: 'wx' });
+        await db.query(dailySchema);
+        assert.equal((await db.query("SELECT count(*)::int n FROM app_private.schema_migrations WHERE version='20261022_003'")).rows[0].n, 1);
+        assert.equal(digest((await db.query('SELECT * FROM public.chatbot_pricing_experiments ORDER BY id')).rows), digest(runs));
+        assert.equal(digest((await db.query('SELECT * FROM public.chatbot_pricing_packages ORDER BY id')).rows), digest(packages));
+        assert.equal(digest((await db.query('SELECT c.*,p.name FROM public.chatbot_configs c JOIN public.pages p ON p.id=c.page_id ORDER BY c.page_id')).rows), digest(configs));
+        console.log(JSON.stringify({ dailySchemaApplied: true, backup, runsPreserved: runs.length, packagesPreserved: packages.length,
+            exposedAssignments: assignments.filter(row => row.first_exposed_at).length, botSettingsChanged: 0, messagesSent: 0 }));
+    } else if (applySchema) {
         await writeFile(new URL('pricing-schema-before-' + Date.now() + '.json', out), JSON.stringify({ at: new Date().toISOString(), configs,
             migrationSha256: digest(snapshot) }, null, 2), { flag: 'wx' });
         await db.query(snapshot);
+        await db.query(await readFile(new URL('../supabase/migrations/202610220003_chatbot_pricing_day_sequence.sql', import.meta.url), 'utf8'));
         assert.equal((await db.query("SELECT count(*)::int AS n FROM app_private.schema_migrations WHERE version='20261022_002'")).rows[0].n, 1);
         assert.equal(digest((await db.query('SELECT c.*,p.name FROM public.chatbot_configs c JOIN public.pages p ON p.id=c.page_id ORDER BY c.page_id')).rows), digest(configs));
         console.log(JSON.stringify({ schemaApplied: true, botSettingsChanged: 0, runsCreated: 0, messagesSent: 0 }));

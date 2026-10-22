@@ -28,7 +28,9 @@ Only inquiries first received after the run starts are enrolled. Existing client
 
 Assignment occurs when the bot is about to answer a pricing question or render the commercial pricing step. It does not interrupt the business/sample/duration flow. Page-level transaction locks serialize selection; the least-assigned package wins, with randomized ties. One durable assignment per contact and run makes webhook retries and returning customers retain their first package. Allocation balances assignments, while the dashboard separately reports acknowledged deliveries.
 
-Follow-up offers use the existing chatbot scheduler and replace an eligible reminder with exactly one approved package message. The minimum gap is measured from the latest acknowledged package delivery; actual sends depend on the configured schedule and available response-window opportunities. Each alternative is offered once. A short window or insufficient reminder slots can prevent the entire sequence from being delivered. Promotional packages use only `RESPONSE` jobs, with a one-minute margin before the 24-hour response boundary, and never use the day 2–7 `HUMAN_AGENT` path.
+The starting catalog stays fixed for a full 24 hours after its first acknowledged delivery. Ordinary reminders use that catalog. A dedicated `pricing_promotion` job offers each alternative once on the configured later days (AI Chatbot settings, normally days 2, 3, 5 and 7), with at least 24 hours between alternative catalogs. Only the next alternative is queued; overdue offers cannot bunch together. The legacy minute-gap setting remains in old run records for compatibility but no longer controls catalog rotation.
+
+Promotional packages use only `RESPONSE` jobs, with a one-minute margin before the response boundary, and never use the day 2–7 `HUMAN_AGENT` path. A later-day offer outside that window is retained as `waiting_response`, displayed in the dashboard's Page-wide waiting count, and reconsidered when a customer returns and the bot schedules the new conversation. This app currently has no dedicated marketing-message integration for unsolicited later-day promotions; held jobs do not send automatically through another channel. Pausing, staff handoff, trial changes and newer inbound messages preserve the existing cancellation and eligibility checks.
 
 Bot/follow-up switches, trial contacts, inbound cancellation, staff ownership, refusals, opt-outs, completed intake, terminal pipeline stages, and the existing live Messenger handoff checks remain in force. Qualified/Not Qualified/Order Created/Converted Page system tags also block further package reservations and deliveries. Pause is checked again immediately before sending an offer.
 
@@ -54,9 +56,12 @@ Run `npm test`, `npx tsc --noEmit --incremental false`, and `npm run build`. SQL
 
 ```powershell
 node --env-file=.env.local scripts/verify-pricing-experiments-sql.mjs
+node --env-file=.env.local scripts/verify-pricing-day-sequence-sql.mjs
 ```
 
 The verifier rewrites all new objects into a unique scratch schema, applies the migration twice, tests balanced/sticky allocation, four-arm catalog balancing per duration, changed-length quote snapshots, sequential offers, gap/window/staff stops, pause, tags, outcome attribution, run history and Page isolation, then rolls the entire transaction back. It does not touch customer rows or invoke Messenger workers.
+
+Apply `202610220003_chatbot_pricing_day_sequence.sql` after the base pricing migration to install daily rotation. The second verifier applies both migrations in an isolated transaction and checks the full-day hold, daily spacing, days 2/3/5, response-window waiting, returned customers, exhausted sequences and service-only permissions. The upgrade preserves existing runs, catalogs, metrics and bot switches. Do not reapply the base migration alone after this upgrade because it contains the earlier function definitions.
 
 The release helper previews the configured commercial Pages by default. It verifies the current knowledge source, preserves a backup outside Git, installs only additive schema with `--apply-schema`, and starts the four approved catalogs with `--activate` only after the deployed authenticated presets API verifies the exact packages. Activation is idempotent for an identical run and refuses to replace an owner-edited run. Bot settings, Page switches, existing customers, and knowledge documents remain unchanged.
 

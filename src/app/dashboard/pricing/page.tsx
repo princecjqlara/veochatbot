@@ -16,6 +16,7 @@ type Metric = {
 type Report = {
     experiments: Experiment[]; experiment: Experiment | null; packages: Package[]; metrics: Metric[]; delivery_reviews?: number;
     bot: { enabled: boolean; follow_up_enabled: boolean; trial_mode_enabled: boolean } | null;
+    promotion_timing?: { hold_hours: number; days: number[]; waiting_response: number };
 };
 const MODE_NAMES: Record<PricingMode, string> = {
     fair_test: 'Fair test', sequence: 'Package sequence', fair_test_sequence: 'Fair test + promotional follow-ups'
@@ -186,7 +187,7 @@ export default function PricingPage() {
                     : 'New eligible customers are balanced across starting packages. Later follow-ups rotate through the other packages, one at a time. Results compare the complete sequences by starting package.'}</p>
                 <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
                     <label className="text-sm">Video duration in seconds (optional)<input type="number" min={1} max={3600} className={fieldClass + ' mt-1'} value={draft.duration_seconds ?? ''} onChange={event => setDraft({ ...draft, duration_seconds: event.target.value ? Number(event.target.value) : null })} placeholder="Any / general products" /></label>
-                    <label className="text-sm">Minimum gap between offers (minutes)<input type="number" min={15} max={1439} className={fieldClass + ' mt-1'} value={draft.follow_up_gap_minutes} onChange={event => setDraft({ ...draft, follow_up_gap_minutes: Number(event.target.value) })} /></label>
+                    <div className="text-sm">Package timing<p className="mt-1 border border-gray-300 bg-white p-3">One package for the first 24 hours. Alternatives on later days, at least 24 hours apart.</p></div>
                     <label className="text-sm">Outcome attribution window (days)<input type="number" min={1} max={90} className={fieldClass + ' mt-1'} value={draft.attribution_days} onChange={event => setDraft({ ...draft, attribution_days: Number(event.target.value) })} /></label>
                     <label className="text-sm">Minimum delivered customers per package<input type="number" min={10} max={10000} className={fieldClass + ' mt-1'} value={draft.minimum_sample} onChange={event => setDraft({ ...draft, minimum_sample: Number(event.target.value) })} /></label>
                 </div>
@@ -224,7 +225,8 @@ export default function PricingPage() {
                 {(!report?.bot?.enabled || (experiment.mode !== 'fair_test' && !report?.bot?.follow_up_enabled)) && <p className="text-sm text-amber-900 bg-amber-50 border border-amber-300 p-3">{!report?.bot?.enabled ? 'The bot is currently off for this Page. ' : ''}{experiment.mode !== 'fair_test' && !report?.bot?.follow_up_enabled ? 'Enable chatbot follow-ups to deliver alternative packages. ' : ''}<Link href="/dashboard/chatbot" className="underline">Open AI Chatbot settings</Link></p>}
                 {report?.bot?.trial_mode_enabled && <p className="text-sm text-amber-900">Trial mode is on. Only the selected trial contact can receive these offers.</p>}
                 {!!report?.delivery_reviews && <p role="status" className="text-sm text-amber-900 bg-amber-50 border border-amber-300 p-3">{report.delivery_reviews} offer delivery receipt{report.delivery_reviews === 1 ? '' : 's'} pending confirmation. If this remains after refreshing, have an administrator review delivery history before retrying. Uncertain sends are held to prevent duplicate promotions.</p>}
-                <p className="text-xs text-gray-600">One package per follow-up, at least {experiment.follow_up_gap_minutes} minutes apart, inside the normal response window. Completed, opted-out and staff-owned conversations stop receiving offers.</p>
+                <p className="text-xs text-gray-600">One package for the first 24 hours. Alternative packages follow on configured days {(report?.promotion_timing?.days || [2, 3, 5, 7]).join(', ')}, at least 24 hours apart. Change later days in <Link href="/dashboard/chatbot" className="underline">AI Chatbot</Link>. Completed, opted-out and staff-owned conversations stop receiving offers.</p>
+                {experiment.mode !== 'fair_test' && <p className="text-xs text-gray-600">Later-day promotions wait for an eligible Messenger response window. Waiting across this Page: {report?.promotion_timing?.waiting_response || 0}. A marketing-message integration is required to send promotional offers outside that window.</p>}
             </section>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[
                 ['Customers shown a starting offer', totals.exposed], ['Qualified', totals.qualified], ['Orders created', totals.orders], ['Converted', totals.converted]

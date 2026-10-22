@@ -52,7 +52,7 @@ export async function GET(
                     .select('id', { count: 'exact', head: true })
                     .eq('page_id', pageId)
                     .eq('contact_id', config.trial_contact_id)
-                    .in('status', ['pending', 'processing', 'ready_manual'])
+                    .in('status', ['pending', 'processing', 'ready_manual', 'waiting_response'])
             ]);
             if (contactResult.error) throw contactResult.error;
             if (stateResult.error) throw stateResult.error;

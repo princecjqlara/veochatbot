@@ -29,7 +29,25 @@ export type PricingOffer = {
     option?: PricingDurationOption | null;
 };
 type PricingDb = { rpc?: (name: string, args: Record<string, unknown>) => any };
+export const PRICING_PACKAGE_HOLD_HOURS = 24;
 export class PricingDeliveryUncertainError extends Error {}
+
+export async function schedulePricingPromotion(db: PricingDb, input: {
+    pageId: string; contactId: string; anchorInboundAt: string; days: number[]; bestHour?: number | null;
+    automationEpoch?: number; policyRevision?: number;
+}): Promise<{ managed: boolean; scheduled: number; due_at?: string; waiting_response?: boolean }> {
+    if (!db.rpc) return { managed: false, scheduled: 0 };
+    const result = await db.rpc('schedule_chatbot_pricing_promotion', {
+        p_page_id: input.pageId, p_contact_id: input.contactId, p_anchor_inbound_at: input.anchorInboundAt,
+        p_days: input.days, p_best_hour: input.bestHour ?? 12,
+        p_epoch: input.automationEpoch ?? 0, p_revision: input.policyRevision ?? 1
+    });
+    if (result.error) {
+        if (['PGRST202', '42883'].includes(result.error.code)) return { managed: false, scheduled: 0 };
+        throw new Error(result.error.message || 'Could not schedule the next pricing day');
+    }
+    return result.data?.managed === true ? result.data : { managed: false, scheduled: 0 };
+}
 
 export async function getContactPricingCatalog(db: PricingDb, pageId: string, contactId: string): Promise<PricingCatalog | null> {
     if (!db.rpc) return null;

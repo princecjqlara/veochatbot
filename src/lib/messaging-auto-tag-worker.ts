@@ -207,7 +207,7 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                 const { error: cancelError } = await db.from('chatbot_follow_up_jobs')
                     .update({ status: 'cancelled', cancelled_at: runStartedAt, claimed_at: null, updated_at: runStartedAt })
                     .eq('page_id', current.id).eq('contact_id', contact.id)
-                    .in('status', ['pending', 'processing', 'ready_manual']);
+                    .in('status', ['pending', 'processing', 'ready_manual', 'waiting_response']);
                 if (cancelError) throw cancelError;
                 if (await updateContactPipelineStage(db, {
                     pageId: current.id, contactId: contact.id,

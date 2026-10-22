@@ -389,7 +389,7 @@ describe('follow-up lead-stage checks', () => {
         expect(mocks.sendMessage).not.toHaveBeenCalled();
         expect(updates).toContainEqual({ table: 'chatbot_contact_states', payload: expect.objectContaining({ status: 'stopped', stop_reason: 'manual' }) });
         expect(cancellations).toContainEqual({ filters: {
-            page_id: 'page-1', contact_id: 'contact-1', status: ['pending', 'processing', 'ready_manual']
+            page_id: 'page-1', contact_id: 'contact-1', status: ['pending', 'processing', 'ready_manual', 'waiting_response']
         } });
     });
 

@@ -62,6 +62,7 @@ describe('pricing package follow-up delivery', () => {
         duration_seconds: 24, kind: 'promotion' };
     function pricingFixture() {
         const f = fixture();
+        f.job.purpose = 'pricing_promotion';
         f.db.rpc = vi.fn(async (name: string) => ({ data: name === 'reserve_chatbot_pricing_offer' ? offer
             : ['chatbot_pricing_offer_is_active', 'begin_chatbot_pricing_delivery'].includes(name) ? true : null, error: null }));
         return f;
@@ -89,6 +90,7 @@ describe('pricing package follow-up delivery', () => {
     it('does not use a promotional package with a HUMAN_AGENT follow-up', async () => {
         const f = pricingFixture();
         f.job.schedule_type = 'human_agent';
+        f.job.purpose = 'scheduled';
         await processDueChatbotFollowUps({ supabase: f.db, now });
         expect(f.db.rpc).not.toHaveBeenCalledWith('reserve_chatbot_pricing_offer', expect.anything());
         expect(f.db.rpc).toHaveBeenCalledWith('get_chatbot_pricing_contact_catalog', { p_page_id: 'page', p_contact_id: 'contact' });
@@ -97,9 +99,35 @@ describe('pricing package follow-up delivery', () => {
     it('does not reserve or send a promotional offer after the response window', async () => {
         const f = pricingFixture();
         const result = await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-18T05:01:00Z') });
-        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(result).toMatchObject({ sent: 0, cancelled: 0 });
+        expect(f.job.status).toBe('waiting_response');
         expect(f.db.rpc).not.toHaveBeenCalled();
         expect(mocks.send).not.toHaveBeenCalled();
+    });
+    it('keeps ordinary reminders on the existing catalog without reserving alternatives', async () => {
+        const f = pricingFixture();
+        f.job.purpose = 'scheduled';
+        await processDueChatbotFollowUps({ supabase: f.db, now });
+        expect(f.db.rpc).not.toHaveBeenCalledWith('reserve_chatbot_pricing_offer', expect.anything());
+        expect(mocks.generate).toHaveBeenCalledOnce();
+    });
+    it('holds an early pricing job instead of falling back to AI reminders', async () => {
+        const f = pricingFixture();
+        f.db.rpc.mockImplementation(async (name: string) => ({ data: name === 'schedule_chatbot_pricing_promotion'
+            ? { managed: true, scheduled: 0, due_at: '2026-10-18T05:00:00Z', waiting_response: true } : null }));
+        await processDueChatbotFollowUps({ supabase: f.db, now });
+        expect(f.job).toMatchObject({ status: 'waiting_response', due_at: '2026-10-18T05:00:00Z' });
+        expect(mocks.generate).not.toHaveBeenCalled();
+        expect(mocks.send).not.toHaveBeenCalled();
+    });
+    it('replaces generic later-day jobs with the managed pricing schedule', async () => {
+        const f = pricingFixture();
+        f.config.follow_up_best_time_days = [2, 3, 5, 7];
+        f.db.rpc.mockResolvedValue({ data: { managed: true, scheduled: 1, waiting_response: true } });
+        await scheduleChatbotFollowUps({ supabase: f.db, pageId: 'page', contact: f.contact,
+            config: f.config, anchorInboundAt: anchor, now });
+        expect(f.inserts.every(job => job.schedule_type === 'response')).toBe(true);
+        expect(f.db.rpc).toHaveBeenCalledWith('schedule_chatbot_pricing_promotion', expect.objectContaining({ p_days: [2, 3, 5, 7] }));
     });
     it('retains an acknowledged offer if exposure recording fails, preventing an automatic replay', async () => {
         const f = pricingFixture();
