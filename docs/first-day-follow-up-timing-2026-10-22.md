@@ -16,4 +16,6 @@ Validation includes contact-reply cancellation, first-day expiry, late answers, 
 
 Release checks: 966 tests passed across 94 files. TypeScript, scoped ESLint and the production build passed. The existing configuration revision trigger advances on timing-mode changes, so activation carries matching pending jobs to the new revision to preserve later-day behavior.
 
+The production release is ready on veochatbot.vercel.app. Authenticated API read-back passed on all 12 configured Pages, the deployed dashboard exposes the timing mode, the signed empty webhook check passed, and the cron route remains protected. Existing switches were preserved: SAMA KANA MEDIA is enabled and Azshinari remains disabled. There were zero eligible active first-day clients to migrate. No test customer messages or worker invocations were used for verification. OpenRouter credits were depleted at release, so actual generated follow-up delivery remains dependent on restoring provider credits.
+
 Production rollout and verification receipts are stored outside Git in the parent workspace's ignored data directory. Customer histories, access tokens and historical analysis exports are not committed.

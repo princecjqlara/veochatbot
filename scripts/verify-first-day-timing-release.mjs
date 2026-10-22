@@ -24,7 +24,7 @@ try {
     const deployedCommit = deployment.gitSource?.sha || deployment.meta?.githubCommitSha;
     assert.equal(deployedCommit, expectedCommit, 'Production must serve the committed release');
     const pages = (await db.query(
-        'SELECT p.id,p.name,c.*,u.user_id FROM pages p JOIN chatbot_configs c ON c.page_id=p.id JOIN LATERAL(SELECT user_id FROM user_pages WHERE page_id=p.id LIMIT 1)u ON true ORDER BY p.id'
+        'SELECT c.*,p.id,p.name,u.user_id FROM pages p JOIN chatbot_configs c ON c.page_id=p.id JOIN LATERAL(SELECT user_id FROM user_pages WHERE page_id=p.id LIMIT 1)u ON true ORDER BY p.id'
     )).rows;
     assert.ok(pages.length > 0);
     const results = [];
