@@ -40,12 +40,26 @@ export type CommercialVideoPricing = {
     packageName: string; durationSeconds: number; pricePHP: number; referenceOnly: boolean;
     addonCount: number; addonDurationSeconds: number; posters: number; caption: boolean;
     regularPricePHP?: number;
+    captionCount?: number;
+    bonusVideoSeconds?: number;
+    hook?: string;
+    ownerVerifiedCatalog?: boolean;
 };
 
 /** Read one duration row from the existing knowledge, without copying its
  * catalog into code or confusing short add-ons with the main video. */
 export function getCommercialVideoPricing(knowledge: ChatbotKnowledgeMatch[], durationSeconds: number | null): CommercialVideoPricing | null {
     if (!durationSeconds) return null;
+    const catalog = knowledge.find(source => source.contact_pricing_catalog)?.contact_pricing_catalog;
+    if (catalog) {
+        const option = catalog.options.find(option => option.duration_seconds === durationSeconds);
+        if (!option) return null;
+        return { packageName: catalog.name + (option.package_name ? ' / ' + option.package_name : ''), durationSeconds,
+            pricePHP: option.price, referenceOnly: false, addonCount: option.addon_videos, addonDurationSeconds: 8,
+            posters: option.posters, caption: option.captions > 0, captionCount: option.captions,
+            bonusVideoSeconds: option.bonus_video_seconds, regularPricePHP: option.regular_price, hook: catalog.hook,
+            ownerVerifiedCatalog: true };
+    }
     const approvedCatalog = /current owner-approved promo catalog|owner-approved promo price list/i;
     const sources = [...knowledge].sort((a, b) => Number(approvedCatalog.test(b.content)) - Number(approvedCatalog.test(a.content)));
     for (const source of sources) for (const line of source.content.split('\n')) {

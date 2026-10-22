@@ -22,7 +22,8 @@ import {
     Download,
     Clock3,
     Bot,
-    GitBranch
+    GitBranch,
+    BarChart3
 } from 'lucide-react';
 import { Page } from '@/types';
 
@@ -95,6 +96,7 @@ export default function DashboardLayout({
         { href: '/dashboard/campaigns', icon: MessageSquare, label: 'Campaigns' },
         { href: '/dashboard/automations', icon: Workflow, label: 'Follow-Ups' },
         { href: '/dashboard/chatbot', icon: Bot, label: 'AI Chatbot' },
+        { href: '/dashboard/pricing', icon: BarChart3, label: 'Pricing Packages' },
         { href: '/dashboard/templates', icon: FileText, label: 'Templates' },
         { href: '/dashboard/exports', icon: Download, label: 'Exports' },
         { href: '/dashboard/history', icon: History, label: 'History' },

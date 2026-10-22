@@ -37,6 +37,7 @@ import { getStructuredCommercialVideoMessages, renderCommercialVideoMessages } f
 import { cleanCommercialVideoCopy, commercialVideoFirstName, commercialVideoSalesFlowPrompt, ensureCommercialVideoSampleSelection, getCommercialVideoPricing, hasVerifiedCommercialVideoSample, isCommercialVideoSampleRequested, resolveCommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
 import { getCommercialVideoMessageControls, type ChatbotMessageControls } from '@/lib/chatbot-interactions';
 import { ChatbotFollowUpRepeatedError, hasRepeatedChatbotCopy, splitConversationalCopy } from '@/lib/chatbot-message-copy';
+import { withContactPricingKnowledge, type PricingCatalog } from '@/lib/chatbot-pricing-catalogs';
 
 export const DEFAULT_CHATBOT_MODEL = '~deepseek/deepseek-flash-latest';
 export const DEFAULT_CHATBOT_INSTRUCTIONS =
@@ -505,7 +506,7 @@ function parseChatbotPlan(
     // At this step all generated copy is replaced by the verified package,
     // production process and proceed question. Validate that delivered copy.
     const canonicalPricing = salesFlow?.step === 'pricing_process' && pricing !== null && parsed?.stop_reason !== 'opt_out' && parsed?.stop_reason !== 'refusal';
-    if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content)) {
+    if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content, pricing?.ownerVerifiedCatalog ? pricing.bonusVideoSeconds : undefined)) {
         throw new Error('Unauthorized free personalized video offer');
     }
     if (commercialIntake && !canonicalPricing && hasForbiddenFreePreproductionCharge(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content)) {
@@ -547,7 +548,8 @@ function parseChatbotPlan(
             .filter(message => message.role === 'assistant').map(message => message.content) : [],
         splitMessages: config.split_messages, maxMessageParts: config.max_message_parts
     }) : formatChatbotReplyMessages(rawMessages.length > 0 ? rawMessages : [messageContent], config);
-    if (canonicalPricing && (hasForbiddenFreeVideoOffer(messages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')) || hasCommercialVideoPriceList(messages.join('\n')))) {
+    const freeOfferCheckMessages = pricing?.ownerVerifiedCatalog ? messages.filter(message => !/PRICING PARA SA /i.test(message)) : messages;
+    if (canonicalPricing && (hasForbiddenFreeVideoOffer(freeOfferCheckMessages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')) || hasCommercialVideoPriceList(messages.join('\n')))) {
         throw new Error('Invalid rendered commercial pricing');
     }
     if (messages.length === 0 && !detectedStopReason) throw new Error('OpenRouter returned an empty reply');
@@ -810,6 +812,7 @@ export async function generateChatbotResponse(input: {
     inboundMessage: string;
     history?: FacebookMessage[];
     knowledge?: ChatbotKnowledgeMatch[];
+    pricingCatalog?: PricingCatalog | null;
     collectedDetails?: Record<string, string>;
     detailTargetCount?: number | null;
     hasClearRequest?: boolean;
@@ -859,9 +862,10 @@ export async function generateChatbotResponse(input: {
         }
     }
 
+    knowledge = withContactPricingKnowledge(knowledge, input.pricingCatalog);
     const model = input.config.model || process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL;
     const messages = buildChatbotMessages({
-        instructions: input.config.instructions,
+        instructions: input.config.instructions + (input.pricingCatalog ? '\nFor this customer use CONTACT-CATALOG exclusively for package prices, freebies and duration choices. Other catalog rates are not their current offer. Keep the existing production process and PHP150 deposit.' : ''),
         contactName: input.contactName,
         pageName: input.pageName,
         pageId: input.pageId,
@@ -1051,6 +1055,7 @@ export async function generateChatbotFollowUp(input: {
     requestType?: CommercialVideoRequestType | null;
     requestEvidence?: string | null;
     previousFollowUpMessages?: string[];
+    pricingCatalog?: PricingCatalog | null;
 }): Promise<ChatbotFollowUpResponse> {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) throw new Error('OPENROUTER_API_KEY is not configured');
@@ -1101,6 +1106,7 @@ export async function generateChatbotFollowUp(input: {
         }
     }
 
+    knowledge = withContactPricingKnowledge(knowledge, input.pricingCatalog);
     const knowledgeContext = knowledge.length > 0
         ? knowledge.map((match, index) =>
             `[${index + 1}] ${match.title} (document_id: ${match.document_id})\n${match.content}`
@@ -1152,6 +1158,7 @@ export async function generateChatbotFollowUp(input: {
         `PAGE KNOWLEDGE AND MEDIA:\n${knowledgeContext}\n\n` +
         'PAGE OWNER INSTRUCTIONS (higher priority than the defaults above):\n' +
         `${ownerGuidance(input.config.instructions).trim() || DEFAULT_CHATBOT_INSTRUCTIONS}\n\n` +
+        (input.pricingCatalog ? 'For this customer use CONTACT-CATALOG exclusively for prices, freebies and duration choices. Other catalog rates are not their current offer.\n\n' : '') +
         `PAGE OWNER FOLLOW-UP INSTRUCTIONS:\n${ownerGuidance(input.config.follow_up_ai_instructions)}\n\n` +
         (input.config.bot_dos ? `PAGE OWNER - BOT SHOULD:\n${ownerGuidance(input.config.bot_dos)}\n\n` : '') +
         (input.config.bot_donts ? `PAGE OWNER - BOT SHOULD NOT:\n${ownerGuidance(input.config.bot_donts)}\n\n` : '') +
@@ -1223,7 +1230,7 @@ export async function generateChatbotFollowUp(input: {
                 details: collectedDetails, hasClearRequest: intakeRequest?.has_clear_request, requestType: intakeRequest?.request_type }) : undefined;
             const pricing = getCommercialVideoPricing(knowledge, followUpFlow?.durationSeconds || null);
             const canonicalPricing = followUpFlow?.step === 'pricing_process' && pricing !== null;
-            if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.join('\n'))) throw new Error('Unauthorized free personalized video offer');
+            if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.join('\n'), pricing?.ownerVerifiedCatalog ? pricing.bonusVideoSeconds : undefined)) throw new Error('Unauthorized free personalized video offer');
             if (commercialIntake && !canonicalPricing && hasForbiddenFreePreproductionCharge(unsanitizedMessages.join('\n'))) throw new Error('Unauthorized charge or quote for free concept/script');
             if (commercialIntake && !canonicalPricing && hasCommercialVideoPriceList(unsanitizedMessages.join('\n'))) throw new Error('Multiple package prices are not allowed');
             const rawMessages = unsanitizedMessages
@@ -1246,7 +1253,8 @@ export async function generateChatbotFollowUp(input: {
                     : splitChatbotMessageBubbles(cappedRawMessages.join('\n\n'), false),
                 followUpMaxMessageParts
             ), FOLLOW_UP_MAX_CHARS);
-            if (canonicalPricing && (hasForbiddenFreeVideoOffer(messages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')) || hasCommercialVideoPriceList(messages.join('\n')))) {
+            const freeOfferCheckMessages = pricing?.ownerVerifiedCatalog ? messages.filter(message => !/PRICING PARA SA /i.test(message)) : messages;
+            if (canonicalPricing && (hasForbiddenFreeVideoOffer(freeOfferCheckMessages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')) || hasCommercialVideoPriceList(messages.join('\n')))) {
                 throw new Error('Invalid rendered commercial pricing');
             }
             const message = messages.join('\n\n').trim();

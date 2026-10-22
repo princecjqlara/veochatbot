@@ -55,6 +55,79 @@ beforeEach(() => {
     mocks.generate.mockResolvedValue({ message: 'Ano pong location ng CJ Bakery?', messages: ['Ano pong location ng CJ Bakery?'], knowledge: [] });
     mocks.send.mockResolvedValue({ message_id: 'sent' });
 });
+
+describe('pricing package follow-up delivery', () => {
+    const offer = { delivery_id: 'pricing-delivery', experiment_id: 'run', assignment_id: 'assignment',
+        package_id: 'package-b', package_name: 'Plus', price: 799, message: 'A main video with a poster for {business}.',
+        duration_seconds: 24, kind: 'promotion' };
+    function pricingFixture() {
+        const f = fixture();
+        f.db.rpc = vi.fn(async (name: string) => ({ data: name === 'reserve_chatbot_pricing_offer' ? offer
+            : ['chatbot_pricing_offer_is_active', 'begin_chatbot_pricing_delivery'].includes(name) ? true : null, error: null }));
+        return f;
+    }
+    it('sends one approved package and records it after Messenger acknowledges delivery', async () => {
+        const f = pricingFixture();
+        f.sentJobs.push({ id: 'older', message_id: 'old-mid', message_text: 'Walang bayad ang free concept o free script; hiwalay ang paid video production.' });
+        const result = await processDueChatbotFollowUps({ supabase: f.db, now });
+        expect(result).toMatchObject({ sent: 1, failed: 0 });
+        expect(mocks.generate).not.toHaveBeenCalled();
+        expect(mocks.send).toHaveBeenCalledTimes(1);
+        expect(mocks.send.mock.calls[0][3]).toContain('PHP799');
+        expect(mocks.send.mock.calls[0][4]).toBe('RESPONSE');
+        expect(f.db.rpc).toHaveBeenCalledWith('finish_chatbot_pricing_delivery', { p_delivery_id: 'pricing-delivery', p_message_id: 'sent' });
+        expect(f.db.rpc).not.toHaveBeenCalledWith('release_chatbot_pricing_offer', expect.anything());
+    });
+    it('releases an unsent offer when the pricing run is paused before delivery', async () => {
+        const f = pricingFixture();
+        f.db.rpc.mockImplementation(async (name: string) => ({ data: name === 'reserve_chatbot_pricing_offer' ? offer : false }));
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now })).toMatchObject({ sent: 0, failed: 1 });
+        expect(mocks.send).not.toHaveBeenCalled();
+        expect(f.db.rpc).toHaveBeenCalledWith('release_chatbot_pricing_offer', { p_delivery_id: 'pricing-delivery' });
+        expect(f.db.rpc).not.toHaveBeenCalledWith('finish_chatbot_pricing_delivery', expect.anything());
+    });
+    it('does not use a promotional package with a HUMAN_AGENT follow-up', async () => {
+        const f = pricingFixture();
+        f.job.schedule_type = 'human_agent';
+        await processDueChatbotFollowUps({ supabase: f.db, now });
+        expect(f.db.rpc).not.toHaveBeenCalledWith('reserve_chatbot_pricing_offer', expect.anything());
+        expect(f.db.rpc).toHaveBeenCalledWith('get_chatbot_pricing_contact_catalog', { p_page_id: 'page', p_contact_id: 'contact' });
+        expect(mocks.generate).toHaveBeenCalledTimes(1);
+    });
+    it('does not reserve or send a promotional offer after the response window', async () => {
+        const f = pricingFixture();
+        const result = await processDueChatbotFollowUps({ supabase: f.db, now: new Date('2026-10-18T05:01:00Z') });
+        expect(result).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(f.db.rpc).not.toHaveBeenCalled();
+        expect(mocks.send).not.toHaveBeenCalled();
+    });
+    it('retains an acknowledged offer if exposure recording fails, preventing an automatic replay', async () => {
+        const f = pricingFixture();
+        f.db.rpc.mockImplementation(async (name: string) => name === 'finish_chatbot_pricing_delivery'
+            ? { error: { message: 'Temporary database error' } } : { data: name === 'reserve_chatbot_pricing_offer' ? offer : true });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now })).toMatchObject({ sent: 0, failed: 1 });
+        expect(mocks.send).toHaveBeenCalledTimes(1);
+        expect(f.job).toMatchObject({ status: 'failed', message_id: 'sent' });
+        expect(f.db.rpc).not.toHaveBeenCalledWith('release_chatbot_pricing_offer', expect.anything());
+    });
+    it('retains a network send with an uncertain result for review and does not retry it automatically', async () => {
+        const f = pricingFixture();
+        mocks.send.mockRejectedValue(new Error('Facebook send timed out'));
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now })).toMatchObject({ sent: 0, failed: 1 });
+        expect(f.job.status).toBe('failed');
+        expect(f.db.rpc).toHaveBeenCalledWith('begin_chatbot_pricing_delivery', { p_delivery_id: 'pricing-delivery' });
+        expect(f.db.rpc).not.toHaveBeenCalledWith('release_chatbot_pricing_offer', expect.anything());
+    });
+    it('does not fall back to AI copy when the same source already sent or has an uncertain receipt', async () => {
+        const f = pricingFixture();
+        f.db.rpc.mockResolvedValue({ data: { blocked: true } });
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now })).toMatchObject({ sent: 0, failed: 1 });
+        expect(mocks.generate).not.toHaveBeenCalled();
+        expect(mocks.send).not.toHaveBeenCalled();
+        expect(f.job.status).toBe('failed');
+    });
+});
+
 describe('commercial-video follow-up continuity', () => {
     it('uses computed first-day opportunities for a silent new client', async () => {
         const f = fixture();

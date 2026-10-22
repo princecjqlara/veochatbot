@@ -245,7 +245,11 @@ export function hasForbiddenFreePreproductionCharge(content: string): boolean {
 }
 
 /** Reject conflicting model promises; the caller can retry rather than send them. */
-export function hasForbiddenFreeVideoOffer(content: string): boolean {
+export function hasForbiddenFreeVideoOffer(content: string, approvedBonusVideoSeconds?: number): boolean {
+    if (Number.isInteger(approvedBonusVideoSeconds) && Number(approvedBonusVideoSeconds) > 0) {
+        content = content.replace(new RegExp('\\b(?:free|libre|libreng)\\s+(?:1\\s+)?(?:extra\\s+)?' + approvedBonusVideoSeconds +
+            '[\\s-]*(?:s|secs?|seconds?)\\s+(?:bonus|add[\\s-]?on)\\s+video\\b', 'gi'), 'included paid-package bonus');
+    }
     const clauses = content.split(/(?<=[.!?\n])\s*/);
     return clauses.some(clause => {
         if (!/\b(?:free|libre|libreng|walang bayad)\b/i.test(clause)) return false;
@@ -254,9 +258,9 @@ export function hasForbiddenFreeVideoOffer(content: string): boolean {
         const offers = clause
             .replace(/\b(?:free|libre|libreng)\s+(?:\d+\s*(?:pcs?\.?|pieces?)?\s*)?8[\s-]*(?:s|secs?|seconds?)\s+(?:video\s+)?add[\s-]?ons?(?:\s+videos?)?\b/gi, 'included add-ons')
             .replace(/\b(?:free|libre|libreng)\s+(?:\d+\s*(?:pcs?\.?|pieces?)?\s*)?(?:video\s+)?add[\s-]?ons?(?:\s+videos?)?\s+(?:na\s+)?(?:tig[\s-]?)?8[\s-]*(?:s|secs?|seconds?)\b/gi, 'included add-ons');
-        return /\b(?:free|libre|libreng|walang bayad)\b[^.!?\n]{0,55}\b(?:personalized|personalised|custom|sample|video|commercial)\b/i.test(offers
+        return /\b(?:free|libre|libreng|walang bayad)\b[^.!?\n]{0,55}\b(?:personalized|personalised|custom|samples?|videos?|commercial)\b/i.test(offers
             .replace(/\b(?:free|libre|libreng)\s+(?:video\s+)?(?:concept|script)\b/gi, 'authorized offer')
             .replace(/\b(?:free|libre|libreng)\s+(?:poster(?:\s+ads?)?|ad\s+posters?)\b/gi, 'included poster')) ||
-            /\b(?:personalized|personalised|custom|sample|video|commercial)\b[^.!?\n]{0,55}\b(?:for free|libre|libreng|walang bayad)\b/i.test(offers);
+            /\b(?:personalized|personalised|custom|samples?|videos?|commercial)\b[^.!?\n]{0,55}\b(?:for free|libre|libreng|walang bayad)\b/i.test(offers);
     });
 }

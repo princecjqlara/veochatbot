@@ -20,6 +20,7 @@ import { assertChatbotDeliveryAllowed, ChatbotDeliveryStoppedError } from '@/lib
 import { ChatbotFollowUpRepeatedError, hasRepeatedChatbotCopy } from '@/lib/chatbot-message-copy';
 import { getCommercialVideoMessageControls } from '@/lib/chatbot-interactions';
 import { buildFirstDaySchedule, firstDayDeadline, getFirstDayCandidate, nextFirstDayWakingTime } from '@/lib/chatbot-first-day-timing';
+import { assertPricingOfferActive, beginPricingDelivery, getContactPricingCatalog, getPricingQuoteContext, PricingDeliveryUncertainError, recordPricingDelivery, releasePricingOffer, renderPricingOffer, reservePricingOffer, type PricingOffer } from '@/lib/chatbot-pricing';
 
 const RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * RESPONSE_WINDOW_MS;
@@ -27,7 +28,7 @@ const RESPONSE_SAFETY_MS = 60 * 1000;
 const PROCESSING_LEASE_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 
-type SupabaseLike = { from: (table: string) => any };
+type SupabaseLike = { from: (table: string) => any; rpc?: (name: string, args: Record<string, unknown>) => any };
 
 type ScheduleContact = {
     id: string;
@@ -281,6 +282,8 @@ export async function processDueChatbotFollowUps(input: {
         if (claimError || !claimed) continue;
 
         let deliveredMessageId: string | undefined;
+        let pricingOffer: PricingOffer | null = null;
+        let pricingSendStarted = false;
         try {
             if (job.message_id) {
                 await markJob(supabase, job.id, { status: 'failed', claimed_at: null,
@@ -477,9 +480,22 @@ export async function processDueChatbotFollowUps(input: {
                 await saveChatbotContactState(supabase, { pageId: job.page_id, contactId: job.contact_id, existingState: state,
                     hasClearRequest: true, requestType: request.request_type, requestEvidence: request.request_evidence });
             }
+            const quote = getPricingQuoteContext({ config, pageId: page.fb_page_id, history: conversationHistory,
+                collectedDetails: state?.collected_details || {}, hasClearRequest: request.has_clear_request });
+            // Promotional catalogs use RESPONSE only, including when the ordinary scheduler permits HUMAN_AGENT.
+            if (job.schedule_type === 'response' && messagingType === 'RESPONSE') {
+                pricingOffer = await reservePricingOffer(supabase, { pageId: job.page_id, contactId: job.contact_id,
+                    sourceKey: 'follow-up:' + job.id, followUp: true, quoteEligible: quote.eligible, durationSeconds: quote.durationSeconds });
+            }
+            if (pricingOffer) {
+                personalizedMessages = [renderPricingOffer(pricingOffer, { commercial: isCommercialVideoIntake(config), followUp: true,
+                    contactName: contact.name, business: state?.collected_details?.['Business Name'] })];
+                personalizedMessage = personalizedMessages.join('\n\n');
+            } else {
             try {
                 const knowledgePageId = getChatbotKnowledgePageId(config as ChatbotConfig);
                 const generated = await generateChatbotFollowUp({
+                    pricingCatalog: await getContactPricingCatalog(supabase, job.page_id, job.contact_id),
                     config: job.purpose === 'nightly_continuation' || job.sequence_index >= 1000 ? { ...config,
                         follow_up_ai_instructions: `${config.follow_up_ai_instructions}\nThis is a reviewed intake continuation. Continue from the customer's unresolved question or objection and ask at most one previously unanswered detail. Keep all earlier answers; never restart intake or ask for an equivalent known detail.`
                     } as ChatbotConfig : config as ChatbotConfig,
@@ -533,6 +549,7 @@ export async function processDueChatbotFollowUps(input: {
                     error: (generationError as Error).message
                 });
                 throw new Error(`AI personalization failed: ${(generationError as Error).message}`);
+            }
             }
 
             const selectedMedia = selectedMediaItems[0] || null;
@@ -596,7 +613,9 @@ export async function processDueChatbotFollowUps(input: {
                 .map(part => replaceTemplateVariables(part, placeholderContact).trim())
                 .filter(Boolean);
             if (messageParts.length === 0) throw new Error('AI follow-up did not contain a sendable message');
-            if (hasRepeatedChatbotCopy(messageParts, await loadDeliveredCopy(), { allowRepeatedFormsAndSamples: isCommercialVideoIntake(config) })) {
+            // The pricing reservation checks package identity and prior delivery atomically.
+            // Shared terms or a CTA across different approved packages are intentional.
+            if (!pricingOffer && hasRepeatedChatbotCopy(messageParts, await loadDeliveredCopy(), { allowRepeatedFormsAndSamples: isCommercialVideoIntake(config) })) {
                 throw new ChatbotFollowUpRepeatedError('Another follow-up already delivered this copy; duplicate cancelled');
             }
             const followUpSourceName = job.schedule_type === 'human_agent'
@@ -624,6 +643,12 @@ export async function processDueChatbotFollowUps(input: {
                 const controls = isCommercialVideoIntake(config)
                     ? getCommercialVideoMessageControls(messageParts).find(item => item.message_index === partIndex) : undefined;
                 await checkDelivery();
+                if (pricingOffer) {
+                    if (getAutomatedFollowUpMessagingType('response', job.anchor_inbound_at, input.now || new Date()) !== 'RESPONSE') {
+                        throw new ChatbotDeliveryStoppedError('Promotional pricing response window ended');
+                    }
+                    await assertPricingOfferActive(supabase, pricingOffer);
+                }
                 const isFinalPart = partIndex === messageParts.length - 1;
                 const sendArgs: Parameters<typeof sendMessage> = [page.fb_page_id, page.access_token, contact.psid, message, messagingType || 'RESPONSE'];
                 const buttons = [
@@ -636,9 +661,16 @@ export async function processDueChatbotFollowUps(input: {
                 ];
                 if (buttons.length) sendArgs[8] = buttons;
                 if (controls?.quick_replies?.length) sendArgs[10] = controls.quick_replies;
+                if (pricingOffer) {
+                    await beginPricingDelivery(supabase, pricingOffer);
+                    pricingSendStarted = true;
+                }
                 const sendResult = await sendMessage(...sendArgs);
                 lastSendResult = sendResult;
                 deliveredMessageId = sendResult.message_id;
+                if (pricingOffer) {
+                    await recordPricingDelivery(supabase, pricingOffer, sendResult.message_id);
+                }
                 // Checkpoint each bubble before sending the next. A stale lease
                 // must never replay a job that already delivered part of its copy.
                 await markJob(supabase, job.id, { message_id: deliveredMessageId,
@@ -764,7 +796,7 @@ export async function processDueChatbotFollowUps(input: {
                 continue;
             }
             const attempts = Number(job.attempt_count || 0) + 1;
-            await markJob(supabase, job.id, deliveredMessageId || attempts >= MAX_ATTEMPTS ? {
+            await markJob(supabase, job.id, deliveredMessageId || pricingSendStarted || sendError instanceof PricingDeliveryUncertainError || attempts >= MAX_ATTEMPTS ? {
                 status: 'failed',
                 ...(deliveredMessageId ? { message_id: deliveredMessageId } : {}),
                 attempt_count: attempts,
@@ -778,6 +810,8 @@ export async function processDueChatbotFollowUps(input: {
                 error_message: (sendError as Error).message.slice(0, 1000)
             });
             result.failed += 1;
+        } finally {
+            if (!pricingSendStarted) await releasePricingOffer(supabase, pricingOffer);
         }
     }
 

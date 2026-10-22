@@ -6,6 +6,7 @@ import { renderCommercialVideoSummary } from '@/lib/chatbot-message-renderer';
 import type { FacebookMessage } from '@/types';
 import { videoPreferences } from './fixtures/commercial-video';
 import { retrieveChatbotKnowledge } from '@/lib/chatbot-knowledge';
+import { OWNER_PRICING_CATALOGS } from '@/lib/chatbot-pricing-catalogs';
 vi.mock('@/lib/chatbot-knowledge', () => ({ retrieveChatbotKnowledge: vi.fn() }));
 
 const config: ChatbotConfig = {
@@ -38,6 +39,21 @@ it('honors a completed handoff even when the model repeats the form', async () =
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); delete process.env.OPENROUTER_API_KEY; });
 
 describe('canonical commercial form policy', () => {
+    it.each(['reply', 'follow_up'])('keeps the delivered Premium catalog in a later %s including exact free videos and captions', async mode => {
+        const fetchMock = mockPlan({ messages: ['The selected main video pricing is ready.'], collected_details: {}, personalization_basis: 'Customer asked for a 1 minute bakery video' });
+        const input = { config, pageId: 'page', pricingCatalog: OWNER_PRICING_CATALOGS[0],
+            history: [customer('Bakery po'), page('Ito ang existing sample namin para sa bakery.', 2), customer('1 minute po. Magkano?', 3)],
+            collectedDetails: { 'Business Name': 'CJ Bakery' } };
+        const result = mode === 'reply' ? await generateChatbotResponse({ ...input, inboundMessage: '1 minute po. Magkano?' })
+            : await generateChatbotFollowUp({ ...input, sequenceNumber: 1, scheduleLabel: 'first 24 hours' });
+        const copy = result.messages.join('\n');
+        expect(copy).toContain('PHP2299');
+        expect(copy).toContain('FREE 1 extra 16-second bonus video');
+        expect(copy).toContain('4 ready-to-post captions');
+        expect(copy).toContain('balance na PHP2149');
+        expect(copy).not.toContain('PHP1499');
+        expect(fetchMock.mock.calls[0][1].body).toContain('CONTACT-CATALOG');
+    });
     it('migrates explicit aliases, rejects placeholders and preserves the proper business identity', () => {
         expect(normalizeCommercialVideoDetails({ name: 'Messenger Name', 'company name': 'CJ Bakery', business_location: 'Manila', 'Video objective': 'Sell bread', phone: '+63 (917) 123-4567', budget: '5000' })).toEqual({ 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Sell bread', 'Contact Number': '+639171234567' });
         expect(normalizeCommercialVideoDetails({ 'business name': 'pending', 'business location': 'unknown', 'video goal': 'N/A', 'phone number': '123' })).toEqual({});

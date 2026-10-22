@@ -48,6 +48,7 @@ import { composeContactName, hasUsableContactName, normalizeContactName, pickPre
 import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, getMessengerHandoffMetadata, isMessengerAutomaticNotice, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 import { evaluateCommercialVideoIntake, isCommercialVideoIntake } from '@/lib/chatbot-policy';
 import { captureCommercialVideoFormProgress } from '@/lib/chatbot-form-progress';
+import { applyPricingOffer, assertPricingOfferActive, beginPricingDelivery, getContactPricingCatalog, getPricingQuoteContext, recordPricingDelivery, releasePricingOffer, renderPricingOffer, reservePricingOffer, type PricingOffer } from '@/lib/chatbot-pricing';
 
 export const maxDuration = 300;
 
@@ -1121,6 +1122,9 @@ export async function POST(request: NextRequest) {
 
                                     if (claimed) {
                                         let lastOutboundMessageId: string | undefined;
+                                        let pricingOffer: PricingOffer | null = null;
+                                        let pricingMessage: string | null = null;
+                                        let pricingSendStarted = false;
                                         try {
                                             if (isCommercialVideoIntake(chatbotConfig)) {
                                                 chatbotState = await captureCommercialVideoFormProgress(supabase, {
@@ -1170,6 +1174,7 @@ export async function POST(request: NextRequest) {
                                                     }
                                                 }
                                                 const generated = await generateChatbotResponse({
+                                                    pricingCatalog: await getContactPricingCatalog(supabase, page.id, contact.id),
                                                     config: chatbotConfig,
                                                     contactName: (contact as { name?: string | null }).name,
                                                     pageName: page.name,
@@ -1230,6 +1235,23 @@ export async function POST(request: NextRequest) {
 
                                             if (replyMessages.length === 0 && !generatedStopReason) {
                                                 throw new Error('Chatbot generated no reply; inquiry retained for retry');
+                                            }
+
+                                            const commercialPricing = isCommercialVideoIntake(chatbotConfig);
+                                            const quote = getPricingQuoteContext({ config: chatbotConfig, pageId,
+                                                history: chatbotConversationHistory, inboundMessage: inboundMessageText,
+                                                collectedDetails, hasClearRequest });
+                                            if (!generatedStopReason && quote.eligible &&
+                                                (!commercialPricing || replyMessages.some(text => /PRICING PARA SA /i.test(text)))) {
+                                                pricingOffer = await reservePricingOffer(supabase, { pageId: page.id, contactId: contact.id,
+                                                    sourceKey: 'reply:' + inboundMessageId, followUp: false,
+                                                    quoteEligible: true, durationSeconds: quote.durationSeconds });
+                                                if (pricingOffer) {
+                                                    const copyContext = { commercial: commercialPricing, contactName: contact.name,
+                                                        business: collectedDetails['Business Name'] };
+                                                    replyMessages = applyPricingOffer(replyMessages, pricingOffer, copyContext);
+                                                    pricingMessage = renderPricingOffer(pricingOffer, copyContext);
+                                                }
                                             }
 
                                             const [freshContactResult, freshState] = await Promise.all([
@@ -1307,6 +1329,9 @@ export async function POST(request: NextRequest) {
                                                 const controls = isCommercialVideoIntake(chatbotConfig)
                                                     ? getCommercialVideoMessageControls(replyMessages).find(item => item.message_index === messageIndex) : undefined;
                                                 await checkDelivery();
+                                                if (pricingOffer && replyText === pricingMessage) {
+                                                    await assertPricingOfferActive(supabase, pricingOffer);
+                                                }
                                                 const isFinalMessage = messageIndex === replyMessages.length - 1;
                                                 const buttons = [
                                                     ...(controls?.buttons || []).map(button => ({ type: 'POSTBACK' as const, text: button.title, payload: button.payload })),
@@ -1324,8 +1349,16 @@ export async function POST(request: NextRequest) {
                                                     buttons.length ? buttons : undefined
                                                 ];
                                                 if (controls?.quick_replies?.length) sendArgs[10] = controls.quick_replies;
+                                                if (pricingOffer && replyText === pricingMessage) {
+                                                    await beginPricingDelivery(supabase, pricingOffer);
+                                                    pricingSendStarted = true;
+                                                }
                                                 const sendResult = await sendMessage(...sendArgs);
                                                 lastOutboundMessageId = sendResult.message_id;
+
+                                                if (pricingOffer && replyText === pricingMessage) {
+                                                    await recordPricingDelivery(supabase, pricingOffer, sendResult.message_id);
+                                                }
 
                                                 await recordOutboundMessageEvent(supabase, {
                                                     pageId: page.id,
@@ -1556,6 +1589,8 @@ export async function POST(request: NextRequest) {
                                                 inboundMessageId,
                                                 error: (chatbotError as Error).message
                                             });
+                                        } finally {
+                                            if (!pricingSendStarted) await releasePricingOffer(supabase, pricingOffer);
                                         }
                                     }
                                 }

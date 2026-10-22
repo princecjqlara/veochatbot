@@ -29,6 +29,7 @@ export type ChatbotKnowledgeMatch = {
     title: string;
     content: string;
     similarity: number;
+    contact_pricing_catalog?: import('@/lib/chatbot-pricing-catalogs').PricingCatalog;
 };
 
 type EmbeddingsResponse = {
