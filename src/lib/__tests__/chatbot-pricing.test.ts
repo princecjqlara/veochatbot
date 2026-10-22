@@ -12,6 +12,11 @@ const offer: PricingOffer = { delivery_id: 'delivery', experiment_id: 'experimen
     duration_seconds: 24, kind: 'initial' };
 
 describe('pricing experiments', () => {
+    it('uses built-in pricing days when ordinary later-day reminders are disabled', async () => {
+        const rpc = vi.fn().mockResolvedValue({ data: { managed: true, scheduled: 1 } });
+        await schedulePricingPromotion({ rpc }, { pageId: 'page', contactId: 'contact', anchorInboundAt: '2026-10-22T04:00:00Z', days: [] });
+        expect(rpc).toHaveBeenCalledWith('schedule_chatbot_pricing_promotion', expect.objectContaining({ p_days: [2, 3, 5, 7], p_best_hour: 12 }));
+    });
     it('passes later-day timing and automation scope to the pricing scheduler', async () => {
         const scheduled = { managed: true, scheduled: 1, waiting_response: true, due_at: '2026-10-23T04:00:00Z' };
         const rpc = vi.fn().mockResolvedValue({ data: scheduled });

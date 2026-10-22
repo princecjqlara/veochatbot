@@ -6,7 +6,8 @@ import {
     type ChatbotMediaAsset
 } from '@/lib/chatbot-media';
 import { recordOutboundMessageEvent } from '@/lib/outbound-message-events';
-import { getPhilippinesDateParts, getPhilippinesScheduledAtIso } from '@/lib/philippines-time';
+import { getBestTimeFollowUpDueAt, normalizeBestTimeFollowUpDays } from '@/lib/chatbot-follow-up-timing';
+export { getBestTimeFollowUpDueAt, normalizeBestTimeFollowUpDays } from '@/lib/chatbot-follow-up-timing';
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { generateChatbotFollowUp, getChatbotKnowledgePageId, type ChatbotConfig } from '@/lib/chatbot';
@@ -69,14 +70,6 @@ export function normalizeQuickFollowUpDelays(value: unknown): number[] {
     )).sort((a, b) => a - b).slice(0, 10);
 }
 
-export function normalizeBestTimeFollowUpDays(value: unknown): number[] {
-    return Array.from(new Set(
-        (Array.isArray(value) ? value : [])
-            .map((item) => Math.round(Number(item)))
-            .filter((item) => Number.isFinite(item) && item >= 2 && item <= 7)
-    )).sort((a, b) => a - b).slice(0, 6);
-}
-
 export function normalizeFollowUpMessages(value: unknown): string[] {
     return (Array.isArray(value) ? value : [])
         .filter((message): message is string => typeof message === 'string')
@@ -110,19 +103,6 @@ export function getAutomatedFollowUpMessagingType(
         return elapsed < HUMAN_AGENT_WINDOW_MS - RESPONSE_SAFETY_MS ? 'HUMAN_AGENT' : null;
     }
     return null;
-}
-
-export function getBestTimeFollowUpDueAt(anchor: Date, dayNumber: number, bestHour: number | null | undefined): string {
-    const base = getPhilippinesDateParts(anchor);
-    const target = new Date(Date.UTC(base.year, base.month, base.day + Math.max(1, dayNumber - 1)));
-    const hour = Number.isInteger(bestHour) && Number(bestHour) >= 0 && Number(bestHour) <= 23
-        ? Number(bestHour)
-        : 12;
-    return getPhilippinesScheduledAtIso(hour, {
-        year: target.getUTCFullYear(),
-        month: target.getUTCMonth(),
-        day: target.getUTCDate()
-    });
 }
 
 export async function cancelPendingChatbotFollowUps(input: {

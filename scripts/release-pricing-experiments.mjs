@@ -24,7 +24,7 @@ try {
     assert.ok(selected.length, 'No configured commercial video Pages');
     const snapshot = await readFile(new URL('../supabase/migrations/202610220002_chatbot_pricing_experiments.sql', import.meta.url), 'utf8');
     if (applyDailySchema) {
-        const dailySchema = await readFile(new URL('../supabase/migrations/202610220003_chatbot_pricing_day_sequence.sql', import.meta.url), 'utf8');
+        const dailySchema = await readFile(new URL('../supabase/migrations/202610220004_chatbot_pricing_best_time_sequence.sql', import.meta.url), 'utf8');
         const runs = (await db.query('SELECT * FROM public.chatbot_pricing_experiments ORDER BY id')).rows;
         const packages = (await db.query('SELECT * FROM public.chatbot_pricing_packages ORDER BY id')).rows;
         const assignments = (await db.query('SELECT * FROM public.chatbot_pricing_assignments ORDER BY id')).rows;
@@ -33,7 +33,7 @@ try {
         await writeFile(new URL(backup, out), JSON.stringify({ at: new Date().toISOString(), configs, runs, packages, assignments, jobs,
             migrationSha256: digest(dailySchema) }, null, 2), { flag: 'wx' });
         await db.query(dailySchema);
-        assert.equal((await db.query("SELECT count(*)::int n FROM app_private.schema_migrations WHERE version='20261022_003'")).rows[0].n, 1);
+        assert.equal((await db.query("SELECT count(*)::int n FROM app_private.schema_migrations WHERE version='20261022_004'")).rows[0].n, 1);
         assert.equal(digest((await db.query('SELECT * FROM public.chatbot_pricing_experiments ORDER BY id')).rows), digest(runs));
         assert.equal(digest((await db.query('SELECT * FROM public.chatbot_pricing_packages ORDER BY id')).rows), digest(packages));
         assert.equal(digest((await db.query('SELECT c.*,p.name FROM public.chatbot_configs c JOIN public.pages p ON p.id=c.page_id ORDER BY c.page_id')).rows), digest(configs));
@@ -44,6 +44,7 @@ try {
             migrationSha256: digest(snapshot) }, null, 2), { flag: 'wx' });
         await db.query(snapshot);
         await db.query(await readFile(new URL('../supabase/migrations/202610220003_chatbot_pricing_day_sequence.sql', import.meta.url), 'utf8'));
+        await db.query(await readFile(new URL('../supabase/migrations/202610220004_chatbot_pricing_best_time_sequence.sql', import.meta.url), 'utf8'));
         assert.equal((await db.query("SELECT count(*)::int AS n FROM app_private.schema_migrations WHERE version='20261022_002'")).rows[0].n, 1);
         assert.equal(digest((await db.query('SELECT c.*,p.name FROM public.chatbot_configs c JOIN public.pages p ON p.id=c.page_id ORDER BY c.page_id')).rows), digest(configs));
         console.log(JSON.stringify({ schemaApplied: true, botSettingsChanged: 0, runsCreated: 0, messagesSent: 0 }));

@@ -31,7 +31,8 @@ describe('pricing dashboard workflows', () => {
         expect(rows[1].findAllByType('td').map(text)).toEqual(['0', '0', '0', '—', '0', '0', '—', '—', '0']);
         expect(result).toContain('Collecting samples');
         expect(result).toContain('One package for the first 24 hours');
-        expect(result).toContain('at least 24 hours apart');
+        expect(result).toContain('with no extra fixed gap');
+        expect(result).toContain('12 noon when unknown');
     });
     it('starts a run with the entered packages and loads its saved results', async () => {
         const empty = { experiments: [], experiment: null, packages: [], metrics: [], bot: report.bot };

@@ -1,4 +1,5 @@
 import type { FacebookMessage } from '@/types';
+import { getPricingPromotionDays } from '@/lib/chatbot-follow-up-timing';
 import type { ChatbotConfig } from '@/lib/chatbot';
 import { isCommercialVideoIntake } from '@/lib/chatbot-policy';
 import { isCommercialVideoPriceRequested, resolveCommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
@@ -39,7 +40,7 @@ export async function schedulePricingPromotion(db: PricingDb, input: {
     if (!db.rpc) return { managed: false, scheduled: 0 };
     const result = await db.rpc('schedule_chatbot_pricing_promotion', {
         p_page_id: input.pageId, p_contact_id: input.contactId, p_anchor_inbound_at: input.anchorInboundAt,
-        p_days: input.days, p_best_hour: input.bestHour ?? 12,
+        p_days: getPricingPromotionDays(input.days), p_best_hour: input.bestHour ?? 12,
         p_epoch: input.automationEpoch ?? 0, p_revision: input.policyRevision ?? 1
     });
     if (result.error) {

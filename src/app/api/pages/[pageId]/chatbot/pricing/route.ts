@@ -3,6 +3,7 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { userHasPageAccess } from '@/lib/page-access';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { PRICING_PACKAGE_HOLD_HOURS, validatePricingExperiment } from '@/lib/chatbot-pricing';
+import { getPricingPromotionDays } from '@/lib/chatbot-follow-up-timing';
 import { currentPricingCatalog, OWNER_PRICING_CATALOGS } from '@/lib/chatbot-pricing-catalogs';
 
 export const dynamic = 'force-dynamic';
@@ -80,7 +81,9 @@ export async function GET(request: NextRequest, context: Context) {
         if (reviews.error) throw reviews.error;
         if (waiting.error) throw waiting.error;
         return NextResponse.json({ experiments: runs.data || [], experiment, packages: packages.data || [], metrics: analytics.data || [], duration_seconds: duration, delivery_reviews: reviews.count || 0,
-            promotion_timing: { hold_hours: PRICING_PACKAGE_HOLD_HOURS, days: config.data?.follow_up_best_time_days || [2, 3, 5, 7], waiting_response: waiting.count || 0 }, bot: config.data });
+            promotion_timing: { hold_hours: PRICING_PACKAGE_HOLD_HOURS, days: getPricingPromotionDays(config.data?.follow_up_best_time_days),
+                formula: 'inbound_date_plus_day_offset_at_best_hour', fallback_hour: 12, timezone: 'Asia/Manila', minimum_gap_hours: null,
+                waiting_response: waiting.count || 0 }, bot: config.data });
     } catch (error) { return failure(error); }
 }
 
