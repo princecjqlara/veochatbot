@@ -475,7 +475,8 @@ export async function processDueChatbotFollowUps(input: {
             // Promotional catalogs use RESPONSE only, including when the ordinary scheduler permits HUMAN_AGENT.
             if (job.purpose === 'pricing_promotion' && job.schedule_type === 'response' && messagingType === 'RESPONSE') {
                 pricingOffer = await reservePricingOffer(supabase, { pageId: job.page_id, contactId: job.contact_id,
-                    sourceKey: 'follow-up:' + job.id, followUp: true, quoteEligible: quote.eligible, durationSeconds: quote.durationSeconds });
+                    sourceKey: 'follow-up:' + job.id, followUp: true, quoteEligible: quote.eligible, durationSeconds: quote.durationSeconds,
+                    enforceDiscovery: isCommercialVideoIntake(config) });
             }
             if (job.purpose === 'pricing_promotion' && !pricingOffer) {
                 const next = await schedulePricingPromotion(supabase, { pageId: job.page_id, contactId: job.contact_id,

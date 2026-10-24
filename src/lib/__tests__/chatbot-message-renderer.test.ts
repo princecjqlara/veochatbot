@@ -10,6 +10,12 @@ const verifiedRates = [{ packageName: 'Starter', durationSeconds: 16, pricePHP: 
 const render = (extra: Partial<Parameters<typeof renderCommercialVideoMessages>[0]> = {}) => renderCommercialVideoMessages({ parts: [], details: {}, action: 'none', contactName: 'CJ Lara', priceList: extra.pricing ? undefined : verifiedRates, ...extra });
 
 describe('natural commercial-video replies and intact structured messages', () => {
+    it('removes empty price-list announcements and package headings during discovery', () => {
+        const messages = render({ parts: ['Ito po ang buong promo price list namin.', 'STARTER PACK.', '16 seconds: PHP699.'],
+            customerMessage: 'Presyo muna please', salesFlow: flow('duration', { durationSeconds: null, pricingReady: false, formSent: true }) });
+        expect(messages.join(' ')).not.toMatch(/price list|starter|PHP699/i);
+        expect(messages.at(-1)).toMatch(/seconds|duration|haba/i);
+    });
     it.each(['business', 'sample', 'duration', 'form'] as const)('blocks every draft price at %s when only one detail is known', step => {
         const messages = render({ parts: ['From PHP499. Promo PHP399. PHP150 deposit. Balance 249 pesos. Revision PHP100. 16s: 699; 24s: 899.'],
             customerMessage: 'Magkano? Send pricelist', salesFlow: flow(step, { durationSeconds: null, pricingReady: false }) });

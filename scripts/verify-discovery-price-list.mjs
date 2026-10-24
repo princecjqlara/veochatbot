@@ -38,7 +38,10 @@ for (const [index, message] of [
     const copy = body.messages.join('\n');
     const forms = body.messages.filter(containsCommercialVideoForm);
     formCount += forms.length;
-    if (index < 3) assert.doesNotMatch(copy, /(?:PHP|\u20b1)\s*\d|\d\s*pesos/i, 'No money before business plus another detail');
+    if (index < 3) {
+        assert.doesNotMatch(copy, /(?:PHP|\u20b1)\s*\d|\d\s*pesos/i, 'No money before business plus another detail');
+        assert.doesNotMatch(copy, /buong (?:promo )?price list|STARTER PACK/i, 'No stripped-catalog announcement during discovery');
+    }
     if (index === 0) { assert.equal(forms.length, 0); assert.match(body.messages.at(-1), /business|negosyo/i); }
     if (index === 1) { assert.equal(forms.length, 1); assert.match(body.messages.at(-1), /seconds|duration|haba/i); }
     if (index === 2) { assert.equal(forms.length, 0, 'Do not repeat the early form on every reply'); assert.match(body.messages.at(-1), /seconds|duration|haba/i); }

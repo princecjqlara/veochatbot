@@ -20,7 +20,7 @@ describe('pricing experiments', () => {
     });
     it.each([false, true])('does not reserve or promote pricing before the discovery gate, followUp=%s', async followUp => {
         const rpc = vi.fn();
-        expect(await reservePricingOffer({ rpc }, { pageId: 'page', contactId: 'contact', sourceKey: 'reply', followUp, quoteEligible: false, durationSeconds: 24 })).toBeNull();
+        expect(await reservePricingOffer({ rpc }, { pageId: 'page', contactId: 'contact', sourceKey: 'reply', followUp, quoteEligible: false, durationSeconds: 24, enforceDiscovery: true })).toBeNull();
         expect(rpc).not.toHaveBeenCalled();
     });
     it('requires two distinct facts for commercial quotes even on a direct price request', () => {
@@ -28,6 +28,12 @@ describe('pricing experiments', () => {
         expect(getPricingQuoteContext({ config, pageId: 'page', inboundMessage: 'Magkano?', collectedDetails: { 'Business Name': 'Bakery' } }).eligible).toBe(false);
         expect(getPricingQuoteContext({ config, pageId: 'page', inboundMessage: '24 seconds. Magkano?', collectedDetails: { 'Business Name': 'Bakery' } }).eligible).toBe(true);
         expect(getPricingQuoteContext({ config, pageId: 'page', inboundMessage: 'Magkano?', collectedDetails: { 'Business Name': 'Bakery', 'Business Location': 'Manila' } }).eligible).toBe(true);
+    });
+    it('preserves existing non-commercial package promotions without the video discovery rule', async () => {
+        const rpc = vi.fn().mockResolvedValue({ data: offer });
+        expect(await reservePricingOffer({ rpc }, { pageId: 'page', contactId: 'contact', sourceKey: 'follow-up', followUp: true,
+            quoteEligible: false, durationSeconds: null, enforceDiscovery: false })).toEqual(offer);
+        expect(rpc).toHaveBeenCalledWith('reserve_chatbot_pricing_offer', expect.objectContaining({ p_quote_eligible: false }));
     });
     it('uses built-in pricing days when ordinary later-day reminders are disabled', async () => {
         const rpc = vi.fn().mockResolvedValue({ data: { managed: true, scheduled: 1 } });

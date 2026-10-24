@@ -142,9 +142,9 @@ export function getPricingQuoteContext(input: {
 /** A missing additive migration preserves the existing chatbot behavior. Other errors fail closed. */
 export async function reservePricingOffer(db: PricingDb, input: {
     pageId: string; contactId: string; sourceKey: string; followUp: boolean;
-    quoteEligible: boolean; durationSeconds: number | null;
+    quoteEligible: boolean; durationSeconds: number | null; enforceDiscovery?: boolean;
 }): Promise<PricingOffer | null> {
-    if (!db.rpc || !input.quoteEligible) return null;
+    if (!db.rpc || (input.enforceDiscovery && !input.quoteEligible)) return null;
     const result = await db.rpc('reserve_chatbot_pricing_offer', {
         p_page_id: input.pageId, p_contact_id: input.contactId, p_source_key: input.sourceKey,
         p_follow_up: input.followUp, p_quote_eligible: input.quoteEligible, p_duration_seconds: input.durationSeconds

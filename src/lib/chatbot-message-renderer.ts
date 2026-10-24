@@ -116,6 +116,9 @@ function factualAnswer(parts: string[], contactName?: string | null): string {
         if (/^Kindly fill out these details:/i.test(line)) continue;
         if (/ito.*summary|pakisagutan|paki.*fill|please.*fill|fill.up.*form|gusto.*(?:free concept|free script)/i.test(line)) continue;
         if (/ipapasa.*team|forward.*team/i.test(line)) continue;
+        // A stripped draft catalog must not leave an announcement or package
+        // heading that claims prices were delivered during discovery.
+        if (/\b(?:prices?|pricing|pricelist|price\s*list|presyo|rates?|promo)\b/i.test(line) || /^[A-Z][A-Z\s&+/-]+[.!:]?$/.test(line.trim())) continue;
         if (/\b(?:paki\w*|please|send|share|provide|ibigay)\b/i.test(line) && Object.values(FIELD_PATTERNS).some(pattern => pattern.test(line))) continue;
         // Model-written prices never reach Messenger. Only the verified catalog
         // renderer below may introduce money, after the discovery gate.
