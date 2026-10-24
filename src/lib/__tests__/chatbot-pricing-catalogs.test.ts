@@ -71,19 +71,19 @@ describe('owner-approved pricing catalogs', () => {
         invalidPrice.packages[1].options[0].price = 149;
         expect(() => validatePricingExperiment(invalidPrice)).toThrow('PHP150');
     });
-    it.each([60, 120])('renders only the selected Premium %is row, preserving the hook, extras and balance', duration => {
+    it.each([60, 120])('renders every Premium row even when %is was selected, preserving extras and balances', duration => {
         const catalog = OWNER_PRICING_CATALOGS[0];
         const option = catalog.options.find(option => option.duration_seconds === duration)!;
         const offer: PricingOffer = { delivery_id: 'delivery', experiment_id: 'run', assignment_id: 'assignment', package_id: 'premium',
-            package_name: catalog.name, hook: catalog.hook, price: option.price, message: '', option, duration_seconds: duration, kind: 'initial' };
+            package_name: catalog.name, hook: catalog.hook, price: option.price, message: '', option, catalog, duration_seconds: duration, kind: 'initial' };
         const copy = renderPricingOffer(offer, { commercial: true });
         expect(copy).toContain(catalog.hook);
         expect(copy).toContain(`1 ${duration}-second main commercial video`);
         expect(copy).toContain(`1 extra ${duration === 60 ? 16 : 24}-second bonus video`);
-        expect(copy).toContain(`${option.addon_videos} x 8-second add-on videos`);
-        expect(copy).toContain(`${option.captions} captions`);
-        expect(copy).toContain('Package price: PHP' + option.price.toLocaleString('en-US'));
-        expect(copy).toContain('Balance: PHP' + (option.price - 150).toLocaleString('en-US'));
-        expect(copy).not.toContain('More Ways to Promote');
+        expect(copy).toContain(`FREE ${option.addon_videos} add-on videos na tig-8 seconds`);
+        expect(copy).toContain(`${option.captions} ready-to-post captions`);
+        expect(copy).toContain('Package price: PHP' + option.price);
+        expect(copy).toContain('Balance: PHP' + (option.price - 150));
+        expect(copy).not.toContain('More Ways to Promote'); for (const seconds of PRICING_CATALOG_DURATIONS) expect(copy).toContain(`1 ${seconds}-second main commercial video`); expect(copy.length).toBeLessThanOrEqual(2000);
     });
 });

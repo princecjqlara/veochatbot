@@ -50,8 +50,8 @@ describe('canonical commercial form policy', () => {
         expect(copy).toContain('PHP2299');
         expect(copy).toContain('FREE 1 extra 16-second bonus video');
         expect(copy).toContain('4 ready-to-post captions');
-        expect(copy).toContain('balance na PHP2149');
-        expect(copy).not.toContain('PHP1499');
+        expect(copy).toContain('Balance: PHP2149');
+        expect(copy).toContain('PHP1499'); expect(copy).toContain('BUONG PRICE LIST'); expect(copy.match(/main commercial video/g)).toHaveLength(6);
         expect(fetchMock.mock.calls[0][1].body).toContain('CONTACT-CATALOG');
     });
     it('migrates explicit aliases, rejects placeholders and preserves the proper business identity', () => {
@@ -109,16 +109,16 @@ describe('grounded requests', () => {
 });
 
 describe('commercial generation and follow-ups', () => {
-    const prices = [{ title: 'Prices', content: '24-second AI commercial video: PHP899 total. PHP150 down payment and PHP749 balance.', document_id: 'prices', chunk_id: 'prices-1', similarity: 1 }];
+    const prices = [{ title: 'Prices', content: 'Current owner-approved promo catalog\n| Starter | 16 seconds | PHP699 | 1 x 8 seconds | 1 | Included |\n| Standard | 24 seconds | PHP899 | 2 x 8 seconds | 1 | Included |', document_id: 'prices', chunk_id: 'prices-1', similarity: 1 }];
     const sample = { title: '[video] Bakery portfolio', content: 'MEDIA ASSET (video): Existing bakery commercial sample.', document_id: 'bakery-sample', chunk_id: 'sample-1', similarity: 1 };
-    it('answers a direct pricing question before asking the business, without introducing the form', async () => {
+    it('withholds prices on an opening price inquiry and asks about the business first', async () => {
         const fetchMock = mockPlan({ messages: ['PHP899 ang 24-second video. PHP150 muna ang down payment.'], collected_details: {} });
         const result = await generateChatbotResponse({ config, pageId: 'page', contactName: 'CJ Lara', inboundMessage: 'Magkano ang 24-second video?', knowledge: prices });
-        expect(result.messages[0]).toContain('PHP899'); expect(result.messages.at(-1)).toMatch(/business.*\?$/);
+        expect(result.messages.join(' ')).not.toMatch(/PHP|\d+ pesos/); expect(result.messages.at(-1)).toMatch(/business.*\?$/);
         expect(result.messages.join(' ')).toContain('CJ,'); expect(result.messages.join(' ')).not.toContain('Lara');
         expect(result.messages.join(' ')).not.toContain('Business Name:'); expect(result.intake_action).toBe('none');
         const prompt = JSON.parse(fetchMock.mock.calls[0][1].body).messages[0].content;
-        expect(prompt).toContain('24-second AI commercial video: PHP899'); expect(prompt).toContain('CURRENT VERIFIED SALES FLOW');
+        expect(prompt).toContain('PHP899'); expect(prompt).toContain('CURRENT VERIFIED SALES FLOW');
         expect(prompt).toContain('"step":"business"'); expect(prompt).not.toContain('Split each short ordinary sentence');
     });
     it('sends an existing relevant sample from the same knowledge library after business discovery', async () => {
@@ -200,15 +200,15 @@ describe('commercial generation and follow-ups', () => {
         const result = await generateChatbotResponse({ config, pageId: 'page', inboundMessage: 'Pwede po ba?' });
         expect(fetchMock).toHaveBeenCalledTimes(2); expect(result.messages.join(' ')).not.toContain('free personalized');
     });
-    it.each(['reply', 'follow_up'])('rejects a price catalog in a %s but preserves the verified selected-option rate', async mode => {
+    it.each(['reply', 'follow_up'])('replaces unverified model prices with the whole verified price list in a %s', async mode => {
         process.env.OPENROUTER_API_KEY = 'test-key';
         const plan = (text: string) => ({ messages: [text], personalization_basis: 'Customer asked bakery video pricing', collected_details: {} });
         const fetchMock = vi.fn().mockResolvedValueOnce(completion(plan('8s: PHP399. 16s: PHP699. 24s: PHP899.')))
             .mockResolvedValueOnce(completion(plan('PHP899 ang 24-second video. PHP150 ang down payment, PHP749 ang balance.')));
-        vi.stubGlobal('fetch', fetchMock);
-        const input = { config, pageId: 'page', history: [customer('Magkano sa 24-second bakery video?')], collectedDetails: { 'Business Name': 'CJ Bakery' } };
+        vi.stubGlobal('fetch', fetchMock); vi.mocked(retrieveChatbotKnowledge).mockResolvedValue(prices);
+        const input = { config: { ...config, rag_enabled: true }, pageId: 'page', history: [customer('Magkano sa 24-second bakery video?')], collectedDetails: { 'Business Name': 'CJ Bakery' }, knowledge: prices };
         const result = mode === 'reply' ? await generateChatbotResponse({ ...input, inboundMessage: 'Magkano po?', knowledge: prices }) : await generateChatbotFollowUp({ ...input, sequenceNumber: 1, scheduleLabel: '5 minutes' });
-        expect(fetchMock).toHaveBeenCalledTimes(2); expect(result.messages.join(' ')).not.toMatch(/399|699/); expect(result.messages.join(' ')).toContain('PHP899'); expect(result.messages.at(-1)).toMatch(/\?$/);
+        expect(fetchMock).toHaveBeenCalledTimes(1); expect(result.messages.join(' ')).not.toContain('PHP399'); expect(result.messages.join(' ')).toContain('PHP699'); expect(result.messages.join(' ')).toContain('PHP899'); expect(result.messages.at(-1)).toMatch(/\?$/);
     });
     it.each(['reply', 'follow_up'])('renders the approved selected package in a %s even when the model confuses regular and promo amounts', async mode => {
         const fetchMock = mockPlan({ messages: ['Regular PHP899, promo PHP899, corrected promo PHP699. A free personalized commercial video.'], collected_details: {}, personalization_basis:'Customer asked bakery video pricing' });
@@ -221,15 +221,15 @@ describe('commercial generation and follow-ups', () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(result.messages[0]).toContain('From PHP899. Promo price: PHP699.');
         expect(result.messages[0]).toContain('FREE 1 add-on video');
-        expect(result.messages[0]).toContain('balance na PHP549');
+        expect(result.messages[0]).toContain('Balance: PHP549');
         expect(result.messages.join(' ')).not.toContain('free personalized');
         expect(hasCommercialVideoPriceList(result.messages.join('\n'))).toBe(false);
         expect(hasForbiddenFreeVideoOffer(result.messages.join('\n'))).toBe(false);
     });
-    it('keeps scheduled follow-ups on the current flow without introducing a form early', async () => {
+    it('sends the early form while keeping scheduled follow-ups on the discovery step', async () => {
         mockPlan({ messages: ['Para sa bakery video mo, anong duration ang gusto mo?'], personalization_basis: 'Customer asked about bakery video' });
         const result = await generateChatbotFollowUp({ config, contactName: 'CJ Lara', pageId: 'page', history: [customer('Bakery po'), page('Ito ang existing sample namin para sa bakery.', 2)], sequenceNumber: 1, scheduleLabel: '5 minutes' });
-        expect(result.messages.join(' ')).not.toContain('Business Name:'); expect(result.messages.join(' ')).toContain('CJ,'); expect(result.messages.at(-1)).toMatch(/seconds.*\?$/);
+        expect(result.messages.join(' ')).toContain('Business Name:'); expect(result.messages.join(' ')).toContain('CJ,'); expect(result.messages.join(' ')).not.toMatch(/PHP|\d+ pesos/); expect(result.messages.at(-1)).toMatch(/seconds.*\?$/);
     });
     it('does not repeat a model-written summary or ignore a selected free output', async () => {
         mockPlan({ messages: [renderCommercialVideoSummary(complete), 'Ipapasa po ito sa team.'], collected_details: {} });

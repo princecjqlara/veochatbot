@@ -48,6 +48,9 @@ type RepetitionOptions = { allowRepeatedFormsAndSamples?: boolean };
 
 function repetitionUnits(text: string, options: RepetitionOptions): string[] {
     if (!options.allowRepeatedFormsAndSamples) return [text, ...splitConversationalCopy(text)];
+    // A complete catalog intentionally repeats terms and inclusions per row.
+    // Compare the list as a unit, while still detecting a repeated whole list.
+    if (/PRICING PARA SA /i.test(text) && /BUONG PRICE LIST/i.test(text)) return [text];
     const form = containsCommercialVideoForm(text) || containsLegacyCommercialVideoForm(text);
     const lines = text.split(/\r?\n/).filter(line => !form || (
         !/^\s*(?:\d+[.)]\s*)?(?:(?:Business Name|Page \/ Social Media Link|Business Location|Location|Goal ng video|Preferred Video Length|Preferred Style|Contact Number):|Portrait or Landscape\?)/i.test(line) &&

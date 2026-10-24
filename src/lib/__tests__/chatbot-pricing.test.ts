@@ -9,9 +9,26 @@ const draft = { name: 'October test', mode: 'fair_test_sequence', duration_secon
     ] };
 const offer: PricingOffer = { delivery_id: 'delivery', experiment_id: 'experiment', assignment_id: 'assignment',
     package_id: 'basic', package_name: 'Basic', price: 599, message: 'Hi {first_name}, includes a main video for {business}.',
-    duration_seconds: 24, kind: 'initial' };
+    duration_seconds: 24, kind: 'initial', catalog: { name: 'Basic', hook: '', price: 599, message: '', options: [{ duration_seconds: 16, price: 499, addon_videos: 1, posters: 1, captions: 1 }, { duration_seconds: 24, price: 599, addon_videos: 2, posters: 1, captions: 1 }] } };
 
 describe('pricing experiments', () => {
+    it('releases an unsent reservation if its complete catalog cannot be loaded', async () => {
+        const rpc = vi.fn().mockResolvedValue({ data: offer });
+        const chain = { select: () => chain, eq: () => chain, single: async () => ({ error: { message: 'Catalog read timed out' } }) };
+        await expect(reservePricingOffer({ rpc, from: () => chain }, { pageId: 'page', contactId: 'contact', sourceKey: 'reply', followUp: false, quoteEligible: true, durationSeconds: 24 })).rejects.toThrow('Catalog read timed out');
+        expect(rpc).toHaveBeenCalledWith('release_chatbot_pricing_offer', { p_delivery_id: offer.delivery_id });
+    });
+    it.each([false, true])('does not reserve or promote pricing before the discovery gate, followUp=%s', async followUp => {
+        const rpc = vi.fn();
+        expect(await reservePricingOffer({ rpc }, { pageId: 'page', contactId: 'contact', sourceKey: 'reply', followUp, quoteEligible: false, durationSeconds: 24 })).toBeNull();
+        expect(rpc).not.toHaveBeenCalled();
+    });
+    it('requires two distinct facts for commercial quotes even on a direct price request', () => {
+        const config = { commercial_video_intake_enabled: true } as ChatbotConfig;
+        expect(getPricingQuoteContext({ config, pageId: 'page', inboundMessage: 'Magkano?', collectedDetails: { 'Business Name': 'Bakery' } }).eligible).toBe(false);
+        expect(getPricingQuoteContext({ config, pageId: 'page', inboundMessage: '24 seconds. Magkano?', collectedDetails: { 'Business Name': 'Bakery' } }).eligible).toBe(true);
+        expect(getPricingQuoteContext({ config, pageId: 'page', inboundMessage: 'Magkano?', collectedDetails: { 'Business Name': 'Bakery', 'Business Location': 'Manila' } }).eligible).toBe(true);
+    });
     it('uses built-in pricing days when ordinary later-day reminders are disabled', async () => {
         const rpc = vi.fn().mockResolvedValue({ data: { managed: true, scheduled: 1 } });
         await schedulePricingPromotion({ rpc }, { pageId: 'page', contactId: 'contact', anchorInboundAt: '2026-10-22T04:00:00Z', days: [] });
@@ -53,7 +70,7 @@ describe('pricing experiments', () => {
             { commercial: true, contactName: 'CJ Lara', business: 'CJ Bakery' });
         expect(result).toHaveLength(3);
         expect(result[0]).toContain('PHP599');
-        expect(result[0]).toContain('Hi CJ, includes a main video for CJ Bakery.');
+        expect(result[0]).toContain('BUONG PRICE LIST'); expect(result[0]).toContain('16-second'); expect(result[0]).toContain('PHP499');
         expect(result[0]).toContain('24-second');
         expect(result.join('\n')).not.toContain('PHP999');
         expect(result[1]).toBe(process);

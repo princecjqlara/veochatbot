@@ -1,6 +1,6 @@
 import type { FacebookMessage } from '@/types';
 import { normalizeContactName } from '@/lib/contact-names';
-import { containsCommercialVideoForm, containsLegacyCommercialVideoForm, getMissingCommercialVideoDetails, normalizeCommercialVideoDetails } from '@/lib/chatbot-intake';
+import { COMMERCIAL_VIDEO_EARLY_FORM_REASON, containsCommercialVideoForm, containsLegacyCommercialVideoForm, getMissingCommercialVideoDetails, normalizeCommercialVideoDetails } from '@/lib/chatbot-intake';
 import type { ChatbotKnowledgeMatch } from '@/lib/chatbot-knowledge';
 
 function sampleKind(match: ChatbotKnowledgeMatch): 'drive_file' | 'media' | null {
@@ -78,6 +78,31 @@ export function getCommercialVideoPricing(knowledge: ChatbotKnowledgeMatch[], du
     return null;
 }
 
+/** All durations from the customer's catalog, or one verified knowledge catalog.
+ * Never combine competing catalogs or let an unsupported selection hide the list. */
+export function getCommercialVideoPriceList(knowledge: ChatbotKnowledgeMatch[]): CommercialVideoPricing[] {
+    const contact = knowledge.find(source => source.contact_pricing_catalog);
+    if (contact?.contact_pricing_catalog) return contact.contact_pricing_catalog.options.flatMap(option => {
+        const rate = getCommercialVideoPricing([contact], option.duration_seconds);
+        return rate ? [rate] : [];
+    });
+    const approved = /current owner-approved promo catalog|owner-approved promo price list/i;
+    const sources = [...knowledge].sort((a, b) => Number(approved.test(b.content)) - Number(approved.test(a.content)));
+    for (const source of sources) {
+        const durations = [...new Set(source.content.split('\n').flatMap(line => {
+            const columns = line.split('|').map(column => column.trim()).filter(Boolean);
+            const duration = columns.length >= 6 ? durationIn(columns[1]) : null;
+            return duration ? [duration] : [];
+        }))];
+        const rates = durations.flatMap(duration => {
+            const rate = getCommercialVideoPricing([source], duration);
+            return rate ? [rate] : [];
+        });
+        if (rates.length) return rates;
+    }
+    return [];
+}
+
 export type CommercialVideoSalesStep = 'business' | 'sample' | 'duration' | 'pricing_process' | 'decision' | 'form' | 'complete';
 export type CommercialVideoSalesFlow = {
     step: CommercialVideoSalesStep;
@@ -90,6 +115,10 @@ export type CommercialVideoSalesFlow = {
     formSent: boolean;
     formRequested: boolean;
     processRequested: boolean;
+    earlyFormSent?: boolean;
+    intakeFormSent?: boolean;
+    informationCount?: number;
+    pricingReady?: boolean;
 };
 
 export function commercialVideoFirstName(value: unknown): string | null {
@@ -168,15 +197,21 @@ export function resolveCommercialVideoSalesFlow(input: {
     let durationSeconds: number | null = durationIn(collected['Preferred Video Length'] || '');
     let pricedDurationSeconds: number | null = null;
     let sampleSent = false, sampleHandled = false, processSent = false, formSent = false;
+    let earlyFormSent = false, intakeFormSent = false, fullPriceListSent = false;
     let lastPageMessage = '';
     for (const message of messages) {
         const text = message.message.trim();
         if (message.from?.id === input.pageId) {
             if (/^(?:[^,\n]+,\s*)?PRICING PARA SA /im.test(text)) {
+                if (/BUONG PRICE LIST/i.test(text)) fullPriceListSent = true;
                 const pricingBody = text.includes('\n') ? text.slice(text.indexOf('\n') + 1) : text;
                 pricedDurationSeconds = durationIn(pricingBody, true) || durationSeconds;
             }
-            if (containsCommercialVideoForm(text) || containsLegacyCommercialVideoForm(text)) formSent = true;
+            if (containsCommercialVideoForm(text) || containsLegacyCommercialVideoForm(text)) {
+                formSent = true;
+                if (text.toLowerCase().includes(COMMERCIAL_VIDEO_EARLY_FORM_REASON.toLowerCase())) earlyFormSent = true;
+                else intakeFormSent = true;
+            }
             if (/STEP-BY-STEP PROCESS PO:/i.test(text) && /(?:^|\n)7[.) ]/.test(text)) processSent = true;
             if (sampleDelivery.test(text) && !unavailableSample.test(text) && !/\?\s*$/.test(text)) sampleSent = sampleHandled = true;
             if (sampleRequest.test(text) && unavailableSample.test(text) && !/\?\s*$/.test(text)) sampleHandled = true;
@@ -207,22 +242,28 @@ export function resolveCommercialVideoSalesFlow(input: {
     const processRequested = /step.by.step|proseso|\bprocess\b|paano.{0,30}(?:magpagawa|umorder|order|payment|bayad|gawin)/i.test(latestCustomer);
     const complete = getMissingCommercialVideoDetails(collected).length === 0;
     const freeRequest = input.hasClearRequest && /^free_(?:concept|script)$/.test(input.requestType || '');
-    const pricingSent = durationSeconds !== null && durationSeconds === pricedDurationSeconds;
-    const step: CommercialVideoSalesStep = complete ? 'complete' : formSent || formRequested || freeRequest ? 'form'
-        : !business ? 'business' : !sampleHandled ? 'sample' : !durationSeconds ? 'duration'
+    const information = new Set(Object.keys(collected));
+    if (business) information.add('Business Name');
+    if (durationSeconds) information.add('Preferred Video Length');
+    const informationCount = information.size;
+    const pricingReady = Boolean(business && informationCount >= 2);
+    const pricingSent = fullPriceListSent || (durationSeconds !== null && durationSeconds === pricedDurationSeconds);
+    const step: CommercialVideoSalesStep = complete ? 'complete' : intakeFormSent || formRequested || freeRequest ? 'form'
+        : !business ? 'business' : !sampleHandled ? 'sample' : !pricingReady ? 'duration'
             : !processSent || !pricingSent ? 'pricing_process' : input.hasClearRequest ? 'form' : 'decision';
-    return { step, business, durationSeconds, sampleSent, sampleHandled, processSent, pricingSent, formSent, formRequested, processRequested };
+    return { step, business, durationSeconds, sampleSent, sampleHandled, processSent, pricingSent, formSent, formRequested, processRequested,
+        earlyFormSent, intakeFormSent, informationCount, pricingReady };
 }
 
 export function commercialVideoSalesFlowPrompt(flow: CommercialVideoSalesFlow, contactName?: string | null): string {
     return '\n\nCURRENT VERIFIED SALES FLOW:\n' + JSON.stringify(flow) + '\n' +
         `Use only the first name ${JSON.stringify(commercialVideoFirstName(contactName))}; never address the customer by a surname, sir, maam, boss, or a made-up name. ` +
-        'Follow business -> existing relevant sample -> duration choices -> verified pricing and the full seven-step process -> proceed question with form button -> eight-field form on click. Continue without restarting. Repeat a relevant existing sample or prefilled form when useful/requested; avoid repeated pitches and near-identical questions. ' +
+        'Follow ask business -> early prefilled form and sample -> another customer detail, preferably duration -> WHOLE verified price list and full process -> proceed question -> prefilled form again at normal intake. Continue without restarting. Repeat a relevant existing sample or prefilled form when useful/requested; avoid repeated pitches and near-identical questions. ' +
         'Answer direct questions first; an explicit request for the form or a free concept/script can proceed to intake immediately. Save any supplied form details at every step. ' +
         'For step=business ask what business they want the video for. Include business_type in JSON only as an exact short quote from their messages; this is context, not the Business Name field. ' +
         'For step=sample select the most relevant existing portfolio media or indexed Drive file using its verified document_id, even if the customer did not separately ask for samples. Do not claim a sample is attached without selecting a valid asset. If no suitable sample is available say so honestly and ask duration. ' +
-        'For step=duration ask how many seconds they want. For step=pricing_process provide the verified selected-duration price in one intact messages entry, including known inclusions; distinguish original From price, current promo total, PHP150 down payment, and balance. A changed duration requires updated pricing before the form, even if the process was already explained. Do not repeat that process unless requested. The main commercial video and its FREE 8-second ADD-ON videos are different deliverables; use the exact counts in the current approved catalog and never replace the main duration with the add-ons. The add-ons can be added to the main video or used as extra short promo clips. Clearly label historical/template/reference rates as reference only, pending team confirmation, never as approved live quotes. If no applicable rate is available, say the team must confirm it, never invent a price. The app adds the exact seven-step process when needed and a separate buying question. ' +
-        'For step=decision ask whether they want to proceed; the app adds a Fill out form button. Clicking it asks for the form only, never buying consent. Duration questions have 16s, 20s, 24s, 30s and 1 min choices; other typed lengths are accepted. For step=form the app sends the exact eight-field form prefilled with known answers, then one missing-field question. Set intake_action=send_form for a useful repeat. Every form and price explains the free concept needs no fee/purchase; paid production is separate. ' +
+        'For step=duration ask how many seconds they want. Require business plus another distinct customer detail before ANY money amounts. Business type and business name count once. For step=pricing_process provide ALL durations and inclusions from the verified catalog in ONE price-list message; distinguish original From price, current promo total, PHP150 down payment, and balance. Do not repeat a full list just because the chosen duration changed. Repeat the complete assigned list on a direct price request. Do not repeat that process unless requested. The main commercial video and its FREE 8-second ADD-ON videos are different deliverables; use the exact counts in the current approved catalog and never replace the main duration with the add-ons. The add-ons can be added to the main video or used as extra short promo clips. Clearly label historical/template/reference rates as reference only, pending team confirmation, never as approved live quotes. If no applicable rate is available, say the team must confirm it, never invent a price. The app adds the exact seven-step process when needed and a separate buying question. ' +
+        'For step=decision ask whether they want to proceed; the app adds a Fill out form button. Clicking it asks for the form only, never buying consent. Duration questions have 16s, 20s, 24s, 30s and 1 min choices; other typed lengths are accepted. The early form does not skip discovery or pricing. For step=form the app sends the exact eight-field form again, prefilled with known answers, then one missing-field question. Set intake_action=send_form for a useful repeat. Every form and price explains the free concept needs no fee/purchase; paid production is separate. ' +
         'Every active response and scheduled reminder ends with one relevant question. Full pricing, the numbered process plus revision note, and the entire form are each single messages, exempt from sentence splitting and short-answer caps. Follow them with a separate relevant question. ' +
         'Write the current factual answer in messages. Do not duplicate the form or process: the app renders those. Use natural Taglish and no emojis. Respect opt-outs, refusals, and team handoff stops.\n';
 }

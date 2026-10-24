@@ -1,14 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { renderCommercialVideoMessages, renderCommercialVideoProcess, renderCommercialVideoSummary } from '@/lib/chatbot-message-renderer';
-import { containsCommercialVideoForm, renderCommercialVideoForm } from '@/lib/chatbot-intake';
+import { COMMERCIAL_VIDEO_EARLY_FORM_REASON, containsCommercialVideoForm, renderCommercialVideoForm } from '@/lib/chatbot-intake';
 import { formatChatbotReplyMessages } from '@/lib/chatbot';
 import type { CommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
 import { videoPreferences } from './fixtures/commercial-video';
 const complete = { ...videoPreferences, 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote bread', 'Contact Number': '09171234567' };
 const flow = (step: CommercialVideoSalesFlow['step'], extra = {}): CommercialVideoSalesFlow => ({ step, business: 'CJ Bakery', durationSeconds: 24, sampleSent: true, sampleHandled: true, processSent: false, pricingSent: false, formSent: false, formRequested: false, processRequested: false, ...extra });
-const render = (extra: Partial<Parameters<typeof renderCommercialVideoMessages>[0]> = {}) => renderCommercialVideoMessages({ parts: [], details: {}, action: 'none', contactName: 'CJ Lara', ...extra });
+const verifiedRates = [{ packageName: 'Starter', durationSeconds: 16, pricePHP: 699, referenceOnly: false, addonCount: 1, addonDurationSeconds: 8, posters: 1, caption: true }, { packageName: 'Standard', durationSeconds: 24, pricePHP: 899, referenceOnly: false, addonCount: 2, addonDurationSeconds: 8, posters: 1, caption: true }];
+const render = (extra: Partial<Parameters<typeof renderCommercialVideoMessages>[0]> = {}) => renderCommercialVideoMessages({ parts: [], details: {}, action: 'none', contactName: 'CJ Lara', priceList: extra.pricing ? undefined : verifiedRates, ...extra });
 
 describe('natural commercial-video replies and intact structured messages', () => {
+    it.each(['business', 'sample', 'duration', 'form'] as const)('blocks every draft price at %s when only one detail is known', step => {
+        const messages = render({ parts: ['From PHP499. Promo PHP399. PHP150 deposit. Balance 249 pesos. Revision PHP100. 16s: 699; 24s: 899.'],
+            customerMessage: 'Magkano? Send pricelist', salesFlow: flow(step, { durationSeconds: null, pricingReady: false }) });
+        expect(messages.join('\n')).not.toMatch(/PHP|pesos|399|499|699|899|249|150|100/);
+    });
+    it('sends the early form once, then resends the prefilled form at normal intake', () => {
+        const early = render({ details: { 'Business Name': 'CJ Bakery' }, salesFlow: flow('sample', { durationSeconds: null }) });
+        expect(early.filter(containsCommercialVideoForm)).toHaveLength(1);
+        expect(early.find(containsCommercialVideoForm)).toContain(COMMERCIAL_VIDEO_EARLY_FORM_REASON);
+        const discovery = render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true,
+            salesFlow: flow('duration', { durationSeconds: null, earlyFormSent: true, formSent: true, intakeFormSent: false }) });
+        expect(discovery.filter(containsCommercialVideoForm)).toHaveLength(0);
+        const later = render({ details: { 'Business Name': 'CJ Bakery', 'Preferred Video Length': '24 seconds' }, formPreviouslySent: true,
+            salesFlow: flow('form', { earlyFormSent: true, formSent: true, intakeFormSent: false }) });
+        expect(later.filter(containsCommercialVideoForm)).toHaveLength(1);
+        expect(later.find(containsCommercialVideoForm)).toContain('Preferred Video Length: 24 seconds');
+        expect(later.find(containsCommercialVideoForm)).not.toContain(COMMERCIAL_VIDEO_EARLY_FORM_REASON);
+    });
+    it('shows the whole list after business and location even without a selected duration', () => {
+        const messages = render({ customerMessage: 'Magkano?', salesFlow: flow('duration', { durationSeconds: null, informationCount: 2, pricingReady: true }) });
+        const list = messages.find(message => message.includes('BUONG PRICE LIST'))!;
+        expect(list).toContain('16-second'); expect(list).toContain('24-second');
+        expect(list).toContain('PHP699'); expect(list).toContain('PHP899');
+    });
     it('splits ordinary sentences even beside a form while preserving its complete fields', () => {
         const messages = render({ parts: ['Kasama ang script. Pwede ang vertical format.'], salesFlow: flow('form'), splitMessages: true });
         expect(messages[0]).toContain('Kasama ang script.');
@@ -24,7 +49,7 @@ describe('natural commercial-video replies and intact structured messages', () =
     });
     it('introduces a selected existing sample before the duration question', () => {
         const messages = render({ salesFlow: flow('sample', { durationSeconds: null }), hasSample: true });
-        expect(messages[0]).toContain('existing sample'); expect(messages[1]).toMatch(/Ilang seconds.*CJ Bakery\?$/);
+        expect(messages[0]).toContain('existing sample'); expect(messages.at(-1)).toMatch(/Ilang seconds.*CJ Bakery\?$/);
     });
     it('does not claim a sample was sent without a verified asset', () => {
         const messages = render({ salesFlow: flow('sample', { durationSeconds: null }) });
@@ -49,10 +74,10 @@ describe('natural commercial-video replies and intact structured messages', () =
     it('does not cut a complete selected-option pricing message at the old 180/320 character cap', () => {
         const pricing = 'PHP899 ang 24-second video. ' + 'Kasama ang script at voiceover. '.repeat(4) + 'PHP150 ang down payment. PHP749 ang balance. Delivery is according to the confirmed schedule.';
         const messages = render({ parts: [pricing], salesFlow: flow('pricing_process') });
-        expect(messages[0]).toContain('confirmed schedule.'); expect(messages[0]).toContain('PHP749');
+        expect(messages[0]).toContain('BUONG PRICE LIST'); expect(messages[0]).toContain('16-second'); expect(messages[0]).toContain('24-second'); expect(messages[0]).toContain('PHP749'); expect(messages[0]).not.toContain('confirmed schedule.');
     });
     it('states that unavailable pricing needs confirmation while keeping the process complete', () => {
-        const messages = render({ salesFlow: flow('pricing_process') });
+        const messages = render({ salesFlow: flow('pricing_process'), priceList: [] });
         expect(messages[0]).toContain('i-confirm'); expect(messages[1]).toContain('7. After full payment'); expect(messages.at(-1)).toMatch(/\?$/);
     });
     it('keeps updated pricing and its question intact without repeating an already explained process', () => {
@@ -70,7 +95,7 @@ describe('natural commercial-video replies and intact structured messages', () =
         } });
         expect(messages[0]).toContain('24-second main commercial video');
         expect(messages[0]).toContain('2 add-on videos na tig-8 seconds');
-        expect(messages[0]).toContain('reference rate'); expect(messages[0]).toContain('final price at inclusions bago ang payment');
+        expect(messages[0]).toContain('Reference rate'); expect(messages[0]).toContain('final price at inclusions bago ang payment');
     });
     it.each([
         ['Starter Pack', 16, 899, 699, 1, 1], ['Best Seller', 24, 1099, 899, 1, 1],
@@ -85,17 +110,17 @@ describe('natural commercial-video replies and intact structured messages', () =
         expect(quote).toContain('From PHP' + regularPricePHP + '. Promo price: PHP' + pricePHP);
         expect(quote).toContain('1 ' + durationSeconds + '-second main commercial video');
         expect(quote).toContain('FREE ' + addonCount + ' add-on video');
-        expect(quote).toContain('May ' + posters + ' poster ad');
+        expect(quote).toContain(posters + ' poster ad');
         expect(quote).toContain('Facebook/TikTok Ads');
         expect(quote).toContain('idagdag sa main video o gamitin bilang extra short promo clips');
-        expect(quote).toContain('balance na PHP' + (pricePHP - 150));
-        expect(quote).not.toContain('reference rate');
+        expect(quote).toContain('Balance: PHP' + (pricePHP - 150));
+        expect(quote).not.toContain('Reference rate');
         expect(formatChatbotReplyMessages(messages, { split_messages: true, max_message_parts: 1 })).toEqual(messages);
     });
-    it('answers a direct process request without sending the form early', () => {
+    it('withholds process charges until two details are known and sends the early form', () => {
         const messages = render({ salesFlow: flow('duration', { durationSeconds: null, processRequested: true }) });
-        expect(messages.filter(m => m.includes('STEP-BY-STEP'))).toHaveLength(1); expect(messages.at(-1)).toContain('seconds');
-        expect(messages.some(containsCommercialVideoForm)).toBe(false);
+        expect(messages.filter(m => m.includes('STEP-BY-STEP'))).toHaveLength(0); expect(messages.at(-1)).toContain('seconds');
+        expect(messages.some(containsCommercialVideoForm)).toBe(true); expect(messages.join(' ')).not.toMatch(/PHP|\d+ pesos/);
     });
     it('prefills known answers in one complete form, then asks a missing field', () => {
         const messages = render({ details: { 'Business Name': 'CJ Bakery' }, action: 'send_form', salesFlow: flow('form') });
@@ -165,6 +190,6 @@ describe('natural commercial-video replies and intact structured messages', () =
     });
     it('answers combined paid-price and free-script questions without confusing the fees', () => {
         const messages = render({ parts: ['May free script kami.'], details: {}, customerMessage: 'Magkano ang video at free script?', salesFlow: flow('business', { business: null }), answerRequested: true });
-        expect(messages[0]).toContain('final price'); expect(messages[0]).toContain('free script');
+        expect(messages[0]).toContain('free script'); expect(messages.join(' ')).not.toMatch(/PHP|\d+ pesos/);
     });
 });

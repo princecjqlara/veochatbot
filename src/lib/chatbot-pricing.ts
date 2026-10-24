@@ -2,8 +2,9 @@ import type { FacebookMessage } from '@/types';
 import { getPricingPromotionDays } from '@/lib/chatbot-follow-up-timing';
 import type { ChatbotConfig } from '@/lib/chatbot';
 import { isCommercialVideoIntake } from '@/lib/chatbot-policy';
-import { isCommercialVideoPriceRequested, resolveCommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
-import { pricingOptionFreebies, type PricingDurationOption, type PricingCatalog } from '@/lib/chatbot-pricing-catalogs';
+import { getCommercialVideoPriceList, isCommercialVideoPriceRequested, resolveCommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
+import { pricingOptionFreebies, withContactPricingKnowledge, type PricingDurationOption, type PricingCatalog } from '@/lib/chatbot-pricing-catalogs';
+import { renderCommercialVideoPriceList } from '@/lib/chatbot-message-renderer';
 
 export type PricingMode = 'fair_test' | 'sequence' | 'fair_test_sequence';
 export type PricingPackageDraft = { name: string; price: number; message: string; hook?: string; options?: PricingDurationOption[] };
@@ -28,8 +29,9 @@ export type PricingOffer = {
     kind: 'initial' | 'promotion';
     hook?: string;
     option?: PricingDurationOption | null;
+    catalog?: PricingCatalog;
 };
-type PricingDb = { rpc?: (name: string, args: Record<string, unknown>) => any };
+type PricingDb = { rpc?: (name: string, args: Record<string, unknown>) => any; from?: (table: string) => any };
 export const PRICING_PACKAGE_HOLD_HOURS = 24;
 export class PricingDeliveryUncertainError extends Error {}
 
@@ -134,7 +136,7 @@ export function getPricingQuoteContext(input: {
     const priceRequested = isCommercialVideoPriceRequested(input.inboundMessage || '');
     if (!isCommercialVideoIntake(input.config)) return { eligible: priceRequested, durationSeconds: null };
     const flow = resolveCommercialVideoSalesFlow({ ...input, details: input.collectedDetails });
-    return { eligible: flow.step === 'pricing_process' || priceRequested, durationSeconds: flow.durationSeconds };
+    return { eligible: flow.pricingReady === true, durationSeconds: flow.durationSeconds };
 }
 
 /** A missing additive migration preserves the existing chatbot behavior. Other errors fail closed. */
@@ -142,7 +144,7 @@ export async function reservePricingOffer(db: PricingDb, input: {
     pageId: string; contactId: string; sourceKey: string; followUp: boolean;
     quoteEligible: boolean; durationSeconds: number | null;
 }): Promise<PricingOffer | null> {
-    if (!db.rpc) return null;
+    if (!db.rpc || !input.quoteEligible) return null;
     const result = await db.rpc('reserve_chatbot_pricing_offer', {
         p_page_id: input.pageId, p_contact_id: input.contactId, p_source_key: input.sourceKey,
         p_follow_up: input.followUp, p_quote_eligible: input.quoteEligible, p_duration_seconds: input.durationSeconds
@@ -152,12 +154,30 @@ export async function reservePricingOffer(db: PricingDb, input: {
         throw new Error(result.error.message || 'Could not select a pricing package');
     }
     if (result.data?.blocked) throw new PricingDeliveryUncertainError('Pricing delivery already sent or in progress; check its receipt before retrying');
+    if (result.data && db.from) {
+        // Read the reserved package itself: the last delivered catalog may be
+        // different during an initial assignment or a later promotion.
+        try {
+            const catalog = await db.from('chatbot_pricing_packages').select('name,hook,price,message,options')
+                .eq('id', result.data.package_id).eq('experiment_id', result.data.experiment_id).single();
+            if (catalog.error || !catalog.data) throw new Error(catalog.error?.message || 'Could not load the complete reserved price list');
+            return { ...result.data, catalog: catalog.data };
+        } catch (error) {
+            await releasePricingOffer(db, result.data);
+            throw error;
+        }
+    }
     return result.data || null;
 }
 
 export function renderPricingOffer(offer: PricingOffer, input: {
     commercial?: boolean; contactName?: string | null; business?: string | null; followUp?: boolean;
 } = {}): string {
+    if (input.commercial) {
+        if (!offer.catalog?.options?.length) throw new Error('Complete verified commercial price list is unavailable');
+        const list = renderCommercialVideoPriceList(getCommercialVideoPriceList(withContactPricingKnowledge([], offer.catalog)), input.business || undefined);
+        return list + (offer.kind === 'promotion' || input.followUp ? '\nMas bagay ba sa kailangan mo ang price list na ito?' : '');
+    }
     const firstName = input.contactName?.trim().split(/\s+/)[0] || '';
     const details = offer.message.replaceAll('{first_name}', firstName).replaceAll('{business}', input.business || 'your business');
     return [
@@ -175,10 +195,10 @@ export function renderPricingOffer(offer: PricingOffer, input: {
 
 /** Replace the complete price answer, preserving the commercial process and next question. */
 export function applyPricingOffer(messages: string[], offer: PricingOffer, input: Parameters<typeof renderPricingOffer>[1] = {}): string[] {
-    const copy = renderPricingOffer(offer, input);
-    if (!input.commercial) return [copy];
+    if (!input.commercial) return [renderPricingOffer(offer, input)];
     const priceBlock = messages.findIndex(message => /PRICING PARA SA /i.test(message));
     if (priceBlock < 0) return messages;
+    const copy = renderPricingOffer(offer, input);
     return messages.flatMap((message, index) => index === priceBlock ? [copy]
         : /PRICING PARA SA /i.test(message) ? [] : [message]);
 }

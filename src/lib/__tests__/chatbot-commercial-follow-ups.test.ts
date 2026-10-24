@@ -38,6 +38,7 @@ function fixture(formComplete = false, clearRequest = false) {
                 return chain;
             },
             upsert: async (rows: any) => { inserts.push(...(Array.isArray(rows) ? rows : [rows])); return { error: null }; },
+            single: async () => ({ data: { name: 'Plus', hook: '', price: 799, message: '', options: [{ duration_seconds: 16, price: 599, addon_videos: 1, posters: 1, captions: 1 }, { duration_seconds: 24, price: 799, addon_videos: 2, posters: 1, captions: 1 }] }, error: null }),
             maybeSingle: async () => ({ data: table === 'pages' ? { id: 'page', name: 'Bakery Page', fb_page_id: 'fb-page', access_token: 'test' }
                 : table === 'contacts' ? contact : table === 'chatbot_configs' ? config
                     : table === 'chatbot_contact_states' ? state
@@ -63,6 +64,7 @@ describe('pricing package follow-up delivery', () => {
     function pricingFixture() {
         const f = fixture();
         f.job.purpose = 'pricing_promotion';
+        f.state.collected_details['Preferred Video Length'] = '24 seconds';
         f.db.rpc = vi.fn(async (name: string) => ({ data: name === 'reserve_chatbot_pricing_offer' ? offer
             : ['chatbot_pricing_offer_is_active', 'begin_chatbot_pricing_delivery'].includes(name) ? true : null, error: null }));
         return f;
@@ -74,7 +76,7 @@ describe('pricing package follow-up delivery', () => {
         expect(result).toMatchObject({ sent: 1, failed: 0 });
         expect(mocks.generate).not.toHaveBeenCalled();
         expect(mocks.send).toHaveBeenCalledTimes(1);
-        expect(mocks.send.mock.calls[0][3]).toContain('PHP799');
+        expect(mocks.send.mock.calls[0][3]).toContain('PHP799'); expect(mocks.send.mock.calls[0][3]).toContain('PHP599'); expect(mocks.send.mock.calls[0][3]).toContain('BUONG PRICE LIST');
         expect(mocks.send.mock.calls[0][4]).toBe('RESPONSE');
         expect(f.db.rpc).toHaveBeenCalledWith('finish_chatbot_pricing_delivery', { p_delivery_id: 'pricing-delivery', p_message_id: 'sent' });
         expect(f.db.rpc).not.toHaveBeenCalledWith('release_chatbot_pricing_offer', expect.anything());

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { commercialVideoFirstName, cleanCommercialVideoCopy, getCommercialVideoPricing, resolveCommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
-import { renderCommercialVideoForm } from '@/lib/chatbot-intake';
+import { commercialVideoFirstName, cleanCommercialVideoCopy, getCommercialVideoPriceList, getCommercialVideoPricing, resolveCommercialVideoSalesFlow } from '@/lib/chatbot-sales-flow';
+import { COMMERCIAL_VIDEO_EARLY_FORM_REASON, renderCommercialVideoForm } from '@/lib/chatbot-intake';
 import { renderCommercialVideoProcess } from '@/lib/chatbot-message-renderer';
 import type { FacebookMessage } from '@/types';
 const turn = (message: string, role = 'customer', second = 0): FacebookMessage => ({ id: role + second, message, from: { id: role, name: role }, created_time: '2026-10-21T10:00:' + String(second).padStart(2, '0') + 'Z' });
@@ -9,6 +9,25 @@ const discovery = [turn('Anong business ang gusto mong gawan ng commercial video
 const sampled = [...discovery, turn('Ito ang existing sample namin na related sa bakery.', 'page', 2), turn('Ilang seconds ang gusto mo?', 'page', 3)];
 
 describe('history-based commercial-video sales flow', () => {
+    it('does not count business type and business name as two details', () => {
+        expect(resolve(discovery, { details: { 'Business Name': 'CJ Bakery' } })).toMatchObject({ informationCount: 1, pricingReady: false });
+    });
+    it('accepts another answered field as the second detail without requiring a chosen duration', () => {
+        expect(resolve(sampled, { details: { 'Business Name': 'CJ Bakery', 'Business Location': 'Manila' } })).toMatchObject({ step: 'pricing_process', informationCount: 2, pricingReady: true });
+    });
+    it('keeps discovery moving after the early form and sends the normal form later', () => {
+        const early = turn(COMMERCIAL_VIDEO_EARLY_FORM_REASON + '\n\n' + renderCommercialVideoForm(), 'page', 4);
+        expect(resolve([...sampled, early])).toMatchObject({ step: 'duration', earlyFormSent: true, intakeFormSent: false });
+        expect(resolve([...sampled, early, turn('24 seconds', 'customer', 5)])).toMatchObject({ step: 'pricing_process', pricingReady: true });
+    });
+    it('does not repeat a full price list when the customer changes to another included duration', () => {
+        const history = [...sampled, turn('24 seconds', 'customer', 4), turn('PRICING PARA SA bakery\nBUONG PRICE LIST\n16 seconds: PHP699\n24 seconds: PHP899', 'page', 5), turn(renderCommercialVideoProcess(), 'page', 6)];
+        expect(resolve(history, { inboundMessage: '16 seconds' })).toMatchObject({ step: 'decision', pricingSent: true });
+    });
+    it('recognizes an early form whose first sentence was personalized', () => {
+        const early = turn('CJ, ' + COMMERCIAL_VIDEO_EARLY_FORM_REASON[0].toLowerCase() + COMMERCIAL_VIDEO_EARLY_FORM_REASON.slice(1) + '\n\n' + renderCommercialVideoForm(), 'page', 4);
+        expect(resolve([...sampled, early])).toMatchObject({ step: 'duration', earlyFormSent: true, intakeFormSent: false });
+    });
     it('asks the business before sending any form', () => expect(resolve([turn('Hi')]).step).toBe('business'));
     it('moves from a business answer to a relevant existing sample', () => expect(resolve(discovery)).toMatchObject({ step: 'sample', business: 'Bakery', sampleSent: false }));
     it('recognizes a business in an opening question', () => expect(resolve([turn('Magkano sa dental clinic video?')]).step).toBe('sample'));
@@ -49,6 +68,9 @@ describe('history-based commercial-video sales flow', () => {
 describe('selected-duration pricing from the existing knowledge', () => {
     const knowledge = [{ document_id: 'prices', chunk_id: 'prices-1', title: 'Current knowledge', similarity: 1,
         content: 'Historical reference price\n| Starter Pack | 16 seconds | PHP699 | 1 x 8 seconds | 1 | Included |\n| Best Seller | 24 seconds | PHP899 | 2 x 8 seconds | 1 | Included |\n| Brand Level | 1 minute | PHP1,499 | 3 x 8 seconds | 3 | Included |' }];
+    it('loads the whole catalog rather than filtering it to a chosen duration', () => {
+        expect(getCommercialVideoPriceList(knowledge).map(rate => rate.durationSeconds)).toEqual([16, 24, 60]);
+    });
     it('keeps the main duration, short add-ons and reference status separate', () => expect(getCommercialVideoPricing(knowledge, 24)).toEqual({
         packageName: 'Best Seller', durationSeconds: 24, pricePHP: 899, referenceOnly: true, addonCount: 2, addonDurationSeconds: 8, posters: 1, caption: true
     }));
