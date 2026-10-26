@@ -40,12 +40,22 @@ describe('natural commercial-video replies and intact structured messages', () =
         expect(list).toContain('16-second'); expect(list).toContain('24-second');
         expect(list).toContain('PHP699'); expect(list).toContain('PHP899');
     });
-    it('splits ordinary sentences even beside a form while preserving its complete fields', () => {
+    it('groups an ordinary answer with the complete form instead of sending each sentence separately', () => {
         const messages = render({ parts: ['Kasama ang script. Pwede ang vertical format.'], salesFlow: flow('form'), splitMessages: true });
-        expect(messages[0]).toContain('Kasama ang script.');
-        expect(messages[1]).toBe('Pwede ang vertical format.');
+        expect(messages).toHaveLength(2);
+        expect(messages[0]).toContain('Kasama ang script. Pwede ang vertical format.');
+        expect(messages[0]).toContain(renderCommercialVideoForm());
+        expect(messages[1]).toMatch(/\?$/);
         expect(messages.filter(containsCommercialVideoForm)).toHaveLength(1);
         expect(formatChatbotReplyMessages(messages, { split_messages: true, max_message_parts: 1 })).toEqual(messages);
+    });
+    it('keeps an ordinary answer and its next question in one message', () => {
+        const messages = render({ parts: ['Kasama ang script. Pwede ang vertical format.'], details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true,
+            salesFlow: flow('form', { formSent: true }) });
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toContain('Kasama ang script. Pwede ang vertical format.');
+        expect(messages[0]).toMatch(/page|social/i);
+        expect(messages[0]).toMatch(/\?$/);
     });
     it('opens with a personalized business question and no form', () => {
         const messages = render({ parts: ['Hi sir \u{1F44B}', renderCommercialVideoForm()], salesFlow: flow('business', { business: null }) });
@@ -55,7 +65,15 @@ describe('natural commercial-video replies and intact structured messages', () =
     });
     it('introduces a selected existing sample before the duration question', () => {
         const messages = render({ salesFlow: flow('sample', { durationSeconds: null }), hasSample: true });
+        expect(messages).toHaveLength(2);
         expect(messages[0]).toContain('existing sample'); expect(messages.at(-1)).toMatch(/Ilang seconds.*CJ Bakery\?$/);
+    });
+    it('keeps a selected sample before the question when the form was already sent', () => {
+        const messages = render({ formPreviouslySent: true, salesFlow: flow('sample', { durationSeconds: null, formSent: true }), hasSample: true });
+        expect(messages).toHaveLength(2);
+        expect(messages[0]).toContain('existing sample');
+        expect(messages[1]).toMatch(/Ilang seconds.*CJ Bakery\?$/);
+        expect(messages.some(containsCommercialVideoForm)).toBe(false);
     });
     it('does not claim a sample was sent without a verified asset', () => {
         const messages = render({ salesFlow: flow('sample', { durationSeconds: null }) });
@@ -147,12 +165,24 @@ describe('natural commercial-video replies and intact structured messages', () =
         expect(messages.at(-1)).toMatch(/\?$/);
         expect(formatChatbotReplyMessages(messages, { split_messages: true, max_message_parts: 1 })).toEqual(messages);
     });
-    it('allows a useful prefilled form reminder without a resend request and explains the free concept', () => {
-        const messages = render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, repeatForm: true, salesFlow: flow('form') });
-        expect(messages.find(containsCommercialVideoForm)).toContain('free concept');
-        expect(messages.find(containsCommercialVideoForm)).toContain('Walang bayad');
-        expect(messages.find(containsCommercialVideoForm)).toContain('Business Name: CJ Bakery');
+    it('does not replay an old form request in a scheduled reminder', () => {
+        const messages = render({ details: { 'Business Name': 'CJ Bakery' }, formPreviouslySent: true, followUp: true,
+            customerMessage: 'Pakisend ng form', salesFlow: flow('form', { formRequested: true, formSent: true, earlyFormSent: true, intakeFormSent: false }) });
+        expect(messages.some(containsCommercialVideoForm)).toBe(false);
+        expect(messages).toHaveLength(1);
         expect(messages.at(-1)).toMatch(/\?$/);
+    });
+    it('does not replay an old price or process request in a scheduled reminder', () => {
+        const messages = render({ formPreviouslySent: true, followUp: true, customerMessage: 'Magkano at paano ang process?',
+            salesFlow: flow('decision', { pricingSent: true, processSent: true, processRequested: true }) });
+        expect(messages).toHaveLength(1);
+        expect(messages.join(' ')).not.toMatch(/BUONG PRICE LIST|STEP-BY-STEP|PHP/);
+    });
+    it('finishes a missing process without resending an already delivered catalog', () => {
+        const messages = render({ salesFlow: flow('pricing_process', { pricingSent: true }) });
+        expect(messages).toHaveLength(2);
+        expect(messages[0]).toContain('STEP-BY-STEP');
+        expect(messages.join(' ')).not.toContain('BUONG PRICE LIST');
     });
     it('mentions a no-fee free concept with pricing while keeping paid production separate', () => {
         const messages = render({ parts: ['PHP899 ang paid commercial video.'], salesFlow: flow('pricing_process') });

@@ -5,6 +5,15 @@ import { buildChatbotTestMessages } from '@/lib/chatbot-test-preview';
 import { commercialVideoCustomerTexts, containsCommercialVideoForm, getMissingCommercialVideoDetails, mergeCommercialVideoChatDetails, normalizeCommercialVideoDetails, renderCommercialVideoForm } from '@/lib/chatbot-intake';
 
 describe('interactive commercial-video intake', () => {
+    it('uses the final question for buttons when the answer shares its message', () => {
+        expect(getCommercialVideoMessageControls(['Pwede ang vertical format. Ano ang page link ng business mo?'])).toEqual([]);
+        expect(getCommercialVideoMessageControls(['May preferred duration na 24 seconds. Portrait o landscape ang gusto mong format?'])[0].quick_replies?.map(choice => choice.title))
+            .toEqual(['Portrait', 'Landscape']);
+        expect(getCommercialVideoMessageControls(['Pwede ang portrait format. Ilang seconds ang gusto mo?'])[0].quick_replies)
+            .toEqual(COMMERCIAL_DURATION_CHOICES);
+        expect(getCommercialVideoMessageControls(['Pwede ang portrait format. Gusto mo bang mag-proceed para masend ko ang form?'])[0].buttons?.[0].payload)
+            .toBe(COMMERCIAL_FORM_PAYLOAD);
+    });
     it('adds the form button to the proceed question without putting buttons on the process or quote', () => {
         expect(getCommercialVideoMessageControls(['PRICING PARA SA BAKERY\nPHP899', 'STEP-BY-STEP PROCESS PO:\n1. Down payment', 'CJ, gusto mo bang mag-proceed sa commercial video para masend ko ang form?']))
             .toEqual([{ message_index: 2, buttons: [{ title: 'Fill out form', payload: COMMERCIAL_FORM_PAYLOAD }] }]);

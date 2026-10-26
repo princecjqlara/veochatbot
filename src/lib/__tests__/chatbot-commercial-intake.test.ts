@@ -187,10 +187,33 @@ describe('commercial generation and follow-ups', () => {
         expect(result.messages.join(' ')).toContain('CJ,'); expect(result.messages.at(-1)).toMatch(/\?$/);
     });
     it('does not resend an existing form or restart discovery after a partial answer', async () => {
-        mockPlan({ messages: [renderCommercialVideoForm()], collected_details: { 'Business Location': 'Manila' } });
+        mockPlan({ messages: [renderCommercialVideoForm()], intake_action: 'send_form', collected_details: { 'Business Location': 'Manila' } });
         const result = await generateChatbotResponse({ config, pageId: 'page', inboundMessage: 'Manila po', history: [page(renderCommercialVideoForm())], collectedDetails: { 'Business Name': 'CJ Bakery' } });
         expect(result.intake_action).toBe('ask_missing_field'); expect(result.messages.join(' ')).not.toContain('Business Name:');
         expect(result.messages.at(-1)).toMatch(/page|social/i);
+    });
+    it('does not let a scheduled reminder resend the form requested on the last customer turn', async () => {
+        mockPlan({ messages: ['Kasama ang script para sa bakery video.'], intake_action: 'send_form',
+            personalization_basis: 'Customer requested a form for CJ Bakery' });
+        const result = await generateChatbotFollowUp({ config, pageId: 'page',
+            history: [customer('Pakisend ng form para sa CJ Bakery', 1), page(renderCommercialVideoForm(), 2)],
+            collectedDetails: { 'Business Name': 'CJ Bakery' }, sequenceNumber: 1, scheduleLabel: '5 minutes' });
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages.join(' ')).not.toContain('Business Name:');
+        expect(result.messages.at(-1)).toMatch(/\?$/);
+    });
+    it('does not treat a previously answered price request as a new request during a reminder', async () => {
+        mockPlan({ messages: ['Kasama ang script para sa bakery video.'],
+            personalization_basis: 'Customer asked about a bakery commercial' });
+        const result = await generateChatbotFollowUp({ config, pageId: 'page',
+            history: [customer('24 seconds para sa bakery. Magkano?', 1),
+                page('PRICING PARA SA CJ Bakery\nBUONG PRICE LIST\n24-second main commercial video. PHP899.', 2),
+                page('STEP-BY-STEP PROCESS PO:\n7. Final video after payment.', 3),
+                page('Ito ang existing sample namin para sa bakery.', 4)],
+            collectedDetails: { 'Business Name': 'CJ Bakery', 'Preferred Video Length': '24 seconds' },
+            sequenceNumber: 1, scheduleLabel: '5 minutes' });
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages.join(' ')).not.toMatch(/BUONG PRICE LIST|STEP-BY-STEP|PHP/);
     });
     it('retries unauthorized personalized sample promises from stale instructions', async () => {
         process.env.OPENROUTER_API_KEY = 'test-key';

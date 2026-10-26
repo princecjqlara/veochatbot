@@ -66,11 +66,21 @@ export function isStructuredCommercialVideoMessage(text: string): boolean {
     return containsCommercialVideoForm(text) || isSummary(text) || /STEP-BY-STEP PROCESS PO:/i.test(text) || /^(?:[^,\n]+,\s*)?PRICING PARA SA /im.test(text);
 }
 
-/** Explicit boundaries are delivery units, independent of the old bubble cap. */
-function deliverParts(parts: string[], contactName?: string | null, settings: MessageSettings = {}): string[] {
-    const bubbles = parts.flatMap(part => settings.splitMessages === false || isStructuredCommercialVideoMessage(part)
-        ? [part.trim()] : splitConversationalCopy(part));
-    return personalizeCommercialVideoMessages(uniqueChatbotCopy(bubbles.filter(Boolean)), contactName);
+/** Keep a conversational answer and its question together. A short introduction
+ * can share the following form; catalogs and production terms stay intact. */
+function deliverParts(parts: string[], contactName?: string | null, hasSample = false): string[] {
+    const messages: string[] = [];
+    const unique = uniqueChatbotCopy(parts);
+    for (const [index, part] of unique.entries()) {
+        const previous = messages.at(-1);
+        // Delivery inserts the selected sample before the final question.
+        const afterSample = hasSample && index === unique.length - 1 && /\?\s*$/.test(part);
+        if (previous && !afterSample && !isStructuredCommercialVideoMessage(previous) &&
+            (!isStructuredCommercialVideoMessage(part) || containsCommercialVideoForm(part))) {
+            messages[messages.length - 1] = previous + (isStructuredCommercialVideoMessage(part) ? '\n\n' : ' ') + part;
+        } else messages.push(part);
+    }
+    return personalizeCommercialVideoMessages(messages, contactName);
 }
 
 const FIELD_VARIANTS: Record<string, string[]> = {
@@ -144,7 +154,7 @@ export function renderCommercialVideoMessages(input: {
     parts: string[]; details: unknown; action: CommercialVideoIntakeAction; customerMessage?: string; requestType?: string | null;
     answerRequested?: boolean; formPreviouslySent?: boolean; recentMessages?: string[]; summaryRequested?: boolean;
     contactName?: string | null; salesFlow?: CommercialVideoSalesFlow; hasSample?: boolean;
-    pricing?: CommercialVideoPricing | null; priceList?: CommercialVideoPricing[]; repeatForm?: boolean;
+    pricing?: CommercialVideoPricing | null; priceList?: CommercialVideoPricing[]; followUp?: boolean;
 } & MessageSettings): string[] {
     const missing = getMissingCommercialVideoDetails(input.details);
     const recent = input.recentMessages || [];
@@ -152,18 +162,22 @@ export function renderCommercialVideoMessages(input: {
     const step = flow?.step || (missing.length ? 'form' : 'complete');
     const pricingReady = flow?.pricingReady ?? Boolean(flow?.business && flow.durationSeconds);
     let factual = factualAnswer(input.parts, input.contactName);
-    const freeInquiry = /\b(?:free|libre|libreng)\b/i.test(input.customerMessage || '') && /concept|script/i.test(input.customerMessage || '');
+    // A reminder may finish an unanswered request, but cannot turn an answered
+    // request into permission to resend prices, process or the form.
+    const customerMessage = input.customerMessage || '';
+    const formRequested = !input.followUp && flow?.formRequested;
+    const freeInquiry = !input.followUp && /\b(?:free|libre|libreng)\b/i.test(customerMessage) && /concept|script/i.test(customerMessage);
     if (freeInquiry && !/\b(?:free|libre|walang bayad)\b.*(?:concept|script)|(?:concept|script).*\b(?:free|libre|walang bayad)\b/i.test(factual)) {
         factual += ' Walang bayad ang free concept o free script.';
     }
     const answer = freshAnswer(conciseAnswer(factual), recent, input.answerRequested !== false);
     const messages: string[] = [];
-    const priceRequested = isCommercialVideoPriceRequested(input.customerMessage || '');
+    const priceRequested = isCommercialVideoPriceRequested(customerMessage) && (!input.followUp || !flow?.pricingSent);
     if (answer && step !== 'pricing_process' && step !== 'sample') {
         messages.push(answer);
     }
-    const showPriceList = pricingReady && (step === 'pricing_process' || priceRequested);
-    const paidProcessRequested = pricingReady && flow?.processRequested && (!input.requestType?.startsWith('free_') || /commercial|paid|production/i.test(input.customerMessage || ''));
+    const showPriceList = pricingReady && ((step === 'pricing_process' && !flow?.pricingSent) || priceRequested);
+    const paidProcessRequested = (!input.followUp || !flow?.processSent) && pricingReady && flow?.processRequested && (!input.requestType?.startsWith('free_') || /commercial|paid|production/i.test(customerMessage));
     if (showPriceList) messages.push(renderCommercialVideoPriceList(input.priceList || (input.pricing ? [input.pricing] : []), flow?.business || undefined));
     if ((step === 'pricing_process' && pricingReady) || paidProcessRequested) {
         if (!flow?.processSent || paidProcessRequested) messages.push(renderCommercialVideoProcess(input.contactName, flow?.business));
@@ -199,7 +213,7 @@ export function renderCommercialVideoMessages(input: {
         'Mag-proceed na ba tayo sa commercial video, ready ka nang sagutan ang form?'
     ]));
     else if (step === 'form') {
-        if (!input.formPreviouslySent || (flow?.earlyFormSent && !flow.intakeFormSent) || flow?.formRequested || input.repeatForm) {
+        if (!input.formPreviouslySent || (!input.followUp && flow?.earlyFormSent && !flow.intakeFormSent) || formRequested) {
             const reason = input.requestType?.startsWith('free_') ? 'Para maihanda ang free ' + (input.requestType === 'free_script' ? 'script' : 'concept') + ' mo, pakisagutan ang kulang dito. Walang bayad ito.' : COMMERCIAL_VIDEO_FORM_REASON;
             const name = commercialVideoFirstName(input.contactName);
             messages.push((name ? name + ', ' + reason[0].toLowerCase() + reason.slice(1) : reason) + '\n\n' + renderCommercialVideoForm(input.details));
@@ -214,7 +228,7 @@ export function renderCommercialVideoMessages(input: {
         const summarySent = recent.some((text, index) => /ito(?: po)? ang summary ng request (?:mo|ninyo):/i.test(text) &&
             [recent.slice(index, index + 4), recent.slice(Math.max(0, index - 3), index + 1)].some(block =>
                 summaryValues.every(line => block.join('\n').includes(line))));
-        if (flow?.formRequested || (flow?.earlyFormSent && !flow.intakeFormSent && input.action === 'handoff')) messages.push(COMMERCIAL_VIDEO_FORM_REASON + '\n\n' + renderCommercialVideoForm(input.details));
+        if (formRequested || (!input.followUp && flow?.earlyFormSent && !flow.intakeFormSent && input.action === 'handoff')) messages.push(COMMERCIAL_VIDEO_FORM_REASON + '\n\n' + renderCommercialVideoForm(input.details));
         else if (!summarySent || input.summaryRequested) messages.push(summary);
         if (input.action === 'handoff') {
             const free = input.requestType === 'free_concept' ? 'free concept' : input.requestType === 'free_script' ? 'free script' : null;
@@ -222,14 +236,13 @@ export function renderCommercialVideoMessages(input: {
             messages.push('May gusto ka pa bang idagdag o itanong tungkol sa request mo?');
         } else messages.push(FREE_OFFER);
     }
-    return deliverParts(messages, input.contactName, input);
+    return deliverParts(messages, input.contactName, input.hasSample);
 }
 
-/** Formatting may run again in previews and delivery; preserve the complete
- * structured blocks and their following questions even with a one-part setting. */
+/** Formatting runs again in previews and delivery. Preserve rendered delivery
+ * units instead of turning every sentence into another notification. */
 export function getStructuredCommercialVideoMessages(parts: string[], _settings: MessageSettings = {}): string[] | null {
-    if (parts.some(isStructuredCommercialVideoMessage)) return parts.flatMap(part =>
-        _settings.splitMessages === false || isStructuredCommercialVideoMessage(part) ? [part.trim()] : splitConversationalCopy(part)).filter(Boolean);
+    if (parts.some(isStructuredCommercialVideoMessage)) return parts.map(part => part.trim()).filter(Boolean);
     const joined = parts.join('\n');
     if (!containsCommercialVideoForm(joined)) return null;
     const first = joined.indexOf('Kindly fill out these details:');

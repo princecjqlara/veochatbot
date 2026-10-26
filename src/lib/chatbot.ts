@@ -505,7 +505,7 @@ function parseChatbotPlan(
     const priceList = getCommercialVideoPriceList(knowledge);
     // At this step all generated copy is replaced by the verified package,
     // production process and proceed question. Validate that delivered copy.
-    const canonicalPricing = salesFlow?.pricingReady === true && priceList.length > 0 && (salesFlow.step === 'pricing_process' || isCommercialVideoPriceRequested(intakeContext?.requestInput.inboundMessage || '')) && parsed?.stop_reason !== 'opt_out' && parsed?.stop_reason !== 'refusal';
+    const canonicalPricing = salesFlow?.pricingReady === true && priceList.length > 0 && ((salesFlow.step === 'pricing_process' && !salesFlow.pricingSent) || isCommercialVideoPriceRequested(intakeContext?.requestInput.inboundMessage || '')) && parsed?.stop_reason !== 'opt_out' && parsed?.stop_reason !== 'refusal';
     if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content, pricing?.ownerVerifiedCatalog ? pricing.bonusVideoSeconds : undefined)) {
         throw new Error('Unauthorized free personalized video offer');
     }
@@ -534,7 +534,7 @@ function parseChatbotPlan(
     const allowMedia = !commercialIntake || salesFlow?.step !== 'complete' || isCommercialVideoSampleRequested(intakeContext?.requestInput.inboundMessage || '');
     const messages = commercialIntake && !detectedStopReason ? renderCommercialVideoMessages({
         parts: rawMessages.length > 0 ? rawMessages : [messageContent], details: collectedDetails,
-        contactName: intakeContext?.contactName, salesFlow, hasSample, repeatForm: parsed?.intake_action === 'send_form',
+        contactName: intakeContext?.contactName, salesFlow, hasSample,
         pricing, priceList,
         action: intakeAction || 'none', customerMessage: intakeContext?.requestInput.inboundMessage, requestType: request?.request_type, formPreviouslySent: intakeContext?.formPreviouslySent,
         answerRequested: /\?|\b(?:magkano|price|presyo|bayad|how|what|where|when|why|which|can|does|pwede|puwede|paano|gaano|ilang|meron|kasama)\b/i.test(intakeContext?.requestInput.inboundMessage || ''),
@@ -1141,7 +1141,7 @@ export async function generateChatbotFollowUp(input: {
         `You are writing scheduled follow-up number ${input.sequenceNumber} (${input.scheduleLabel}) for ${contactName} on behalf of ${pageName}. ` +
         'This customer has not replied. First read the full conversation from oldest to newest. Identify their latest request, the specific product or service they care about, answered questions, objections, constraints, promised next steps, and their language and tone. ' +
         'Then write a fresh follow-up that continues the exact sales conversation. Naturally reference at least one specific, verified conversation detail. Do not restart the sales flow, send a generic check-in, repeat a greeting, repeat an answered question, or ask for a detail already collected. ' +
-        (commercialIntake ? 'Forms and relevant existing samples may repeat when useful. Do not repeat pitches or near-identical question/reminder construction. Never invent facts or claim to be human.\n\n' :
+        (commercialIntake ? 'Do not resend a delivered form, price list or process because the customer requested it earlier. Silence is not a new request. Continue with one brief unresolved topic and do not repeat pitches or near-identical question/reminder construction. Never invent facts or claim to be human.\n\n' :
         'Never reuse or closely paraphrase a previous Page message, never invent facts, and do not claim to be human.\n\n') +
         `LATEST CUSTOMER MESSAGE:\n${latestCustomerMessage}\n\n` +
         `VERIFIED DETAILS ALREADY COLLECTED:\n${JSON.stringify(collectedDetails)}\n\n` +
@@ -1186,7 +1186,7 @@ export async function generateChatbotFollowUp(input: {
         (commercialIntake ? commercialVideoPolicyPrompt(collectedDetails) +
             commercialVideoSalesFlowPrompt(resolveCommercialVideoSalesFlow({ history: input.history, pageId: input.pageId, details: collectedDetails, hasClearRequest: intakeRequest?.has_clear_request, requestType: intakeRequest?.request_type }), input.contactName) +
             `Verified customer request: ${JSON.stringify(intakeRequest)}. Prior full form sent: ${formPreviouslySent}. ` +
-            'Keep the follow-up personalized to the unresolved topic. Set intake_action=send_form for a useful prefilled form reminder; do not resend a blank form after completed collection. Vary question construction, not just politeness.' : '');
+            'Keep the follow-up personalized to one unresolved topic. Do not use intake_action=send_form to repeat an already delivered form. Do not replay an earlier price or process question as a fresh customer request. Vary question construction, not just politeness.' : '');
     const user = 'Create the personalized follow-up now using only the verified conversation, collected details, Page instructions, and Page knowledge above.';
     const model = input.config.model || process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL;
     const messages = [{ role: 'system' as const, content: system }, ...history, { role: 'user' as const, content: user }];
@@ -1227,7 +1227,7 @@ export async function generateChatbotFollowUp(input: {
                 details: collectedDetails, hasClearRequest: intakeRequest?.has_clear_request, requestType: intakeRequest?.request_type }) : undefined;
             const pricing = getCommercialVideoPricing(knowledge, followUpFlow?.durationSeconds || null);
             const priceList = getCommercialVideoPriceList(knowledge);
-            const canonicalPricing = followUpFlow?.pricingReady === true && priceList.length > 0 && (followUpFlow.step === 'pricing_process' || isCommercialVideoPriceRequested(latestCustomerMessage));
+            const canonicalPricing = followUpFlow?.pricingReady === true && priceList.length > 0 && !followUpFlow.pricingSent && (followUpFlow.step === 'pricing_process' || isCommercialVideoPriceRequested(latestCustomerMessage));
             if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.join('\n'), pricing?.ownerVerifiedCatalog ? pricing.bonusVideoSeconds : undefined)) throw new Error('Unauthorized free personalized video offer');
             if (commercialIntake && !canonicalPricing && hasForbiddenFreePreproductionCharge(unsanitizedMessages.join('\n'))) throw new Error('Unauthorized charge or quote for free concept/script');
             const rawMessages = unsanitizedMessages
@@ -1237,7 +1237,7 @@ export async function generateChatbotFollowUp(input: {
             const cappedRawMessages = capCombinedMessageLength(rawMessages, FOLLOW_UP_MAX_CHARS);
             if (followUpFlow?.step === 'sample') ensureCommercialVideoSampleSelection(parsed, knowledge, followUpFlow.business);
             const messages = commercialIntake ? renderCommercialVideoMessages({
-                contactName: input.contactName, customerMessage: latestCustomerMessage, repeatForm: parsed.intake_action === 'send_form',
+                contactName: input.contactName, customerMessage: latestCustomerMessage, followUp: true, answerRequested: false,
                 pricing, priceList,
                 salesFlow: followUpFlow,
                 hasSample: hasVerifiedCommercialVideoSample(parsed, knowledge),

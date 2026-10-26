@@ -1,3 +1,5 @@
+import { splitConversationalCopy } from '@/lib/chatbot-message-copy';
+
 export type ChatbotChoice = { title: string; payload: string };
 export type ChatbotMessageControls = { message_index: number; buttons?: ChatbotChoice[]; quick_replies?: ChatbotChoice[] };
 export const COMMERCIAL_FORM_PAYLOAD = 'VEO:FORM:2';
@@ -19,7 +21,7 @@ export function resolveChatbotAction(payload: unknown): { title: string; message
 /** Attach controls to the actual question, never to a long pricing/process/form block. */
 export function getCommercialVideoMessageControls(messages: string[]): ChatbotMessageControls[] {
     const message_index = messages.length - 1;
-    const question = messages[message_index] || '';
+    const question = splitConversationalCopy(messages[message_index] || '').at(-1) || '';
     if (!/\?\s*$/.test(question)) return [];
     if (/(?:ilang|gaano|how|preferred|anong|ano|may).{0,75}(?:seconds?|segundo|duration|haba|length|katagal)|(?:duration|length).{0,45}\?/i.test(question)) {
         return [{ message_index, quick_replies: COMMERCIAL_DURATION_CHOICES }];
