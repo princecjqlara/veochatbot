@@ -31,7 +31,7 @@ describe('webhook reconnect protection', () => {
         await subscribePageToAppWebhook('page', 'token', fields);
         const body = new URLSearchParams(fetchMock.mock.calls[0][1].body);
         const saved = body.get('subscribed_fields')!.split(',');
-        expect(saved).toEqual(expect.arrayContaining([...fields, 'messages', 'messaging_postbacks', 'message_echoes']));
+        expect(saved).toEqual(expect.arrayContaining([...fields, 'messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals']));
         expect(new Set(saved).size).toBe(saved.length);
     });
 });

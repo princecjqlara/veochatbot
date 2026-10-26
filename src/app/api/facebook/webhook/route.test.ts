@@ -3,6 +3,8 @@ import type { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
     getSupabaseAdmin: vi.fn(),
+    captureContactAdSource: vi.fn().mockResolvedValue(undefined),
+    captureStandaloneAdReferral: vi.fn().mockResolvedValue(undefined),
     verifyWebhookSignature: vi.fn(),
     generateVerifyToken: vi.fn(),
     sendMessage: vi.fn(),
@@ -22,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/supabase', () => ({
     getSupabaseAdmin: mocks.getSupabaseAdmin
 }));
+vi.mock('@/lib/ad-attribution', () => ({ captureContactAdSource: mocks.captureContactAdSource, captureStandaloneAdReferral: mocks.captureStandaloneAdReferral }));
 
 vi.mock('@/lib/facebook', () => ({
     verifyWebhookSignature: mocks.verifyWebhookSignature,
@@ -714,6 +717,14 @@ describe('POST /api/facebook/webhook', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+    });
+
+    it('retains a bare ad referral without creating a lead, welcoming, or replying', async () => {
+        const supabase = createSupabaseMock(); mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        const referral = { sender: { id: 'contact_psid_1' }, recipient: { id: 'fb_page_1' }, timestamp: 1700000000000, referral: { source: 'ADS', ad_id: '123' } };
+        const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [referral] }] }));
+        expect(response.status).toBe(200); expect(mocks.captureStandaloneAdReferral).toHaveBeenCalledWith(supabase, 'page_row_1', 'fb_page_1', referral);
+        expect(mocks.getUserProfile).not.toHaveBeenCalled(); expect(mocks.sendMessage).not.toHaveBeenCalled(); expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
     });
 
     it('creates new contacts and enriches profile from Facebook on first inbound message', async () => {

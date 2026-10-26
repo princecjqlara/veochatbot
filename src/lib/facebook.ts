@@ -355,14 +355,14 @@ export async function getUserProfile(
 export async function subscribePageToAppWebhook(
     pageId: string,
     pageAccessToken: string,
-    subscribedFields: string[] = ['messages', 'messaging_postbacks', 'message_echoes']
+    subscribedFields: string[] = ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals']
 ): Promise<void> {
     const formData = new URLSearchParams();
     formData.set('access_token', pageAccessToken);
 
     // Every reconnect/sync must retain the echoes used to stop human handoffs,
     // including callers that pass a legacy two-field list or an empty list.
-    formData.set('subscribed_fields', [...new Set([...subscribedFields, 'messages', 'messaging_postbacks', 'message_echoes'])].join(','));
+    formData.set('subscribed_fields', [...new Set([...subscribedFields, 'messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'])].join(','));
 
     const response = await fetch(
         `${FACEBOOK_GRAPH_URL}/${pageId}/subscribed_apps`,

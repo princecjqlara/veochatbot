@@ -49,6 +49,7 @@ import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, find
 import { evaluateCommercialVideoIntake, isCommercialVideoIntake } from '@/lib/chatbot-policy';
 import { captureCommercialVideoFormProgress } from '@/lib/chatbot-form-progress';
 import { applyPricingOffer, assertPricingOfferActive, beginPricingDelivery, getContactPricingCatalog, getPricingQuoteContext, recordPricingDelivery, releasePricingOffer, renderPricingOffer, reservePricingOffer, type PricingOffer } from '@/lib/chatbot-pricing';
+import { captureContactAdSource, captureStandaloneAdReferral } from '@/lib/ad-attribution';
 
 export const maxDuration = 300;
 
@@ -431,6 +432,12 @@ export async function POST(request: NextRequest) {
                                 continue;
                             }
 
+                        if (eventType === 'referral') {
+                            try { await captureStandaloneAdReferral(supabase, page.id, pageId, event); }
+                            catch { hadCriticalFailure = true; logWarn('Ad referral touch could not be saved', { pageId }); }
+                            continue;
+                        }
+
                         let interactionTime = new Date();
                         const rawTimestamp = event.timestamp;
                         if (rawTimestamp !== undefined && rawTimestamp !== null) {
@@ -642,6 +649,18 @@ export async function POST(request: NextRequest) {
                         }
 
                         processedContacts += 1;
+                        if (contact) {
+                            try {
+                                await captureContactAdSource(supabase, { pageId: page.id, pageFacebookId: pageId,
+                                    contactId: contact.id, event, priorFirstAt: existingContact?.first_interaction_at,
+                                    knownConversation: resolvedConversation });
+                            } catch {
+                                // Ask Meta to retry the signed event; existing reply claims
+                                // remain responsible for avoiding duplicate bot deliveries.
+                                hadCriticalFailure = true;
+                                logWarn('Ad-source evidence could not be saved', { pageId, eventType });
+                            }
+                        }
                         let welcomeMessageSent = false;
                         let conversationHistoryUnavailable = false;
                         const clickedChatbotAction = resolveChatbotAction(event.message?.quick_reply?.payload || event.postback?.payload);
