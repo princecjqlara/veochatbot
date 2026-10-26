@@ -18,12 +18,11 @@ export default function AdQualityPage() {
     const [report, setReport] = useState<Report | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(false), [automatic, setAutomatic] = useState(true), [notice, setNotice] = useState(''), [search, setSearch] = useState(''), [sort, setSort] = useState('count');
     const [detail, setDetail] = useState<{ page: ReportPage['page']; ad: AdRow; filter: string } | null>(null), [contacts, setContacts] = useState<Contact[]>([]), [contactTotal, setContactTotal] = useState(0), [offset, setOffset] = useState(0), [detailError, setDetailError] = useState(''), [detailLoading, setDetailLoading] = useState(false);
     const generation = useRef(0), detailGeneration = useRef(0), inFlight = useRef(false);
-    useEffect(() => { fetch('/api/pages').then(r => r.json()).then(r => setPages(r.pages || [])).catch(() => setError('Could not load your Pages')); }, []);
     const params = useCallback(() => { const q = new URLSearchParams({ range }); if (pageId !== 'all') q.set('pageId', pageId); if (range === 'custom') { q.set('from', from); q.set('to', to); } return q; }, [pageId, range, from, to]);
     const load = useCallback(async (force = false) => {
         if (inFlight.current && !force) return;
         const issue = ++generation.current; inFlight.current = true; setLoading(true);
-        try { const res = await fetch('/api/ad-quality?' + params(), { cache: 'no-store' }), data = await res.json(); if (!res.ok) throw Error(data.error || 'Could not load ad quality'); if (issue !== generation.current) return; setReport(data); setError(''); }
+        try { const res = await fetch('/api/ad-quality?' + params(), { cache: 'no-store' }), data = await res.json(); if (!res.ok) throw Error(data.error || 'Could not load ad quality'); if (issue !== generation.current) return; setReport(data); setPages(previous => [...new Map([...previous, ...data.pages.map((p: ReportPage) => p.page)].map(p => [p.id, p])).values()].sort((a, b) => a.name.localeCompare(b.name))); setError(''); }
         catch (e) { if (issue === generation.current) setError((e as Error).message); }
         finally { if (issue === generation.current) { inFlight.current = false; setLoading(false); } }
     }, [params]);
