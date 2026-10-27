@@ -287,7 +287,7 @@ export async function processDueChatbotFollowUps(input: {
             };
             const eligibility = await Promise.all([
                 supabase.from('pages').select('id, name, fb_page_id, access_token').eq('id', job.page_id).maybeSingle(),
-                supabase.from('contacts').select('id, page_id, psid, name, best_contact_hour, first_interaction_at, last_interaction_at, last_inbound_at, pipeline_stage,pipeline_stage_source').eq('id', job.contact_id).maybeSingle(),
+                supabase.from('contacts').select('id, page_id, psid, name, best_contact_hour, first_interaction_at, last_interaction_at, last_inbound_at, pipeline_stage,pipeline_stage_source,chatbot_enabled').eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_configs').select('*').eq('page_id', job.page_id).maybeSingle(),
                 supabase.from('chatbot_contact_states').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle()
             ]);
@@ -302,7 +302,7 @@ export async function processDueChatbotFollowUps(input: {
                 job.anchor_inbound_at,
                 now
             );
-            if (!page?.access_token || !contact?.psid || !config?.enabled || !config?.follow_up_enabled ||
+            if (!page?.access_token || !contact?.psid || contact.chatbot_enabled === false || !config?.enabled || !config?.follow_up_enabled ||
                 !isChatbotContactAllowed(config, job.contact_id) ||
                 state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source, config) ||
                 (isCommercialVideoIntake(config) && ((job.automation_epoch || 0) !== (state?.automation_epoch || 0) ||
@@ -557,7 +557,7 @@ export async function processDueChatbotFollowUps(input: {
             // AI generation can take seconds. A stage change or new inbound
             // during that time must invalidate this job before any delivery.
             const freshEligibility = await Promise.all([
-                supabase.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at').eq('page_id', job.page_id).eq('id', job.contact_id).maybeSingle(),
+                supabase.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at,chatbot_enabled').eq('page_id', job.page_id).eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_contact_states').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_configs').select('enabled,follow_up_enabled,follow_up_first_day_mode,trial_mode_enabled,trial_contact_id,commercial_video_intake_enabled,policy_revision').eq('page_id', job.page_id).maybeSingle()
             ]);
@@ -565,7 +565,7 @@ export async function processDueChatbotFollowUps(input: {
                 if (lookup.error) throw new Error(lookup.error.message || 'Could not recheck follow-up eligibility');
             }
             const [freshContact, freshState, freshConfig] = freshEligibility.map(lookup => lookup.data);
-            if (!freshContact || !freshConfig?.enabled || !freshConfig.follow_up_enabled ||
+            if (!freshContact || freshContact.chatbot_enabled === false || !freshConfig?.enabled || !freshConfig.follow_up_enabled ||
                 !isChatbotContactAllowed(freshConfig, job.contact_id) || freshState?.status === 'stopped' ||
                 isPipelineClosedForAutomation(freshContact.pipeline_stage, freshContact.pipeline_stage_source, freshConfig) ||
                 (isCommercialVideoIntake(freshConfig) && ((job.automation_epoch || 0) !== (freshState?.automation_epoch || 0) ||

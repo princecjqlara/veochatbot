@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { PaginatedResponse, Contact } from '@/types';
 import { normalizeContactName } from '../../../../../lib/contact-names';
+import { contactControls } from '@/lib/contact-controls';
 
 type DateFilterMode = 'include' | 'exclude';
 type HumanAgentSort = 'expiring' | 'latest' | 'name_asc' | 'name_desc';
@@ -67,6 +68,8 @@ export async function GET(
         const page = parseInt(searchParams.get('page') || '1');
         const pageSize = parseInt(searchParams.get('pageSize') || '25');
         const search = searchParams.get('search') || '';
+        const botFilter = searchParams.get('bot') || 'all';
+        if (!['all','on','off'].includes(botFilter)) return NextResponse.json({error:'Invalid bot filter'},{status:400});
         // Support both multi-tag (comma-separated) and legacy single-tag params
         const tagIdsRaw = searchParams.get('tagIds') || searchParams.get('tagId') || '';
         const excludeTagIdsRaw = searchParams.get('excludeTagIds') || searchParams.get('excludeTagId') || '';
@@ -134,6 +137,7 @@ export async function GET(
             ? contactsTable.select(contactSelect, { count: 'exact' })
             : contactsTable.select(contactSelect);
         query = query.eq('page_id', pageId);
+        if (botFilter !== 'all') query = query.eq('chatbot_enabled', botFilter === 'on');
 
         if (humanAgentWindowOnly) {
             if (humanAgentSort === 'name_asc' || humanAgentSort === 'name_desc') {
@@ -312,6 +316,12 @@ export async function GET(
             contact_tags: undefined
         })) || [];
 
+        if (searchParams.get('includeControls') === 'true' && transformedContacts.length) {
+            try {
+                const controls = await contactControls(supabase,pageId,transformedContacts.map(c=>c.id));
+                for (const contact of transformedContacts) Object.assign(contact,controls.get(contact.id)||{});
+            } catch { logWarn('Contact projections temporarily unavailable'); }
+        }
         logInfo('Returning contacts response', {
             returnedItems: transformedContacts.length,
             totalMatched: count || 0,

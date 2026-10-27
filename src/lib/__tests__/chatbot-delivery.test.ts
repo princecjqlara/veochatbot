@@ -26,6 +26,16 @@ function fixture(stage = 'engaged', source = 'chatbot', options: { state?: Recor
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe('terminal delivery stops', () => {
+    it('blocks a disabled contact for AI and independent automatic replies',async()=>{
+        const f=fixture();Object.assign(f.contact,{chatbot_enabled:false});
+        await expect(assertChatbotDeliveryAllowed(f.input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+        await expect(assertMessengerAutomationDeliveryAllowed(f.input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+        expect(mocks.getConversationForPsid).not.toHaveBeenCalled();
+    });
+    it('rechecks a switch-off that happens while a history read is in flight',async()=>{
+        const f=fixture();mocks.getConversationForPsid.mockImplementation(async()=>{Object.assign(f.contact,{chatbot_enabled:false});return{messages:{data:[]}};});
+        await expect(assertChatbotDeliveryAllowed(f.input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+    });
     it.each(['not_qualified', 'converted'])('blocks non-AI automation for saved %s stages', async stage => {
         await expect(assertMessengerAutomationDeliveryAllowed(fixture(stage).input))
             .rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);

@@ -21,6 +21,7 @@ import {
     Image as ImageIcon
 } from 'lucide-react';
 import Pagination from '@/components/Pagination';
+import ContactBotProjection from '@/components/ContactBotProjection';
 import Modal from '@/components/Modal';
 import { Contact, Tag as TagType, Page, PaginatedResponse } from '@/types';
 import {
@@ -325,6 +326,7 @@ export default function ContactsPage() {
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
     const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>('include');
+    const [botFilter, setBotFilter] = useState('all');
 
     // Selection
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -428,7 +430,7 @@ export default function ContactsPage() {
             fetchContacts();
             fetchTags();
         }
-    }, [selectedPageId, page, pageSize, search, selectedTagFilters, excludedTagFilters, dateFrom, dateTo, dateFilterMode]);
+    }, [selectedPageId, page, pageSize, search, selectedTagFilters, excludedTagFilters, dateFrom, dateTo, dateFilterMode, botFilter]);
 
     useEffect(() => {
         if (!selectedPageId) return;
@@ -569,6 +571,8 @@ export default function ContactsPage() {
                 page: page.toString(),
                 pageSize: pageSize.toString(),
                 includeCount: silent ? 'false' : 'true',
+                includeControls: 'true',
+                bot: botFilter,
                 ...(search && { search }),
                 ...(selectedTagFilters.size > 0 && { tagIds: [...selectedTagFilters].join(',') }),
                 ...(excludedTagFilters.size > 0 && { excludeTagIds: [...excludedTagFilters].join(',') }),
@@ -602,7 +606,7 @@ export default function ContactsPage() {
                 setLoading(false);
             }
         }
-    }, [selectedPageId, page, pageSize, search, selectedTagFilters, excludedTagFilters, dateFrom, dateTo, dateFilterMode]);
+    }, [selectedPageId, page, pageSize, search, selectedTagFilters, excludedTagFilters, dateFrom, dateTo, dateFilterMode, botFilter]);
 
     useEffect(() => {
         if (!selectedPageId) return;
@@ -724,6 +728,7 @@ export default function ContactsPage() {
                     page: currentPage.toString(),
                     pageSize: pageSize.toString(),
                     sendable: 'true', // Only fetch contacts with valid PSIDs for messaging
+                    bot: botFilter,
                     ...(search && { search }),
                     ...(selectedTagFilters.size > 0 && { tagIds: [...selectedTagFilters].join(',') }),
                     ...(excludedTagFilters.size > 0 && { excludeTagIds: [...excludedTagFilters].join(',') }),
@@ -1121,7 +1126,7 @@ export default function ContactsPage() {
 
             const normalizedManualBatchSize = Math.max(1, Math.floor(Number(manualBatchSize) || 5000));
             const normalizedManualBatchNumber = Math.max(1, Math.floor(Number(manualBatchNumber) || 1));
-            const selection = selectAllMode
+            const selection = selectAllMode && botFilter === 'all'
                 ? {
                     mode: 'all',
                     excludedContactIds: Array.from(excludedIds),
@@ -1144,7 +1149,7 @@ export default function ContactsPage() {
                 }
                 : {
                     mode: 'specific',
-                    contactIds: Array.from(selectedIds),
+                    contactIds: await getSelectedContactIds(),
                     ...(manualBatchEnabled
                         ? {
                             slice: {
@@ -2406,6 +2411,10 @@ export default function ContactsPage() {
                 </div>
             )}
 
+            <div className="border border-black p-3 mb-4 flex flex-wrap gap-3 items-center">
+                <label className="text-sm">Contact bot switch <select aria-label="Contact bot filter" value={botFilter} onChange={e => { setBotFilter(e.target.value); setPage(1); clearSelection(); }} className="border border-black p-2 ml-2"><option value="all">All contacts</option><option value="on">Bot permission ON</option><option value="off">Bot permission OFF</option></select></label>
+                <span className="text-xs text-gray-600">ON permits replies; Page settings, handoffs and closed stages still apply. Projections are experimental.</span>
+            </div>
             {/* Table */}
             <div className="overflow-x-auto border border-black mb-4">
                 <table className="table-wireframe">
@@ -2424,18 +2433,19 @@ export default function ContactsPage() {
                             <th>Best Time</th>
                             <th>Last Active</th>
                             <th>First Message</th>
+                            <th>Bot permission / projection</th>
                         </tr>
                     </thead>
                     <tbody className="bg-white">
                         {loading ? (
                             <tr>
-                                <td colSpan={6} className="text-center py-12">
+                                <td colSpan={7} className="text-center py-12">
                                     <div className="animate-spin w-8 h-8 border-2 border-black border-t-transparent rounded-full mx-auto" />
                                 </td>
                             </tr>
                         ) : contacts.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="text-center py-20">
+                                <td colSpan={7} className="text-center py-20">
                                     <User className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                                     <p className="text-lg font-bold uppercase">No contacts found</p>
                                     <p className="font-mono text-xs text-gray-500 mt-2">
@@ -2572,6 +2582,7 @@ export default function ContactsPage() {
                                                     : '—'}
                                         </div>
                                     </td>
+                                    <td><ContactBotProjection pageId={selectedPageId || contact.page_id} contactId={contact.id} name={contact.name || contact.psid} enabled={contact.chatbot_enabled !== false} initialBot={contact.bot_control} initialProjection={contact.conversion_projection} onChanged={() => void fetchContacts()} /></td>
                                 </tr>
                             ))
                         )}

@@ -2,12 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { BarChart3, RefreshCw, X } from 'lucide-react';
+import ContactBotProjection from '@/components/ContactBotProjection';
 import { FACEBOOK_PERMISSION_SCOPE } from '@/lib/facebook-permissions';
 
 type AdRow = { ad_id: string | null; ad_name: string | null; ad_title: string | null; campaign_name: string | null; inquiries: number; qualified: number; not_qualified: number; pending: number; opted_out: number; crm_converted: number; order_created: number; not_qualified_rate: number | null; not_qualified_assessed_rate: number | null; photo_url: string | null; post_id: string | null; creative_id: string | null; legacy_dates: number };
 type ReportPage = { page: { id: string; name: string; fb_page_id: string }; inquiries: number; attributed: number; not_qualified: number; qualified: number; pending: number; legacy_dates: number; without_inquiry_timestamp: number; tracking_started_at: string; rows: AdRow[] };
 type Report = { pages: ReportPage[]; generated_at: string; range: { from: string | null; to: string } };
-type Contact = { id: string; name: string | null; psid: string; first_inquiry_at: string; pipeline_stage: string; pipeline_stage_source: string; pipeline_stage_updated_at: string; inquiry_basis: string; first_message_id: string | null; origin_evidence_key: string | null };
+type Contact = { id: string; name: string | null; psid: string; first_inquiry_at: string; pipeline_stage: string; pipeline_stage_source: string; pipeline_stage_updated_at: string; inquiry_basis: string; first_message_id: string | null; origin_evidence_key: string | null; chatbot_enabled?: boolean; bot_control?: any; conversion_projection?: any };
 const n = (v: number) => Number(v).toLocaleString(), pct = (v: number | null) => v == null ? 'N/A' : `${(Number(v) * 100).toFixed(2)}%`;
 const when = (v: string) => new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(v));
 const initialDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -17,6 +18,7 @@ export default function AdQualityPage() {
     const [range, setRange] = useState('today'), [from, setFrom] = useState(initialDate), [to, setTo] = useState(initialDate);
     const [report, setReport] = useState<Report | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(false), [automatic, setAutomatic] = useState(true), [notice, setNotice] = useState(''), [search, setSearch] = useState(''), [sort, setSort] = useState('count');
     const [detail, setDetail] = useState<{ page: ReportPage['page']; ad: AdRow; filter: string } | null>(null), [contacts, setContacts] = useState<Contact[]>([]), [contactTotal, setContactTotal] = useState(0), [offset, setOffset] = useState(0), [detailError, setDetailError] = useState(''), [detailLoading, setDetailLoading] = useState(false);
+    const [botFilter, setBotFilter] = useState('all');
     const generation = useRef(0), detailGeneration = useRef(0), inFlight = useRef(false);
     const params = useCallback(() => { const q = new URLSearchParams({ range }); if (pageId !== 'all') q.set('pageId', pageId); if (range === 'custom') { q.set('from', from); q.set('to', to); } return q; }, [pageId, range, from, to]);
     const load = useCallback(async (force = false) => {
@@ -34,17 +36,17 @@ export default function AdQualityPage() {
     }, [automatic, load]);
     const loadContacts = useCallback(async () => {
         if (!detail) return;
-        const issue = ++detailGeneration.current; setDetailLoading(true); setDetailError(''); setContacts([]);
-        const q = params(); q.set('pageId', detail.page.id); q.set('offset', String(offset));
+        const issue = ++detailGeneration.current; setDetailLoading(true); setDetailError('');
+        const q = params(); q.set('pageId', detail.page.id); q.set('offset', String(offset)); q.set('bot', botFilter);
         if (detail.ad.ad_id) q.set('adId', detail.ad.ad_id); else q.set('unknown', 'true');
         if (detail.filter !== 'all') q.set('stage', detail.filter);
         try { const response = await fetch('/api/ad-quality/contacts?' + q, { cache: 'no-store' }), data = await response.json(); if (!response.ok) throw Error(data.error || 'Could not load contacts'); if (issue === detailGeneration.current) { setContacts(data.contacts); setContactTotal(data.total); } }
         catch (e) { if (issue === detailGeneration.current) setDetailError((e as Error).message); }
         finally { if (issue === detailGeneration.current) setDetailLoading(false); }
-    }, [detail, offset, params]);
-    useEffect(() => { void loadContacts(); }, [loadContacts]);
+    }, [detail, offset, params, botFilter]);
+    useEffect(() => { setContacts([]); void loadContacts(); }, [loadContacts]);
     useEffect(() => { if (!automatic || !detail) return; const timer = setInterval(() => { if (!document.hidden) void loadContacts(); }, 15_000); return () => clearInterval(timer); }, [automatic, detail, loadContacts]);
-    const open = (page: ReportPage['page'], ad: AdRow, filter: string) => { setOffset(0); setContacts([]); setContactTotal(0); setDetail({ page, ad, filter }); };
+    const open = (page: ReportPage['page'], ad: AdRow, filter: string) => { setOffset(0); setContacts([]); setContactTotal(0); setBotFilter('all'); setDetail({ page, ad, filter }); };
     const close = () => { detailGeneration.current++; setDetail(null); };
     const resolve = async () => {
         setNotice('Loading ad names from your connected Facebook account…');
@@ -83,7 +85,8 @@ export default function AdQualityPage() {
         </>}
         {detail && <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3" onClick={close}><div role="dialog" aria-modal="true" aria-label="Ad contacts" className="bg-white border-2 border-black w-full max-w-6xl max-h-[90vh] overflow-auto p-4" onClick={e => e.stopPropagation()}><div className="flex justify-between gap-3"><div><h2 className="text-lg font-bold">{detail.ad.ad_name || detail.ad.ad_title || detail.ad.ad_id || 'Unknown originating ad'}</h2><p className="text-sm">{detail.page.name} · first-inquiry cohort in selected dates</p></div><button aria-label="Close contacts" onClick={close}><X /></button></div>
             <label className="block my-3 text-sm">Current recorded stage<select aria-label="Contact stage" className="border border-black p-2 ml-2" value={detail.filter} onChange={e => { setOffset(0); setDetail({ ...detail, filter: e.target.value }); }}><option value="all">All stages</option>{['new', 'engaged', 'collecting_details', 'qualified', 'not_qualified', 'order_created', 'converted', 'opted_out'].map(s => <option key={s} value={s}>{s.replaceAll('_', ' ')}</option>)}</select></label>
-            {detailError && <p role="alert" className="text-red-800">{detailError}</p>}{detailLoading ? <p>Loading contacts…</p> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Contact', 'First inquiry PHT', 'Current stage / source', 'Stage updated PHT', 'Inquiry evidence'].map(h => <th key={h} className="p-2 text-left border-b">{h}</th>)}</tr></thead><tbody>{contacts.map(c => <tr key={c.id} className="border-b"><td className="p-2"><a className="underline" target="_blank" rel="noopener noreferrer" href={`https://business.facebook.com/latest/inbox/all?asset_id=${encodeURIComponent(detail.page.fb_page_id)}&selected_item_id=${encodeURIComponent(c.psid)}`}>{c.name || c.psid}</a><p className="text-xs">{c.psid}</p></td><td className="p-2 whitespace-nowrap">{when(c.first_inquiry_at)}</td><td className="p-2">{c.pipeline_stage.replaceAll('_', ' ')}<p className="text-xs">{c.pipeline_stage_source}</p></td><td className="p-2 whitespace-nowrap">{when(c.pipeline_stage_updated_at)}</td><td className="p-2"><span>{c.inquiry_basis.replaceAll('_', ' ')}</span>{c.first_message_id && <p className="text-xs break-all max-w-xs">{c.first_message_id}</p>}</td></tr>)}{!contacts.length && <tr><td colSpan={5} className="p-3">No contacts match this stage.</td></tr>}</tbody></table></div>}
+            <label className="block my-3 text-sm">Contact bot switch <select aria-label="Ad contacts bot filter" className="border border-black p-2 ml-2" value={botFilter} onChange={e => { setOffset(0); setBotFilter(e.target.value); }}><option value="all">All contacts</option><option value="on">Bot permission ON</option><option value="off">Bot permission OFF</option></select></label>
+            {detailError && <p role="alert" className="text-red-800">{detailError}</p>}{detailLoading && !contacts.length ? <p>Loading contacts…</p> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Contact', 'First inquiry PHT', 'Current stage / source', 'Stage updated PHT', 'Inquiry evidence', 'Bot permission / projection'].map(h => <th key={h} className="p-2 text-left border-b">{h}</th>)}</tr></thead><tbody>{contacts.map(c => <tr key={c.id} className="border-b"><td className="p-2"><a className="underline" target="_blank" rel="noopener noreferrer" href={`https://business.facebook.com/latest/inbox/all?asset_id=${encodeURIComponent(detail.page.fb_page_id)}&selected_item_id=${encodeURIComponent(c.psid)}`}>{c.name || c.psid}</a><p className="text-xs">{c.psid}</p></td><td className="p-2 whitespace-nowrap">{when(c.first_inquiry_at)}</td><td className="p-2">{c.pipeline_stage.replaceAll('_', ' ')}<p className="text-xs">{c.pipeline_stage_source}</p></td><td className="p-2 whitespace-nowrap">{when(c.pipeline_stage_updated_at)}</td><td className="p-2"><span>{c.inquiry_basis.replaceAll('_', ' ')}</span>{c.first_message_id && <p className="text-xs break-all max-w-xs">{c.first_message_id}</p>}</td><td className="p-2"><ContactBotProjection pageId={detail.page.id} contactId={c.id} name={c.name || c.psid} enabled={c.chatbot_enabled !== false} initialBot={c.bot_control} initialProjection={c.conversion_projection} onChanged={() => void loadContacts()} /></td></tr>)}{!contacts.length && <tr><td colSpan={6} className="p-3">No contacts match this stage.</td></tr>}</tbody></table></div>}
             <div className="flex flex-wrap gap-4 items-center mt-4 text-sm"><button className="border border-black p-2 disabled:opacity-40" disabled={offset === 0 || detailLoading} onClick={() => setOffset(offset - 25)}>Previous</button><span>{n(contactTotal)} contacts · page {Math.floor(offset / 25) + 1}</span><button className="border border-black p-2 disabled:opacity-40" disabled={offset + 25 >= contactTotal || detailLoading} onClick={() => setOffset(offset + 25)}>Next</button></div>
         </div></div>}
     </div>;

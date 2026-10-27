@@ -25,7 +25,7 @@ export async function assertChatbotDeliveryAllowed(input: {
     const enforceChatbotSettings = input.enforceChatbotSettings !== false;
     const checkSavedEligibility = async () => {
         const [contactResult, configResult, state, jobResult] = await Promise.all([
-            db.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at')
+            db.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at,chatbot_enabled')
                 .eq('page_id', input.pageId).eq('id', input.contactId).maybeSingle(),
             enforceChatbotSettings ? db.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id,commercial_video_intake_enabled,policy_revision')
                 .eq('page_id', input.pageId).maybeSingle() : null,
@@ -38,7 +38,7 @@ export async function assertChatbotDeliveryAllowed(input: {
         if (jobResult?.error) throw new Error(jobResult.error.message);
         const contact = contactResult.data;
         const config = configResult?.data;
-        if (!contact || (enforceChatbotSettings && (!config?.enabled || !isChatbotContactAllowed(config, input.contactId))) ||
+        if (!contact || contact.chatbot_enabled === false || (enforceChatbotSettings && (!config?.enabled || !isChatbotContactAllowed(config, input.contactId))) ||
             (input.followUpJobId && jobResult?.data?.status !== 'processing') ||
             (input.followUp && enforceChatbotSettings && !config?.follow_up_enabled) ||
             state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source, config) ||

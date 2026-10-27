@@ -4,6 +4,7 @@ import { userHasPageAccess } from '@/lib/page-access';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { adQualityRange } from '@/lib/ad-quality-range';
 import { CONTACT_PIPELINE_STAGES } from '@/lib/contact-pipeline';
+import { contactControls } from '@/lib/contact-controls';
 
 export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
@@ -15,13 +16,17 @@ export async function GET(request: NextRequest) {
     let range;
     try { range = adQualityRange(q); } catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 400 }); }
     const adId = q.get('adId'), stage = q.get('stage');
+    const bot=q.get('bot')||'all';
+    if(!['all','on','off'].includes(bot))return NextResponse.json({error:'Invalid bot filter'},{status:400});
     if (adId && !/^\d{1,100}$/.test(adId) || stage && !CONTACT_PIPELINE_STAGES.includes(stage as any)) return NextResponse.json({ error: 'Invalid ad or stage filter' }, { status: 400 });
     const offset = Number(q.get('offset') || '0');
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) return NextResponse.json({ error: 'Invalid pagination' }, { status: 400 });
-    const { data, error } = await getSupabaseAdmin().rpc('get_ad_lead_contacts', {
+    const db=getSupabaseAdmin();
+    const { data, error } = await db.rpc('get_ad_lead_contacts_v2', {
         p_page_id: pageId, p_from: range.from, p_to: range.to, p_ad_id: adId,
-        p_unknown: q.get('unknown') === 'true', p_stage: stage, p_limit: 25, p_offset: offset
+        p_unknown: q.get('unknown') === 'true', p_stage: stage, p_bot:bot, p_limit: 25, p_offset: offset
     });
     if (error) return NextResponse.json({ error: 'Could not load ad contacts' }, { status: 503 });
+    if(data.contacts?.length){try{const controls=await contactControls(db,pageId,data.contacts.map((c:any)=>c.id));for(const c of data.contacts)Object.assign(c,controls.get(c.id)||{});}catch{/* Switch still loads its authorized status on demand. */}}
     return NextResponse.json({ ...data, range, offset, limit: 25 }, { headers: { 'Cache-Control': 'no-store' } });
 }

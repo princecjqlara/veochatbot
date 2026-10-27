@@ -482,7 +482,7 @@ export async function POST(request: NextRequest) {
                         // Check if contact exists BEFORE upsert (to detect new contacts)
                         const { data: existingContact, error: existingContactError } = await supabase
                             .from('contacts')
-                            .select('id, name, first_interaction_at, last_inbound_at, best_contact_hour, pipeline_stage, pipeline_stage_source')
+                            .select('id, name, first_interaction_at, last_inbound_at, best_contact_hour, pipeline_stage, pipeline_stage_source, chatbot_enabled')
                             .eq('page_id', page.id)
                             .eq('psid', senderId)
                             .maybeSingle();
@@ -592,7 +592,7 @@ export async function POST(request: NextRequest) {
                             .upsert(contactPayload, {
                                 onConflict: 'page_id,psid'
                             })
-                            .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source')
+                            .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source, chatbot_enabled')
                             .single();
 
                         if (
@@ -613,7 +613,7 @@ export async function POST(request: NextRequest) {
                                 .upsert(legacyContactPayload, {
                                     onConflict: 'page_id,psid'
                                 })
-                                .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source')
+                                .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source, chatbot_enabled')
                                 .single();
 
                             contact = retryResult.data;
@@ -631,7 +631,7 @@ export async function POST(request: NextRequest) {
                             const insertResult = await supabase
                                 .from('contacts')
                                 .insert(insertContactPayload)
-                                .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source')
+                                .select('id, name, best_contact_hour, pipeline_stage, pipeline_stage_source, chatbot_enabled')
                                 .single();
 
                             contact = insertResult.data;
@@ -679,7 +679,7 @@ export async function POST(request: NextRequest) {
                         const chatbotWillHandleInboundInquiry = Boolean(
                             contact &&
                             inboundChatbotConfig?.enabled &&
-                            isChatbotContactAllowed(inboundChatbotConfig, contact.id)
+                            contact.chatbot_enabled !== false && isChatbotContactAllowed(inboundChatbotConfig, contact.id)
                         );
 
                         // A contact can be new to our database while already having an
@@ -917,7 +917,7 @@ export async function POST(request: NextRequest) {
                             ) {
                                 const chatbotConfig = await loadChatbotConfig();
 
-                                if (chatbotConfig?.enabled && isChatbotContactAllowed(chatbotConfig, contact.id)) {
+                                if (chatbotConfig?.enabled && contact.chatbot_enabled !== false && isChatbotContactAllowed(chatbotConfig, contact.id)) {
                                     let chatbotState: ChatbotContactState | null = null;
                                     let chatbotConversationHistory: FacebookMessage[] = [];
                                     let liveStageStopReason: ChatbotStopReason | null = null;
@@ -1151,6 +1151,7 @@ export async function POST(request: NextRequest) {
                                                     customerText: inboundMessageText, inboundAt: interactionAt
                                                 });
                                             }
+                                            const replyAutomationEpoch = chatbotState?.automation_epoch || 0;
                                             let replyMessages: string[] = [];
                                             let collectedDetails = chatbotState?.collected_details || {};
                                             let missingDetails = getMissingChatbotDetails(
@@ -1274,7 +1275,7 @@ export async function POST(request: NextRequest) {
                                             }
 
                                             const [freshContactResult, freshState] = await Promise.all([
-                                                supabase.from('contacts').select('pipeline_stage,pipeline_stage_source')
+                                                supabase.from('contacts').select('pipeline_stage,pipeline_stage_source,chatbot_enabled')
                                                     .eq('page_id', page.id).eq('id', contact.id).maybeSingle(),
                                                 getChatbotContactState(supabase, page.id, contact.id)
                                             ]);
@@ -1283,7 +1284,7 @@ export async function POST(request: NextRequest) {
                                             const freshPipelineStop = chatbotStopReasonForPipelineStage(
                                                 freshContactResult.data.pipeline_stage, freshContactResult.data.pipeline_stage_source, chatbotConfig);
                                             const freshStateStop = getChatbotStateStopReason(freshState);
-                                            if (freshPipelineStop || (freshStateStop && freshStateStop !== 'window_expired')) {
+                                            if (freshContactResult.data.chatbot_enabled === false || (freshState?.automation_epoch || 0) !== replyAutomationEpoch || freshPipelineStop || (freshStateStop && freshStateStop !== 'window_expired')) {
                                                 throw new ChatbotDeliveryStoppedError('Chatbot stopped during reply generation; automatic reply cancelled');
                                             }
                                             chatbotState = freshState || chatbotState;
@@ -1303,7 +1304,7 @@ export async function POST(request: NextRequest) {
                                                 supabase, pageId: page.id, facebookPageId: pageId,
                                                 accessToken: page.access_token, contactId: contact.id, psid: senderId,
                                                 anchorInboundAt: interactionAt,
-                                                automationEpoch: chatbotState?.automation_epoch || 0,
+                                                automationEpoch: replyAutomationEpoch,
                                                 policyRevision: chatbotConfig.policy_revision || 1
                                             });
                                             let sentMedia = false;

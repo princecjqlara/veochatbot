@@ -44,7 +44,7 @@ export async function processChatbotContinuationReviews(input: { supabase?: Db; 
         try {
             const [pageResult, contactResult, stateResult, configResult] = await Promise.all([
                 db.from('pages').select('id,name,fb_page_id,access_token').eq('id', review.page_id).maybeSingle(),
-                db.from('contacts').select('id,name,psid,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at,last_inbound_at').eq('id', review.contact_id).eq('page_id', review.page_id).maybeSingle(),
+                db.from('contacts').select('id,name,psid,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at,last_inbound_at,chatbot_enabled').eq('id', review.contact_id).eq('page_id', review.page_id).maybeSingle(),
                 db.from('chatbot_contact_states').select('*').eq('id', review.state_id).eq('page_id', review.page_id).eq('contact_id', review.contact_id).maybeSingle(),
                 db.from('chatbot_configs').select('*').eq('page_id', review.page_id).maybeSingle()
             ]);
@@ -53,7 +53,7 @@ export async function processChatbotContinuationReviews(input: { supabase?: Db; 
             const state = stateResult.data as ChatbotContactState & { updated_at: string };
             const config = configResult.data as ChatbotConfig & { updated_at: string };
             if (review.review_kind === 'nightly_handoff') {
-                if (!page?.access_token || !contact?.psid || !config?.enabled || !config.follow_up_enabled || !config.continuation_review_enabled ||
+                if (!page?.access_token || !contact?.psid || contact.chatbot_enabled === false || !config?.enabled || !config.follow_up_enabled || !config.continuation_review_enabled ||
                     !isCommercialVideoIntake(config) || !isChatbotContactAllowed(config, review.contact_id) ||
                     state?.status !== 'stopped' || state.pause_kind !== 'human_takeover' || state.stop_reason !== 'manual' ||
                     state.automation_epoch !== review.automation_epoch || config.policy_revision !== review.policy_revision ||
@@ -139,7 +139,7 @@ export async function processChatbotContinuationReviews(input: { supabase?: Db; 
                 continue;
             }
             const target = state && config ? getContinuationDetailTarget(config.details_to_collect, state.collected_details) : null;
-            if (!page?.access_token || !contact?.psid || !config?.enabled || !config.follow_up_enabled || !config.continuation_review_enabled ||
+            if (!page?.access_token || !contact?.psid || contact.chatbot_enabled === false || !config?.enabled || !config.follow_up_enabled || !config.continuation_review_enabled ||
                 isCommercialVideoIntake(config) || !isChatbotContactAllowed(config, review.contact_id) || state?.status !== 'stopped' || state.stop_reason !== 'details_collected' ||
                 state.collection_round !== review.collection_round || contact.pipeline_stage !== 'qualified' || contact.pipeline_stage_source !== 'chatbot' || !target) {
                 await mark(review, { status: 'skipped', error_message: 'No longer eligible or no missing details remain' }); result.skipped++; continue;

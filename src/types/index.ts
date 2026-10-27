@@ -42,6 +42,9 @@ export interface UserPage {
 }
 
 export interface Contact {
+  chatbot_enabled?: boolean;
+  bot_control?: {enabled:boolean;can_reply:boolean;reason:string;loaded_at?:string};
+  conversion_projection?: any;
   id: string;
   page_id: string;
   psid: string;
