@@ -21,7 +21,7 @@ export async function verifyBrowser({base,cookie}){
   let size=await evaluate('({viewport:innerWidth,document:document.documentElement.scrollWidth})');assert(size.document<=size.viewport+1,'Desktop overflow');
   assert(await evaluate("document.body.innerText.includes('Unknown originating ad')"));checks.push('Live authenticated desktop dashboard and Unknown source rows');
   for(let i=0;i<100;i++){if(await evaluate("!!document.querySelector('tbody tr[data-ad-id]:not([data-ad-id=unknown])')"))break;await sleep(200);}
-  assert(await evaluate("document.querySelector('tbody tr')?.getAttribute('data-ad-id')!=='unknown'"),'Tracked ads were buried below unknown sources');
+  assert(await evaluate("document.querySelector('tbody tr[data-ad-id]')?.getAttribute('data-ad-id')!=='unknown'"),'Tracked ads were buried below unknown sources');
   await evaluate("document.querySelector('button[aria-label^=\"Preview ad \"]').click()");
   assert(await evaluate("!!document.querySelector('[aria-label=\"Ad creative preview\"] video[controls]')"),'Video creative preview missing');await evaluate("document.querySelector('button[aria-label=\"Close ad preview\"]').click()");checks.push('Tracked ads appear first and a genuine video preview opens');
   await evaluate("(()=>{const e=document.querySelector('select[aria-label=\"Ad visibility\"]');e.value='tracked';e.dispatchEvent(new Event('change',{bubbles:true}));})()");await sleep(200);assert(await evaluate("[...document.querySelectorAll('tbody tr')].every(e=>e.dataset.adId!=='unknown')"));

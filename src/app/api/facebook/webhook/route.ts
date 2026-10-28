@@ -421,6 +421,21 @@ export async function POST(request: NextRequest) {
                                     }
                                 }
 
+                                // Preserve handoff/stop processing priority over analytics.
+                                if (eventType === 'message' && recipientId) {
+                                    const echoAt = Number(event.timestamp);
+                                    if (Number.isFinite(echoAt) && echoAt > 0) {
+                                        try {
+                                            const invalidated = await supabase.rpc('mark_conversion_source_dirty', {
+                                                p_page_id: page.id, p_psid: recipientId, p_at: new Date(echoAt).toISOString()
+                                            });
+                                            if (invalidated?.error) logWarn('Payment projection source could not be marked for refresh', { pageId });
+                                        } catch {
+                                            logWarn('Payment projection source could not be marked for refresh', { pageId });
+                                        }
+                                    }
+                                }
+
                                 if (eventType === 'message' || eventType === 'postback' || eventType === 'referral') {
                                     logInfo('Skipping outbound page event from webhook payload', {
                                         pageId,

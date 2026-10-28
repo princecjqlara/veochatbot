@@ -23,7 +23,7 @@ export function projectionCacheFromMessages(raw:any[],input:{contactId:string;pa
  for(const m of seq){if(m.ms<first)continue;const signal=paymentSignal(m,seq);if(signal?.confirmed&&['payment_ack','full_payment_ack'].includes(signal.kind)&&(!paymentAt||m.ms<Date.parse(paymentAt))){paymentAt=new Date(m.ms).toISOString();evidenceId=m.id;}}
  return {contact_id:input.contactId,page_id:input.pageId,first_inquiry_at:new Date(first).toISOString(),first_message_id:missingOlder?previous?.first_message_id||null:buyer.id,source_cutoff_at:new Date(input.cutoff).toISOString(),snapshots,payment_at:paymentAt,payment_evidence_id:evidenceId,source_kind:'live_graph',complete_history:true,dirty_at:null};
 }
-export async function refreshContactProjection(db:Db,pageId:string,contactId:string){
+export async function refreshContactProjection(db:Db,pageId:string,contactId:string,force=false){
  const [contactResult,pageResult,cacheResult]=await Promise.all([
   db.from('contacts').select('id,psid,pipeline_stage').eq('page_id',pageId).eq('id',contactId).maybeSingle(),
   db.from('pages').select('id,name,fb_page_id,access_token').eq('id',pageId).maybeSingle(),
@@ -34,7 +34,7 @@ export async function refreshContactProjection(db:Db,pageId:string,contactId:str
  if(!contact||!page)throw Error('Contact not found');
  const pageName=forecastPageName(page.fb_page_id),cached=scoreContactForecast(previous,pageName);
  if(cached.status==='unsupported_page')return cached;
- if(previous&&!cached.needs_refresh)return{...cached,...(contact.pipeline_stage==='converted'&&!previous.payment_at?{status:'payment_verification_needed',scores:null,close_window:null,close_windows:{}}:{}),from_cache:true};
+ if(previous&&!cached.needs_refresh&&!force)return{...cached,...(contact.pipeline_stage==='converted'&&!previous.payment_at?{status:'payment_verification_needed',scores:null,close_window:null,close_windows:{}}:{}),from_cache:true};
  const cutoff=Date.now(),fields='id,messages.limit(100){id,message,from,created_time,attachments{mime_type,image_data}}';
  const url=new URL(`https://graph.facebook.com/v24.0/${page.fb_page_id}/conversations`);
  url.searchParams.set('user_id',contact.psid);url.searchParams.set('fields',fields);url.searchParams.set('limit','1');

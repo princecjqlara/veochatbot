@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Users, Tag, MessageSquare, RefreshCw, Clock, ArrowUpRight } from 'lucide-react';
 import { Page } from '@/types';
 import { runContactSyncToCompletion } from '@/lib/contact-sync-client';
+import ConversionPerformance from '@/components/ConversionPerformance';
 
 interface Stats {
     totalContacts: number;
@@ -195,6 +196,8 @@ export default function DashboardPage() {
                     </div>
                 </div>
             </div>
+
+            <div className="mb-8"><ConversionPerformance compact /></div>
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
