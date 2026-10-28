@@ -48,3 +48,9 @@ version's first forecast per contact/hour; never rewrite it after a later outcom
 rolled-back transaction. `--apply` commits it. It changes only the exact older
 audited cache snapshot, never newer live sources, contact permissions or stages.
 Run it only after the model passes the release gates. It sends no messages.
+
+Apply `202610280001_fast_ad_contact_drilldown.sql` after the earlier migrations.
+It filters/counts narrow cohort rows before fetching details, avoiding a full
+contact self-join. `node release-ad-list-performance.mjs` rehearses it inside a
+rolled-back transaction and checks identical records and ON/OFF counts; `--apply`
+commits the function change. It changes no customer records or model parameters.

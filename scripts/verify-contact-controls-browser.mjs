@@ -50,10 +50,15 @@ export async function verifyContactBrowser({base,cookie}){
   assert.deepEqual(clicks,[false,true]);checks.push('Switch OFF / ON sends correct payloads and updates state; requests intercepted, zero real permission changes');
   await evaluate("[...document.querySelectorAll('[role=dialog] button')].find(e=>e.textContent==='Projection details').click()");
   await until("document.querySelector('[role=dialog]')?.innerText.includes('Experimental payment/deposit confirmation forecast')",'Forecast details missing');checks.push('Projection details disclose PHT source dates and forecast limitations');
+  const releasedModel=JSON.parse(fs.readFileSync(new URL('../src/lib/conversion-runtime/model-v2.json',import.meta.url))).version;
+  await until(`document.querySelector('[role=dialog]')?.innerText.includes('Model ${releasedModel}')`,'Released forecast model not visible');
+  await until("document.querySelector('[role=dialog]')?.innerText.includes('days from the source check')",'Estimated remaining days missing');
+  assert(await evaluate("document.querySelector('[role=dialog]').innerText.includes('Historical replay at this checkpoint:')"));checks.push('Released model shows conditional remaining days, ranges and measured replay error');
   for(const value of ['off','on','all']){await choose('Ad contacts bot filter',value);await sleep(700);assert(requests.some(r=>r.path==='/api/ad-quality/contacts'&&new URLSearchParams(r.query).get('bot')===value));}
   await until("!!document.querySelector('[role=dialog] button[role=switch]')",'Restored contacts missing');checks.push('Ad detail ON / OFF / all filters issue server queries');
   const desktop=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(data,'contact-controls-desktop.png'),Buffer.from(desktop.data,'base64'));
   await cdp('Emulation.setDeviceMetricsOverride',{width:390,height:1000,deviceScaleFactor:1,mobile:true});await sleep(400);let size=await evaluate('({viewport:innerWidth,document:document.documentElement.scrollWidth})');assert(size.document<=size.viewport+1,'Mobile page overflow');
+  await evaluate("(()=>{const e=[...document.querySelectorAll('[role=dialog] div')].find(e=>e.classList.contains('overflow-x-auto'));if(e)e.scrollLeft=e.scrollWidth;})()");
   const mobile=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(data,'contact-controls-mobile.png'),Buffer.from(mobile.data,'base64'));checks.push('Ad contact modal fits mobile viewport with a scrollable table');
   await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:1100,deviceScaleFactor:1,mobile:false});await cdp('Page.navigate',{url:base+'/dashboard/contacts'});
   await until("!!document.querySelector('select[aria-label=\"Contact bot filter\"]')",'Main contact bot filter missing');

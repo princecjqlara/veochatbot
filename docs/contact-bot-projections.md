@@ -57,6 +57,12 @@ mature. Each replay model trains strictly before its incoming week. Some Septemb
 history was previously reviewed, so this is historical replay, not a new prospective
 trial. Recent immature outcomes are excluded from each horizon's scores.
 
+Probability calibration still needs care: at the 24-hour checkpoint, the new
+30-day mean probability was 2.34% versus 1.70% observed. The contact details
+disclose this comparison for their checkpoint. Improved ranking and prediction
+error do not make the individual percentages exact or demonstrate guaranteed
+profitability. Future prospective results must mature before recalibration.
+
 Refreshes page through the actual Messenger conversation. A remaining cursor,
 read failure, repeated cursor or safety limit never becomes a silently truncated
 complete source. Only messages created before the source cutoff enter evidence;
