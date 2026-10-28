@@ -54,6 +54,7 @@ export async function verifyContactBrowser({base,cookie}){
   await until(`document.querySelector('[role=dialog]')?.innerText.includes('Model ${releasedModel}')`,'Released forecast model not visible');
   await until("document.querySelector('[role=dialog]')?.innerText.includes('days from the source check')",'Estimated remaining days missing');
   assert(await evaluate("document.querySelector('[role=dialog]').innerText.includes('Historical replay at this checkpoint:')"));checks.push('Released model shows conditional remaining days, ranges and measured replay error');
+  assert(await evaluate("document.querySelector('[role=dialog]').innerText.includes('Percentage calibration remains imperfect.')"));checks.push('Forecast details disclose average predicted versus observed confirmation rates');
   for(const value of ['off','on','all']){await choose('Ad contacts bot filter',value);await sleep(700);assert(requests.some(r=>r.path==='/api/ad-quality/contacts'&&new URLSearchParams(r.query).get('bot')===value));}
   await until("!!document.querySelector('[role=dialog] button[role=switch]')",'Restored contacts missing');checks.push('Ad detail ON / OFF / all filters issue server queries');
   const desktop=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});fs.writeFileSync(path.join(data,'contact-controls-desktop.png'),Buffer.from(desktop.data,'base64'));
