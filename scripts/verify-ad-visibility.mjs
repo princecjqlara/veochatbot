@@ -1,7 +1,7 @@
 import fs from'node:fs';import assert from'node:assert/strict';import{createRequire}from'node:module';import{randomUUID}from'node:crypto';import pg from'pg';
 const require=createRequire(import.meta.url),{parse}=require('../../node_modules/dotenv'),{encode}=require('next-auth/jwt'),env=parse(fs.readFileSync(new URL('../.env.local',import.meta.url))),base='https://veochatbot.vercel.app';
 const ids=['656646850875530','717828411409985','725843003947429','619355471260631','781078668411527'],db=new pg.Client({connectionString:env.DATABASE_POOLER_URL_5432||env.DATABASE_URL,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:15000});
-const receipt={at:new Date().toISOString(),production:base,checks:[],ads:[],ranges:[],messages_sent:0,contact_origins_changed:0,campaign_budgets_changed:0};
+const receipt={at:new Date().toISOString(),production:base,checks:[],ads:[],ranges:[],messages_sent:0,manual_contact_ad_assignments:0,campaign_budgets_changed:0,history_note:'Opening contact forecasts can reconcile earlier verified inquiry dates and clear an unsupported original ad; metadata import itself never assigns contact origins.'};
 try{
  await db.connect();const owner=(await db.query('SELECT up.user_id,count(*) AS n FROM user_pages up JOIN pages p ON p.id=up.page_id WHERE p.fb_page_id=ANY($1::text[]) GROUP BY up.user_id ORDER BY n DESC LIMIT 1',[ids])).rows[0];assert.equal(Number(owner.n),5);
  const token=await encode({token:{id:owner.user_id,name:'Ad visibility release verification'},secret:env.NEXTAUTH_SECRET,maxAge:1200}),headers={Cookie:'__Secure-next-auth.session-token='+token};

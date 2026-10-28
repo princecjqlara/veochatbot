@@ -1,0 +1,17 @@
+// Check the existing ad-linked contacts against complete accessible histories.
+// The normal verified-cache writer may clear an origin if an earlier inquiry is found.
+import fs from'node:fs';import pg from'pg';import{createRequire}from'node:module';
+const require=createRequire(import.meta.url),{parse}=require('../../node_modules/dotenv'),{encode}=require('next-auth/jwt'),env=parse(fs.readFileSync(new URL('../.env.local',import.meta.url))),base='https://veochatbot.vercel.app';
+const fb=['656646850875530','717828411409985','725843003947429','619355471260631','781078668411527'],db=new pg.Client({connectionString:env.DATABASE_POOLER_URL_5432||env.DATABASE_URL,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:15000});
+ const receipt={at:new Date().toISOString(),checked:0,verified:0,genuinely_earlier_message_cleared_origin:0,unresolved:[],customer_messages_sent:0,manual_ad_assignments:0};
+try{
+ await db.connect();const owner=(await db.query('SELECT up.user_id,count(*) AS n FROM user_pages up JOIN pages p ON p.id=up.page_id WHERE p.fb_page_id=ANY($1::text[]) GROUP BY up.user_id ORDER BY n DESC LIMIT 1',[fb])).rows[0];
+ const token=await encode({token:{id:owner.user_id,name:'Ad inquiry chronology verification'},secret:env.NEXTAUTH_SECRET,maxAge:1200}),targets=(await db.query('SELECT s.contact_id,s.page_id,s.first_inquiry_at,s.first_message_id,p.name AS page FROM ad_contact_sources s JOIN pages p ON p.id=s.page_id WHERE p.fb_page_id=ANY($1::text[]) AND s.origin_ad_id IS NOT NULL',[fb])).rows;let next=0;
+ await Promise.all(Array.from({length:2},async()=>{while(next<targets.length){const source=targets[next++];try{
+  const response=await fetch(`${base}/api/pages/${source.page_id}/contacts/${source.contact_id}/projection`,{method:'POST',headers:{Origin:base,Cookie:'__Secure-next-auth.session-token='+token},signal:AbortSignal.timeout(125000)}),body=await response.json();if(!response.ok)throw Error(body.error||'History refresh unavailable');
+  const r=(await db.query('SELECT s.origin_ad_id,s.first_inquiry_at,s.first_message_id AS source_first_id,f.first_inquiry_at AS history_first,f.first_message_id,f.complete_history,f.source_kind FROM ad_contact_sources s LEFT JOIN contact_conversion_cache f ON f.contact_id=s.contact_id WHERE s.contact_id=$1',[source.contact_id])).rows[0];receipt.checked++;
+  if(!r.origin_ad_id&&r.history_first&&r.first_message_id!==source.first_message_id&&new Date(r.history_first)<new Date(source.first_inquiry_at)){receipt.genuinely_earlier_message_cleared_origin++;continue;}
+  if(r.origin_ad_id&&r.complete_history&&r.source_kind==='live_graph'&&r.first_message_id&&r.first_message_id===r.source_first_id&&new Date(r.history_first).getTime()===new Date(r.first_inquiry_at).getTime())receipt.verified++;else receipt.unresolved.push({page:source.page,reason:'Complete first-message identity needs further verification'});
+ }catch{receipt.unresolved.push({page:source.page,reason:'Verified history unavailable'});}}}));
+ receipt.remaining_verified_ad_origins=Number((await db.query('SELECT count(*) FROM ad_contact_sources s JOIN pages p ON p.id=s.page_id WHERE p.fb_page_id=ANY($1::text[]) AND s.origin_ad_id IS NOT NULL',[fb])).rows[0].count);receipt.completed=true;
+}finally{await db.end();fs.writeFileSync(new URL('../../data/ad-visibility-2026-10-28/origin-history-verification.json',import.meta.url),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));}

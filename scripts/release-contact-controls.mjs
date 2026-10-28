@@ -4,11 +4,12 @@ const action=process.argv.find(a=>['--preflight','--apply','--seed'].includes(a)
 const db=new pg.Client({connectionString:env.DATABASE_POOLER_URL_5432||env.DATABASE_URL,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:15000,query_timeout:60000});await db.connect();
 try{
  const sql=fs.readFileSync(new URL('../supabase/migrations/202610270002_contact_bot_projections.sql',import.meta.url),'utf8');
+ const followups=['202610280001_fast_ad_contact_drilldown.sql','202610280002_ad_inventory_visibility.sql','202610280003_preserve_same_message_ad_origin.sql'].map(name=>fs.readFileSync(new URL('../supabase/migrations/'+name,import.meta.url),'utf8'));
  if(action==='--preflight'){
-  await db.query('BEGIN');try{await db.query(sql.replace(/^BEGIN;\s*$/m,'').replace(/^COMMIT;\s*$/m,''));await db.query(fs.readFileSync(new URL('./verify-contact-controls.sql',import.meta.url),'utf8'));}finally{await db.query('ROLLBACK');}
+  await db.query('BEGIN');try{for(const migration of[sql,...followups])await db.query(migration.replace(/^BEGIN;\s*$/m,'').replace(/^COMMIT;\s*$/m,''));await db.query(fs.readFileSync(new URL('./verify-contact-controls.sql',import.meta.url),'utf8'));}finally{await db.query('ROLLBACK');}
   console.log(JSON.stringify({preflight:true,sql_invariants:14,fixtures_rolled_back:true,messages_sent:0}));
  }else if(action==='--apply'){
-  await db.query(sql);console.log(JSON.stringify({schema_applied:true,existing_contact_permissions_changed:0,existing_stages_changed:0,messages_sent:0}));
+  for(const migration of[sql,...followups])await db.query(migration);console.log(JSON.stringify({schema_applied:true,existing_contact_permissions_changed:0,existing_stages_changed:0,messages_sent:0}));
  }else{
   const cutoff=JSON.parse(fs.readFileSync(new URL('../../data/conversion-forecast-prototype/metadata.json',import.meta.url))).source_cutoff_utc;
   let batch=[],read=0,saved=0;await db.query('BEGIN');

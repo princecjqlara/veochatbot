@@ -42,3 +42,19 @@ Read-only diagnostics: `node scripts/audit-ad-visibility.mjs` checks actual cata
 coverage, Page-token permission scopes and metadata access. No token is printed.
 The source-health receipt labels its subscription status with the last saved check
 time; its stage-event count uses the database's original tracking activation.
+
+Apply `202610280003_preserve_same_message_ad_origin.sql` as well. The earlier
+cache writer compared timestamp strings when refining a first inquiry. Messenger
+history has second precision while webhook times carry milliseconds, so it could
+clear a valid ad link for the identical first message. The corrected writer uses
+provider message identity, retains the same-message origin, clears a genuinely
+earlier different-message origin, and ignores stale concurrent refreshes. Coarse
+same-second ordering alone does not override a known first-message event.
+
+The repair restores an origin only when a complete history confirms the exact
+first message ID and a unique actual ad-referral event carries that same ID.
+Different earlier messages and conflicting ad evidence are not guessed. Original
+webhook times remain in the referral evidence. `release-ad-origin-identity.mjs`
+rehearses regression invariants with rolled-back fixtures; `--apply` commits the
+function and evidence-based repair. `verify-ad-origin-histories.mjs` rechecks all
+currently linked five-Page contacts through the normal complete-history reader.
