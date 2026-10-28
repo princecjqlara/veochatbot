@@ -20,16 +20,18 @@ export async function GET(request: NextRequest) {
         const db = getSupabaseAdmin();
         const { data: pages, error } = await db.from('pages').select('id,name,fb_page_id').in('id', ids);
         if (error) throw error;
+        const catalogResult=await db.rpc('get_visible_ad_catalog',{p_page_ids:ids,p_from:range.from,p_to:range.to});
+        const catalog=Array.isArray(catalogResult.data)?catalogResult.data:[];
         const reports = [];
         // Bounded concurrency avoids a query burst when an owner has many Pages.
         for (let offset = 0; offset < (pages || []).length; offset += 5) {
             reports.push(...await Promise.all((pages || []).slice(offset, offset + 5).map(async page => {
                 const result = await db.rpc('get_ad_lead_quality', { p_page_id: page.id, p_from: range.from, p_to: range.to });
                 if (result.error) throw result.error;
-                return { page, ...result.data };
+                return { page, ...result.data, tracked_ads:catalog.filter((a:any)=>a.page_id===page.id) };
             })));
         }
-        return NextResponse.json({ range, pages: reports, generated_at: range.generated_at }, { headers: { 'Cache-Control': 'no-store' } });
+        return NextResponse.json({ range, pages: reports, generated_at: range.generated_at,catalog_warning:catalogResult.error?'Ad inventory is temporarily unavailable. Recorded lead counts remain visible.':null }, { headers: { 'Cache-Control': 'no-store' } });
     } catch {
         return NextResponse.json({ error: 'Ad-quality reporting is temporarily unavailable. Retry shortly.' }, { status: 503 });
     }

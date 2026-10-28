@@ -1,0 +1,5 @@
+import{describe,it,expect}from'vitest';import{visibleAdRows,sortAdRows}from'../ad-quality-view';
+describe('visible ad inventory versus measured acquisition cohorts',()=>{
+ it('shows a referral-only ad without inventing new leads or duplicating measured counts',()=>{const rows=visibleAdRows([{page:{id:'p'},rows:[{ad_id:null,inquiries:100,not_qualified:50},{ad_id:'123',inquiries:2,not_qualified:1}],tracked_ads:[{ad_id:'123',video_url:'https://cdn.example/ad.mp4',referral_contacts:5},{ad_id:'456',referral_contacts:1}]}]);expect(rows).toHaveLength(3);expect(rows.reduce((s,r)=>s+r.ad.inquiries,0)).toBe(102);expect(rows.find(r=>r.ad.ad_id==='456')?.ad.inquiries).toBe(0);expect(rows.find(r=>r.ad.ad_id==='123')?.ad.referral_contacts).toBe(5);});
+ it('puts actual ads above large unknown-source groups by default, preserving explicit sorts',()=>{const rows=[{ad:{ad_id:null,not_qualified:80,inquiries:1000}},{ad:{ad_id:'123',not_qualified:0,inquiries:2}}];expect(sortAdRows(rows,'tracked')[0].ad.ad_id).toBe('123');expect(sortAdRows(rows,'count')[0].ad.ad_id).toBeNull();});
+});
