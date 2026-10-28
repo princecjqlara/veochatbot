@@ -92,5 +92,12 @@ larger than 1,000 contacts. Creative rows are paginated in the UI without changi
 totals. All endpoints require Page membership; mutations require same-origin
 requests. Only service_role can access spend/report SQL directly.
 
+Apply both `202610290001_conversion_performance.sql` and
+`202610290002_fast_conversion_reports.sql`. The second migration selects narrow
+inquiry/activity keys before loading cached conversation features and uses custom
+query plans for different dates/Page selections. This avoids the slow generic
+plan observed in the live reporting check. The release operator applies and
+rehearses both migrations; its 14 data and access invariants are rolled back.
+
 Meta's primary references: [Insights fields](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adsinsights.py),
 [Insights parameters and account timezone fields](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adaccount.py).

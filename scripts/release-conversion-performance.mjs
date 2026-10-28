@@ -1,12 +1,12 @@
 import fs from'node:fs';import pg from'pg';import{createRequire}from'node:module';
 const{parse}=createRequire(import.meta.url)('../../node_modules/dotenv'),env=parse(fs.readFileSync(new URL('../.env.local',import.meta.url))),apply=process.argv.includes('--apply');
 const db=new pg.Client({connectionString:env.DATABASE_POOLER_URL_5432||env.DATABASE_URL,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:15000});
-const sql=fs.readFileSync(new URL('../supabase/migrations/202610290001_conversion_performance.sql',import.meta.url),'utf8');
+const migrations=['202610290001_conversion_performance.sql','202610290002_fast_conversion_reports.sql'].map(name=>fs.readFileSync(new URL('../supabase/migrations/'+name,import.meta.url),'utf8'));
 try{
  await db.connect();
- if(apply){await db.query(sql);console.log(JSON.stringify({applied:true,customer_messages_sent:0,contact_permissions_changed:0}));}
+ if(apply){for(const sql of migrations)await db.query(sql);console.log(JSON.stringify({applied:true,migrations:2,customer_messages_sent:0,contact_permissions_changed:0}));}
  else{
-  await db.query('BEGIN');await db.query(sql.replace(/^BEGIN;\s*$/m,'').replace(/^COMMIT;\s*$/m,''));
+  await db.query('BEGIN');for(const sql of migrations)await db.query(sql.replace(/^BEGIN;\s*$/m,'').replace(/^COMMIT;\s*$/m,''));
   await db.query(`DO $$ DECLARE p UUID:=gen_random_uuid();a UUID:=gen_random_uuid();b UUID:=gen_random_uuid();c UUID:=gen_random_uuid();
    t TIMESTAMPTZ:=date_trunc('day',clock_timestamp() AT TIME ZONE 'Asia/Manila') AT TIME ZONE 'Asia/Manila';r JSONB;s JSONB; BEGIN
    INSERT INTO pages(id,fb_page_id,name,access_token) VALUES(p,'verify-performance-'||p,'Performance fixture','not-a-token');

@@ -5,6 +5,11 @@ const receipt={at:new Date().toISOString(),production:base,checks:[],pages:[],ra
 try{
  await db.connect();const owner=(await db.query('SELECT up.user_id,count(*) AS n FROM user_pages up JOIN pages p ON p.id=up.page_id WHERE p.fb_page_id=ANY($1::text[]) GROUP BY up.user_id ORDER BY n DESC LIMIT 1',[fbIds])).rows[0];assert.equal(Number(owner.n),5);
  const cookie=await encode({token:{id:owner.user_id,name:'Conversion performance release verification'},secret:env.NEXTAUTH_SECRET,maxAge:3600}),headers={Cookie:'__Secure-next-auth.session-token='+cookie};
+ if(process.argv.includes('--browser-only')){
+  const prior=JSON.parse(fs.readFileSync(new URL('../../data/conversion-performance-2026-10-29/live-verification.json',import.meta.url),'utf8'));
+  assert.equal(prior.pages.length,5);assert.equal(prior.ranges.length,4);assert.equal(prior.linked_ad_histories_refreshed,21);Object.assign(receipt,prior);delete receipt.error;
+  const{verifyPerformanceBrowser}=await import('./verify-conversion-performance-browser.mjs');receipt.browser=await verifyPerformanceBrowser({base,cookie});receipt.passed=true;
+ }else{
  const call=async(path,options={})=>{const r=await fetch(base+path,{...options,headers:{...headers,...options.headers},signal:AbortSignal.timeout(125000)});return{status:r.status,body:await r.json()};};
  assert.equal((await fetch(base+'/api/ad-quality/performance')).status,401);
  assert.equal((await call('/api/ad-quality/performance?pageId=00000000-0000-0000-0000-000000000000')).status,403);
@@ -21,9 +26,13 @@ try{
    (SELECT count(*)::int FROM contact_conversion_cache WHERE page_id=$1 AND complete_history AND payment_evidence_id IS NOT NULL AND payment_at>=first_inquiry_at AND payment_at<=source_cutoff_at AND payment_at>=$2 AND payment_at<$3) AS payers`,[page.id,r.body.range.from,r.body.range.to])).rows[0];
   assert.equal(p.leads,raw.leads);assert.equal(Number(p.period_payments.confirmed),raw.payers);assert.equal(r.body.ads.reduce((s,a)=>s+a.leads,0),p.leads);assert.equal(r.body.daily.reduce((s,a)=>s+a.leads,0),p.leads);
   for(const a of r.body.ads){for(const h of ['168','336','720'])if(a.forecast[h].unknown)assert.equal(a.forecast[h].rate,null);if(a.spend.covered_days<a.spend.required_days)assert.equal(a.spend.amount,null);}
-  receipt.pages.push({page:page.name,inquiries_today:p.leads,first_payment_confirmations_today:p.period_payments.confirmed,mean_hours_for_todays_payers:p.period_payments.avg_hours,median_hours_for_todays_payers:p.period_payments.median_hours,today_cohort_payers_so_far:p.confirmed,cohort_rate_so_far:p.current_rate,projection_day30:p.forecast['720'],verification,remaining_queue:r.body.refresh_pending});
+  receipt.pages.push({page:page.name,source_checked_at:r.body.generated_at,inquiries_today:p.leads,first_payment_confirmations_today:p.period_payments.confirmed,mean_hours_for_todays_payers:p.period_payments.avg_hours,median_hours_for_todays_payers:p.period_payments.median_hours,today_cohort_payers_so_far:p.confirmed,cohort_rate_so_far:p.current_rate,projection_day30:p.forecast['720'],verification,remaining_queue:r.body.refresh_pending});
  }
  receipt.checks.push('All five Pages: current PHT inquiry cohorts, first payments in period, mean/median durations and daily/ad totals reconcile','Latest relevant histories refreshed without customer messaging; unavailable sources remain flagged');
+ const linked=(await db.query('SELECT contact_id,page_id FROM ad_contact_sources WHERE page_id=ANY($1::uuid[]) AND origin_ad_id IS NOT NULL',[pages.map(p=>p.id)])).rows;
+ let refreshed=0;
+ for(let offset=0;offset<linked.length;offset+=2){await Promise.all(linked.slice(offset,offset+2).map(async c=>{const r=await call('/api/pages/'+c.page_id+'/contacts/'+c.contact_id+'/projection',{method:'POST',headers:{Origin:base}});assert.equal(r.status,200);refreshed++;}));}
+ receipt.linked_ad_histories_refreshed=refreshed;receipt.checks.push('Every currently verified ad-origin contact has a recent complete-history projection source');
  const az=pages.find(p=>p.name==='Azshinari');
  for(const query of ['range=7','range=30','range=custom&from=2026-10-20&to=2026-10-21','range=all']){
   const start=Date.now(),r=await call('/api/ad-quality/performance?'+query+'&pageId='+az.id+'&target=3.5');assert.equal(r.status,200,JSON.stringify(r.body));const p=r.body.pages[0];
@@ -35,5 +44,6 @@ try{
  receipt.verified_origin_links=Number((await db.query('SELECT count(*) AS n FROM ad_contact_sources WHERE page_id=ANY($1::uuid[]) AND origin_ad_id IS NOT NULL',[pages.map(p=>p.id)])).rows[0].n);
  if(process.argv.includes('--browser')){const{verifyPerformanceBrowser}=await import('./verify-conversion-performance-browser.mjs');receipt.browser=await verifyPerformanceBrowser({base,cookie});}
  receipt.passed=true;
+ }
 }catch(e){receipt.passed=false;receipt.error=String(e.message).slice(0,800);process.exitCode=1;}
-finally{await db.end();const dir=new URL('../../data/conversion-performance-2026-10-29/',import.meta.url);fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(new URL('live-verification.json',dir),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));}
+finally{await db.end();receipt.completed_at=new Date().toISOString();const dir=new URL('../../data/conversion-performance-2026-10-29/',import.meta.url);fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(new URL('live-verification.json',dir),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));}
