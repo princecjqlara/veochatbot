@@ -35,11 +35,11 @@ try{
  receipt.linked_ad_histories_refreshed=refreshed;receipt.checks.push('Every currently verified ad-origin contact has a recent complete-history projection source');
  const az=pages.find(p=>p.name==='Azshinari');
  for(const query of ['range=7','range=30','range=custom&from=2026-10-20&to=2026-10-21','range=all']){
-  const start=Date.now(),r=await call('/api/ad-quality/performance?'+query+'&pageId='+az.id+'&target=3.5');assert.equal(r.status,200,JSON.stringify(r.body));const p=r.body.pages[0];
-  const raw=(await db.query('SELECT count(*)::int AS n FROM ad_lead_cohorts WHERE page_id=$1 AND ($2::timestamptz IS NULL OR first_inquiry_at>=$2) AND first_inquiry_at<$3',[az.id,r.body.range.from,r.body.range.to])).rows[0];assert.equal(p.leads,raw.n);assert.equal(r.body.ads.reduce((s,a)=>s+a.leads,0),p.leads);assert.equal(r.body.daily.reduce((s,a)=>s+a.leads,0),p.leads);assert.equal(r.body.target_rate,.035);
+  const start=Date.now(),r=await call('/api/ad-quality/performance?'+query+'&pageId='+az.id);assert.equal(r.status,200,JSON.stringify(r.body));const p=r.body.pages[0];
+  const raw=(await db.query('SELECT count(*)::int AS n FROM ad_lead_cohorts WHERE page_id=$1 AND ($2::timestamptz IS NULL OR first_inquiry_at>=$2) AND first_inquiry_at<$3',[az.id,r.body.range.from,r.body.range.to])).rows[0];assert.equal(p.leads,raw.n);assert.equal(r.body.ads.reduce((s,a)=>s+a.leads,0),p.leads);assert.equal(r.body.daily.reduce((s,a)=>s+a.leads,0),p.leads);assert(!('target_rate'in r.body));assert(!('target'in p));assert.equal(r.body.outlook_method,'recorded_payers_plus_expected_by_day30');
   receipt.ranges.push({query,leads:p.leads,payers_from_cohort:p.confirmed,payments_in_period:p.period_payments.confirmed,elapsed_ms:Date.now()-start});
  }
- receipt.checks.push('7/30/custom/all-time cohorts reconcile beyond 1000 leads; target switch preserves the denominator');
+ receipt.checks.push('7/30/custom/all-time cohorts reconcile beyond 1000 leads; expected outcomes need no target');
  receipt.stored_daily_spend_records=Number((await db.query('SELECT count(*) AS n FROM ad_daily_spend WHERE page_id=ANY($1::uuid[])',[pages.map(p=>p.id)])).rows[0].n);
  receipt.verified_origin_links=Number((await db.query('SELECT count(*) AS n FROM ad_contact_sources WHERE page_id=ANY($1::uuid[]) AND origin_ad_id IS NOT NULL',[pages.map(p=>p.id)])).rows[0].n);
  if(process.argv.includes('--browser')){const{verifyPerformanceBrowser}=await import('./verify-conversion-performance-browser.mjs');receipt.browser=await verifyPerformanceBrowser({base,cookie});}

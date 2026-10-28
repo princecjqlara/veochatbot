@@ -10,13 +10,13 @@ describe('original-inquiry cohort performance',()=>{
   for(const sample of cases){const at=sample.first+sample.snapshot.h*HOUR,r=lead({first_inquiry_at:new Date(sample.first).toISOString(),cache_first_at:new Date(sample.first).toISOString(),source_cutoff_at:new Date(at).toISOString(),snapshot:sample.snapshot,last_interaction_at:new Date(sample.first).toISOString()});const p=leadProbabilities(r,pageIds[sample.page],at);for(const h of ['168','336','720'])expect(p.probabilities[h]).toBeCloseTo((sample.probabilities as any)[h],12);}
  });
  it('keeps a later buyer with their original ad and inquiry day; payment day does not acquire a new lead',()=>{
-  const acc=performanceAccumulator(pages,.5);acc.add(lead(),now);acc.add(lead({id:'two',payment_at:new Date(first+22*HOUR).toISOString(),payment_evidence_id:'receipt'}),now);const r=acc.result();expect(r.unique_contacts).toBe(2);expect(r.daily).toHaveLength(1);expect(r.daily[0].day).toBe('2026-10-20');expect(r.ads[0].confirmed).toBe(1);expect(r.ads[0].current_rate).toBe(.5);expect(r.ads[0].avg_hours).toBe(22);expect(r.ads[0].target.actual_hit_at).toBe(new Date(first+22*HOUR).toISOString());
+  const acc=performanceAccumulator(pages);acc.add(lead(),now);acc.add(lead({id:'two',payment_at:new Date(first+22*HOUR).toISOString(),payment_evidence_id:'receipt'}),now);const r=acc.result();expect(r.unique_contacts).toBe(2);expect(r.daily).toHaveLength(1);expect(r.daily[0].day).toBe('2026-10-20');expect(r.ads[0].confirmed).toBe(1);expect(r.ads[0].current_rate).toBe(.5);expect(r.ads[0].avg_hours).toBe(22);expect(r.ads[0].outlook.confirmed_within_horizon).toBe(1);
  });
  it('does not count a CRM converted label, future payment or unverified timestamp as a confirmed payer',()=>{
   const acc=performanceAccumulator(pages);acc.add(lead({pipeline_stage:'converted'}),now);acc.add(lead({id:'future',payment_at:new Date(now+HOUR).toISOString(),payment_evidence_id:'future'}),now);acc.add(lead({id:'bad',payment_at:new Date(first+HOUR).toISOString(),payment_evidence_id:null}),now);expect(acc.result().pages[0].confirmed).toBe(0);expect(acc.result().pages[0].crm_converted).toBe(1);
  });
  it('keeps missing and stale sources unknown and withholds a whole-cohort point forecast',()=>{
-  const acc=performanceAccumulator(pages);acc.add(lead({complete_history:false}),now);acc.add(lead({id:'stale',source_cutoff_at:new Date(now-HOUR).toISOString()}),now);const r=acc.result().pages[0];expect(r.forecast['720'].rate).toBeNull();expect(r.forecast['720'].unknown).toBe(2);expect(r.forecast['720'].upper_bound).toBe(1);expect(r.target.status).toBe('insufficient_source');
+  const acc=performanceAccumulator(pages);acc.add(lead({complete_history:false}),now);acc.add(lead({id:'stale',source_cutoff_at:new Date(now-HOUR).toISOString()}),now);const r=acc.result().pages[0];expect(r.forecast['720'].rate).toBeNull();expect(r.forecast['720'].unknown).toBe(2);expect(r.forecast['720'].upper_bound).toBe(1);expect(r.outlook.status).toBe('insufficient_source');expect(r.outlook.expected_payers).toBeNull();expect(r.outlook.expected_additional_payers).toBeNull();
  });
  it('treats an observed completed horizon as known even when the source is old; it never means never buying',()=>{
   const r=leadProbabilities(lead({source_cutoff_at:new Date(first+721*HOUR).toISOString(),snapshot:null}),'656646850875530',first+1000*HOUR);expect(r.probabilities['720']).toBe(0);
@@ -24,8 +24,14 @@ describe('original-inquiry cohort performance',()=>{
  it('keeps qualification separate from confirmed payments and rejects duplicate input pages',()=>{
   const acc=performanceAccumulator(pages);acc.add(lead({pipeline_stage:'not_qualified'}),now);expect(acc.result().ads[0].not_qualified).toBe(1);expect(()=>acc.add(lead(),now)).toThrow('Duplicate');expect(()=>acc.add(lead({id:'other',page_id:'forbidden'}),now)).toThrow('authorized');
  });
- it('uses ceil(N*target) and a probability-weighted projection rather than rounding expected buyers to successes',()=>{
-  const acc=performanceAccumulator(pages,.04);for(let i=0;i<26;i++)acc.add(lead({id:'c'+i}),now);const r=acc.result().ads[0];expect(r.target.required_payers).toBe(2);expect(r.forecast['720'].expected).toBeGreaterThan(0);expect(r.forecast['720'].expected).toBeLessThan(1);expect(r.confirmed).toBe(0);
+ it('reports the probability-weighted expected outcome without requiring a target or rounding buyers into successes',()=>{
+  const acc=performanceAccumulator(pages);for(let i=0;i<26;i++)acc.add(lead({id:'c'+i}),now);const r=acc.result().ads[0];expect(r).not.toHaveProperty('target');expect(r.forecast['720'].expected).toBeGreaterThan(0);expect(r.forecast['720'].expected).toBeLessThan(1);expect(r.confirmed).toBe(0);expect(r.outlook.expected_payers).toBe(r.forecast['720'].expected);expect(r.outlook.expected_additional_payers).toBe(r.outlook.expected_payers);expect(r.outlook.expected_rate).toBeCloseTo(r.outlook.expected_payers!/26,12);expect(r.outlook.horizon_end_dates_pht).toEqual(['2026-11-19','2026-11-19']);
+ });
+ it('adds only still-unconfirmed probability to the expected additional payer count',()=>{
+  const acc=performanceAccumulator(pages);acc.add(lead(),now);acc.add(lead({id:'paid',payment_at:new Date(first+HOUR).toISOString(),payment_evidence_id:'proof'}),now);const r=acc.result().ads[0];expect(r.outlook.expected_payers).toBeGreaterThan(1);expect(r.outlook.expected_additional_payers).toBeCloseTo(r.outlook.expected_payers!-1,12);expect(r.outlook.confirmed_within_horizon).toBe(1);
+ });
+ it('keeps recorded payments after Day 30 separate from the 30-day forecast and gives no prediction for zero leads',()=>{
+  const acc=performanceAccumulator(pages);acc.add(lead({payment_at:new Date(first+800*HOUR).toISOString(),payment_evidence_id:'late',source_cutoff_at:new Date(first+900*HOUR).toISOString()}),first+900*HOUR);const r=acc.result().ads[0];expect(r.confirmed).toBe(1);expect(r.forecast['720'].expected).toBe(0);expect(r.outlook.expected_payers).toBe(1);expect(r.outlook.expected_rate).toBe(1);expect(r.outlook.expected_additional_payers).toBe(0);expect(r.outlook.status).toBe('observed_window');const empty=performanceAccumulator(pages).result().pages[0];expect(empty.outlook.status).toBe('no_leads');expect(empty.outlook.expected_rate).toBeNull();
  });
 });
 describe('daily advertising spend coverage',()=>{

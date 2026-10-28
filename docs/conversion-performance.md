@@ -19,7 +19,7 @@ The payment timestamp must be after inquiry and before the verified source cutof
 An incomplete source or conflicting first-inquiry timestamp cannot verify a payer
 for that cohort. Legacy CRM inquiry dates and source coverage remain counted.
 
-## Projections and target timing
+## Expected outcomes
 
 The shipped model is `dd7f0ca783ad1651`; its formula and weights are unchanged.
 For horizon H in 7, 14 and 30 days from inquiry:
@@ -37,16 +37,24 @@ if any necessary source is missing. Internally, lower/upper missing-data bounds
 retain the covered expected count and add zero/all unknown outcomes respectively;
 these are not statistical confidence intervals.
 
-The target defaults to 4% and can be switched to 3%, 3.5%, 5% or 10%.
-Actual required payers are `ceil(original leads * target)`. An actually reached
-target reports the corresponding sorted documented payment timestamp. Otherwise
-the view identifies the first tested horizon whose **expected rate** meets the
-target. A daily cohort can show that horizon's PHT calendar date. It does not
-interpolate an exact day between horizons, predict future inquiry volume, or
-claim the probability of actually reaching the target. These are aggregated
-five-Page contact forecasts; creative-specific threshold-crossing accuracy has
-not been independently backtested. Small creative samples remain uncertain.
-The light aggregate evaluator matches all 210 independent Python model cases.
+The report calculates an expected outcome without a chosen conversion-rate goal:
+
+`expected additional payers = sum(remaining unpaid contact probabilities through each first-inquiry Day 30)`
+
+`expected cohort payers = all documented cohort payers so far + expected additional payers`
+
+`expected cohort rate = expected cohort payers / original cohort inquiries`
+
+All recorded payers remain included, including those who paid after Day 30.
+The separate Day-7/14/30 columns retain their original-window definitions. No
+additional payment is projected beyond the model's 30-day horizon. Cutoff dates
+show when those modeled windows end; they are not predicted purchase dates.
+For a multi-day cohort, the dates span the earliest/latest inquiry's cutoff.
+This expectation is a probability-weighted average, not a statistical mode or
+maximum possible rate. No independent-customer assumption is needed to sum the
+expected values. The existing five-Page model is aggregated by Page/ad/day; no
+creative-specific retraining or improved accuracy is claimed. Small samples
+remain uncertain. All 210 independent Python probability cases still match.
 
 ## Evidence freshness
 
