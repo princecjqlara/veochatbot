@@ -34,7 +34,9 @@ export default function ContactBotProjection({pageId,contactId,name,enabled=true
  return <div className="min-w-[230px] max-w-sm text-xs space-y-2 normal-case">
   <div className="flex flex-wrap items-center gap-2"><button type="button" role="switch" aria-checked={isOn} aria-label={`Bot permission for ${name}`} disabled={saving||!bot} onClick={toggle} className={`px-2 py-1 border border-black font-semibold disabled:opacity-50 ${isOn?'bg-green-50 text-green-900':'bg-gray-100 text-gray-700'}`}>{saving?'Saving…':`Bot permission ${isOn?'ON':'OFF'}`}</button><span className="text-gray-600">{bot?(labels[bot.reason]||bot.reason.replaceAll('_',' ')):'Loading permission…'}</span></div>
   <div><b>Payment projection:</b> {paid?'Documented confirmation':needsProof?'Payment evidence needs verification':closed?'30-day window ended':score?.probability!=null?`${p(score.probability)} by Day 30`:'Not available yet'} {refreshing&&<span className="text-gray-500"> · updating…</span>}</div>
-  {!paid&&!closed&&!needsProof&&projection?.close_window&&<p>If confirmed by Day 30, median estimated date: {projection.close_window.median_date_pht} PHT</p>}
+  {!paid&&!closed&&!needsProof&&projection?.close_window&&<p>If confirmed by Day 30: about {projection.close_window.median_remaining_days.toFixed(1)} days from the source check. Median estimated date: {projection.close_window.median_date_pht} PHT{projection.close_window.middle80_remaining_days&&<>. Estimated range: {projection.close_window.middle80_remaining_days.map((v:number)=>v.toFixed(1)).join(' to ')} days</>}.</p>}
+  {!paid&&!closed&&!needsProof&&projection?.timing_unavailable_reason&&<p className="text-gray-600">{projection.timing_unavailable_reason}</p>}
+  {!paid&&!closed&&!needsProof&&projection?.forecast_method==='conversation_survival_v2'&&projection?.checkpoint_hours===0&&<p className="text-amber-800">Early estimate: individual buying signals are still limited.</p>}
   {projection?.needs_refresh&&projection?.as_of&&<p className="text-amber-800">Older source: {when(projection.as_of)} PHT. Refresh for a current estimate.</p>}
   <div className="flex gap-3"><button type="button" className="underline" onClick={()=>setExpanded(!expanded)}>{expanded?'Hide projection':'Projection details'}</button><button type="button" className="underline disabled:opacity-50" disabled={refreshing} onClick={()=>void refresh()}>Update projection</button></div>
   {error&&<p role="alert" className="text-red-800 break-words">{error}</p>}
@@ -42,12 +44,15 @@ export default function ContactBotProjection({pageId,contactId,name,enabled=true
    {projection?.message&&<p>{projection.message}</p>}
    <p>Bot ON permits automated replies and follow-ups. Page settings, trials, handoffs, opt-outs and closed stages still apply. Switching ON sends no message and does not restore cancelled jobs.</p>
    {projection?.scores&&<p>By Day 7: {p(projection.scores['168']?.probability)} · Day 14: {p(projection.scores['336']?.probability)} · Day 30: {p(projection.scores['720']?.probability)}</p>}
+   {projection?.scores&&<p>These windows run from the first inquiry. Remaining days are conditional on confirmation within the selected window, not a promise to buy.</p>}
+   {!paid&&!closed&&!needsProof&&projection?.forecast_method==='conversation_survival_v2'&&['168','336'].map(h=>projection?.close_windows?.[h]&&<p key={h}>If confirmed by Day {Number(h)/24}: about {projection.close_windows[h].median_remaining_days.toFixed(1)} days from the source check; estimated range {projection.close_windows[h].middle80_remaining_days.map((v:number)=>v.toFixed(1)).join(' to ')} days.</p>)}
    {projection?.first_inquiry_at&&<p>First inquiry: {when(projection.first_inquiry_at)} PHT</p>}
    {projection?.as_of&&<p>Source checked: {when(projection.as_of)} PHT{projection.stale?' · older source':''}</p>}
    {projection?.checkpoint_at&&<p>Conversation features through: {when(projection.checkpoint_at)} PHT</p>}
    {projection?.close_window&&<p>Middle-half conditional dates: {projection.close_window.middle50_dates_pht.join(' to ')} PHT. This describes customers who confirm within 30 days, not a promised purchase.</p>}
+   {projection?.backtest?.timing?.n>0&&<p>Historical replay at this checkpoint: {projection.backtest.timing.n} later confirmations; average timing error {projection.backtest.timing.mae_days.toFixed(2)} days; {(100*projection.backtest.timing.within_3_days).toFixed(1)}% within 3 days. The estimated range contained {(100*projection.backtest.timing.central80_coverage).toFixed(1)}% of actual confirmation times. These are overall replay results, not a guarantee for this contact.</p>}
    {projection?.support&&<p>{projection.support.comparable_records} comparable training records at this checkpoint. {projection.industry} · {projection.behavior?.replaceAll('_',' ')}</p>}
-   <p>Experimental payment/deposit confirmation forecast, not a bank-settlement check. The Day-30 timing error averaged 6.48 days in the supported backtest. A closed window does not mean never buying.</p>
+   <p>Experimental payment/deposit confirmation forecast, not a bank-settlement check. {projection?.forecast_method==='conversation_survival_v2'?'The formula was tested on later weekly cohorts. Estimates remain uncertain; refreshing a conversation does not retrain the model.':'The prior Day-30 timing error averaged 6.48 days in the supported backtest.'} A closed window does not mean never buying.</p>
    {projection?.model_version&&<p>Model {projection.model_version}</p>}
   </div>}
  </div>;

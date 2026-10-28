@@ -7,6 +7,7 @@ describe('timestamp-safe live conversation features',()=>{
  it('does not use later form details or industry in an earlier checkpoint',()=>{
   const c=projectionCacheFromMessages([m('one',0,'buyer','How much?'),m('quote',2,'page','Video package: PHP 699 for 16 seconds'),m('later',20,'buyer','Business name: ABC\nLocation: Manila')],input);
   expect(c.snapshots.find(s=>s.h===1)?.b).toBe('initial_inquiry');expect(c.snapshots.find(s=>s.h===24)?.b).toBe('form_details');expect(c.snapshots.every(s=>s.h<=25)).toBe(true);
+  expect(c.snapshots.find(s=>s.h===1)?.quoted).toBe(false);expect(c.snapshots.find(s=>s.h===24)?.quoted).toBe(true);expect(c.snapshots.find(s=>s.h===24)?.inbound).toBe(2);expect(c.snapshots.find(s=>s.h===24)?.last_inbound_h).toBe(20);
  });
  it('requires a documentary confirmation rather than a customer claim or administrative paid tag',()=>{
   const base=[m('one',0,'buyer','I need an ad'),m('claim',2,'buyer','Payment sent na po'),m('tag',3,'page','You marked this conversation as paid')];

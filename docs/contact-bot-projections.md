@@ -13,11 +13,16 @@ switch never edits a lead's stage, collected answers, or Page-wide configuration
 Manual campaigns are separate user-directed actions. Existing permissions default
 to ON to preserve behavior; rollout does not enable any previously stopped bot.
 
-The server uses model `eddb1b3d6b59c75e`, trained through October 24, 2026, on the
-five audited Pages. Facebook Page IDs select the trained Page rather than a mutable
+The server uses model `dd7f0ca783ad1651`, trained through October 24, 2026, on the
+five audited Pages. It uses boosted survival rates with conversation activity,
+quote replies, completed details, recency, Page, industry and inquiry timing.
+Historical behavior receives a selected 90-day half-life. The prior model
+`eddb1b3d6b59c75e` remains the explicit fallback for snapshots lacking these signals.
+Facebook Page IDs select the trained Page rather than a mutable
 display name. Other Pages show unavailable rather than an unvalidated transferred
-probability. A 48-case synthetic reference test reproduces the Python probabilities
-and conditional date quantiles. No customer records are embedded in the model asset.
+probability. Independent Python and TypeScript implementations match on 210
+synthetic upgraded cases and 48 prior-model cases. No customer records are embedded
+in either model asset.
 
 The target is first documentary payment/deposit confirmation, not private purchase
 intent or bank settlement. Historical audited payment evidence is retained. New
@@ -27,9 +32,30 @@ A CRM Converted label without payment evidence is shown separately.
 
 Probabilities are conditional on remaining unconfirmed at the displayed source
 cutoff, by 7, 14 and 30 days **from the original first inquiry**. Closing dates are
-conditional on confirmation within Day 30. The measured timing MAE was 6.48 days
-for 52 supported later payers; dates remain rough, not promises. A closed 30-day
-window is not a never-buying prediction.
+conditional on confirmation within Day 30. The upgraded replay has 5,519 unique
+test contacts with at least one mature horizon. At 24 hours, mean timing errors
+are 1.26 days for Day 7 (72 later payers), 2.36 days for Day 14 (80), and 5.41 days
+for Day 30 (40). The Day-30 improvement is uncertain: the paired 95% day-bootstrap
+error-difference interval is -1.31 to +0.48 days. Dates remain rough, not promises.
+The earlier 6.48-day figure describes the prior model on a different supported
+sample; it must not be compared directly with the new 5.41-day result. A closed
+30-day window is not a never-buying prediction.
+
+Remaining days and a conditional range are shown from the source check. Range
+corrections were fitted on earlier development cohorts; measured replay coverage
+is disclosed rather than promised. Individual dates require at least 100 mature
+group records, five later confirmations and 30 replay confirmations at that
+checkpoint/horizon. Sparse cases retain a probability but withhold a personal date.
+Day 7/14 conditional day estimates appear in details when supported.
+
+See [the complete backtest](forecast-v2-backtest.md) and its machine-readable
+calibration, Page comparisons and uncertainty in `forecast-v2-backtest.json`.
+Equal horizon/checkpoint log loss improved 5.8%, and Brier error improved 4.1%.
+These are error reductions, not a percent-correct claim. Development used July
+and August; locked weekly replay starts September 15, after development outcomes
+mature. Each replay model trains strictly before its incoming week. Some September
+history was previously reviewed, so this is historical replay, not a new prospective
+trial. Recent immature outcomes are excluded from each horizon's scores.
 
 Refreshes page through the actual Messenger conversation. A remaining cursor,
 read failure, repeated cursor or safety limit never becomes a silently truncated

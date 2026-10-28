@@ -1,10 +1,12 @@
-export type ForecastSnapshot={h:number;i:string;s:string;b:string;industry_evidence_ms?:number|null};
+export type ForecastSnapshot={h:number;i:string;s:string;b:string;industry_evidence_ms?:number|null;inbound?:number;quoted?:boolean;form?:boolean;duration?:boolean;returned?:boolean;price_question?:boolean;last_inbound_h?:number|null};
 export type ForecastCache={contact_id:string;page_id:string;first_inquiry_at:string;first_message_id?:string|null;source_cutoff_at:string;snapshots:ForecastSnapshot[];payment_at:string|null;payment_evidence_id:string|null;source_kind:string;complete_history:boolean;dirty_at:string|null};
+import{boostedRates,boostedSupport,hasConversationFeatures,type BoostModel}from'./contact-forecast-boost';
 type Cell=[number,number,number];
 type Model={version:string;mode:string;strength:number;hazard_factor:number;edges_hours:number[];counts:Record<string,Record<string,Cell[]>>};
 // A static server-only require keeps TypeScript from expanding thousands of
 // aggregate model keys into a giant inferred type. The asset is traced by Next.
 const model=require('./conversion-runtime/model.json') as Model,HOUR=3_600_000,UNKNOWN='Unknown / insufficient business detail';
+const upgraded=require('./conversion-runtime/model-v2.json') as BoostModel;
 const key=(x:string[])=>JSON.stringify(x).replace(/[\u007f-\uffff]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
 export function forecastPageName(id:string){return ({'656646850875530':'Azshinari','717828411409985':'SAMA KANA MEDIA','725843003947429':'Vista Media Agency','619355471260631':'Manawari Studios','781078668411527':'Loki Media'} as Record<string,string>)[id]||'';}
 const date=(ms:number)=>new Date(ms+8*HOUR).toISOString().slice(0,10);
@@ -25,9 +27,13 @@ export function scoreContactForecast(cache:ForecastCache|null,pageName:string,no
  const payment=cache.payment_at?Date.parse(cache.payment_at):null,knownPayment=payment!=null&&payment<=asof&&!!cache.payment_evidence_id;
  const stale=now-asof>120_000||!!cache.dirty_at&&Date.parse(cache.dirty_at)>asof;
  const f=[...cache.snapshots].filter(s=>s.h<=age).sort((a,b)=>b.h-a.h)[0];
+ const useV2=!!f&&hasConversationFeatures(f),version=useV2?upgraded.version:model.version;
+ const replay=useV2?upgraded.backtest?.['720']?.[String(f!.h)]:undefined;
  const scores:Record<string,any>={};let window:any=null;
+ const windows:Record<string,any>={};
  let rates:number[]=[];let support:any=null;
  if(f){
+  if(useV2){rates=boostedRates(upgraded,pageName,first,f);support=boostedSupport(upgraded,pageName,f);}else{
   const groups=model.counts[String(f.h)]||{},ks=levels(pageName,f);
   rates=model.edges_hours.slice(0,-1).map((a,j)=>{
    const width=model.edges_hours[j+1]-a;let rate=0,deep=null;
@@ -40,6 +46,7 @@ export function scoreContactForecast(cache:ForecastCache|null,pageName:string,no
    if(a===f.h)support=deep;
    return Math.max(0,rate)*model.hazard_factor;
   });
+  }
  }
  for(const h of [168,336,720]){
   if(knownPayment){scores[String(h)]={status:'confirmed',probability:Number(payment!-first<=h*HOUR),future_probability:0};continue;}
@@ -49,12 +56,19 @@ export function scoreContactForecast(cache:ForecastCache|null,pageName:string,no
    scores[String(h)]={status:'insufficient_support',probability:null,future_probability:null};continue;
   }
   const p=-Math.expm1(-Math.min(700,integrate(rates,age,h)));scores[String(h)]={status:'estimated',probability:p,future_probability:p};
-  if(h===720&&p>0&&support&&support.comparable_records>=30){
+  const backtest=useV2?upgraded.backtest?.[String(h)]?.[String(f!.h)]:undefined;
+  const calibration=useV2?upgraded.timing_calibration[String(h)+':'+String(f!.h)]:undefined;
+  const timingSupported=useV2?support?.comparable_records>=100&&support?.events>=5&&backtest?.timing?.n>=30&&!!calibration:support?.comparable_records>=30;
+  if((h===720||useV2)&&p>0&&timingSupported){
    const quantile=(q:number)=>{const target=-Math.log1p(-q*p);let lo=age,hi=h;for(let i=0;i<42;i++){const mid=(lo+hi)/2;if(integrate(rates,age,mid)<target)lo=mid;else hi=mid;}return(lo+hi)/2;};
    const median=quantile(.5),q1=quantile(.25),q3=quantile(.75);
    window={median_date_pht:date(first+median*HOUR),middle50_dates_pht:[date(first+q1*HOUR),date(first+q3*HOUR)],median_remaining_days:(median-age)/24,middle50_remaining_days:[(q1-age)/24,(q3-age)/24],conditional_on_payment_by_day30:true};
+   if(useV2){const margin=calibration!.margin_days,lo=Math.max(0,(quantile(.1)-age)/24-margin),hi=Math.min((h-age)/24,(quantile(.9)-age)/24+margin);Object.assign(window,{horizon_days:h/24,conditional_on_payment_by_day30:h===720,middle80_remaining_days:[lo,hi],middle80_dates_pht:[date(first+(age+lo*24)*HOUR),date(first+(age+hi*24)*HOUR)],nominal_interval_coverage:.8,observed_interval_coverage:backtest.timing.central80_coverage,timing_validation_n:backtest.timing.n});}
+   windows[String(h)]=window;
   }
  }
- return {status:knownPayment?'documented_confirmation':age>=720?'window_ended':'estimated',needs_refresh:!knownPayment&&stale&&age<720,stale,model_version:model.version,as_of:cache.source_cutoff_at,first_inquiry_at:cache.first_inquiry_at,payment_at:cache.payment_at,payment_evidence_id:cache.payment_evidence_id,source_kind:cache.source_kind,scores,close_window:window,checkpoint_hours:f?.h??null,checkpoint_at:f?new Date(first+f.h*HOUR).toISOString():null,industry:f?.i||UNKNOWN,subtype:f?.s||'Unknown',behavior:f?.b||'unavailable',support,
-  limitation:'Experimental payment/deposit confirmation forecast. Day-30 conditional timing MAE was 6.48 days for 52 supported later payers. Closed windows do not mean never buying.'};
+ window=windows['720']||null;
+ return {status:knownPayment?'documented_confirmation':age>=720?'window_ended':'estimated',needs_refresh:!knownPayment&&stale&&age<720,stale,model_version:version,forecast_method:useV2?'conversation_survival_v2':'legacy_survival_v1',as_of:cache.source_cutoff_at,first_inquiry_at:cache.first_inquiry_at,payment_at:cache.payment_at,payment_evidence_id:cache.payment_evidence_id,source_kind:cache.source_kind,scores,close_window:window,close_windows:windows,checkpoint_hours:f?.h??null,checkpoint_at:f?new Date(first+f.h*HOUR).toISOString():null,industry:f?.i||UNKNOWN,subtype:f?.s||'Unknown',behavior:f?.b||'unavailable',support,backtest:replay,
+  timing_unavailable_reason:useV2&&!window&&!knownPayment&&age<720?'Too few validated later confirmations at this checkpoint for an individual 30-day date.':null,
+  limitation:useV2?'Experimental payment/deposit confirmation forecast. Probability errors improved in the chronological replay, but exact dates remain uncertain. Closed windows do not mean never buying.':'Experimental payment/deposit confirmation forecast. Day-30 conditional timing MAE was 6.48 days for 52 supported later payers. Closed windows do not mean never buying.'};
 }

@@ -1,0 +1,3723 @@
+{
+  "schema_version": 2,
+  "source_cutoff_pht": "2026-10-24 18:05:59",
+  "source_records": 43764,
+  "target": "First documented payment/deposit confirmation",
+  "development": {
+    "folds": [
+      [
+        "2026-07-01",
+        "2026-07-15"
+      ],
+      [
+        "2026-08-01",
+        "2026-08-15"
+      ]
+    ],
+    "chosen": {
+      "name": "boost-recent",
+      "leaves": 7,
+      "iterations": 120,
+      "l2": 5,
+      "half_life": 90,
+      "hazard_factor": 1.25
+    },
+    "timing_interval_corrections": {
+      "168:0": {
+        "n": 444,
+        "margin_days": 0.0032130971544258365,
+        "nominal_coverage": 0.8
+      },
+      "168:1": {
+        "n": 330,
+        "margin_days": 0.05254253654165411,
+        "nominal_coverage": 0.8
+      },
+      "168:6": {
+        "n": 242,
+        "margin_days": 0.13229960202528873,
+        "nominal_coverage": 0.8
+      },
+      "168:24": {
+        "n": 160,
+        "margin_days": 0.06887022669353815,
+        "nominal_coverage": 0.8
+      },
+      "168:72": {
+        "n": 86,
+        "margin_days": 0.09589192152463077,
+        "nominal_coverage": 0.8
+      },
+      "336:0": {
+        "n": 491,
+        "margin_days": 0.0061224742332490634,
+        "nominal_coverage": 0.8
+      },
+      "336:1": {
+        "n": 377,
+        "margin_days": 0.0802098085556133,
+        "nominal_coverage": 0.8
+      },
+      "336:6": {
+        "n": 289,
+        "margin_days": 0.2132437264938845,
+        "nominal_coverage": 0.8
+      },
+      "336:24": {
+        "n": 207,
+        "margin_days": 0.2703296935644772,
+        "nominal_coverage": 0.8
+      },
+      "336:72": {
+        "n": 133,
+        "margin_days": 0.28129276440696616,
+        "nominal_coverage": 0.8
+      },
+      "336:168": {
+        "n": 47,
+        "margin_days": 0,
+        "nominal_coverage": 0.8
+      },
+      "720:0": {
+        "n": 534,
+        "margin_days": 0.007459581506878345,
+        "nominal_coverage": 0.8
+      },
+      "720:1": {
+        "n": 420,
+        "margin_days": 0.0625468430006192,
+        "nominal_coverage": 0.8
+      },
+      "720:6": {
+        "n": 332,
+        "margin_days": 0.2407940466617206,
+        "nominal_coverage": 0.8
+      },
+      "720:24": {
+        "n": 250,
+        "margin_days": 0.14855429509445495,
+        "nominal_coverage": 0.8
+      },
+      "720:72": {
+        "n": 176,
+        "margin_days": 0.02768604295597754,
+        "nominal_coverage": 0.8
+      },
+      "720:168": {
+        "n": 90,
+        "margin_days": 0,
+        "nominal_coverage": 0.8
+      },
+      "720:336": {
+        "n": 43,
+        "margin_days": 0.45059514847584126,
+        "nominal_coverage": 0.8
+      }
+    },
+    "parameters_locked_at_utc": "2026-10-28T13:19:37.379502+00:00"
+  },
+  "final_replay_weeks": [
+    "2026-09-15",
+    "2026-09-22",
+    "2026-09-29",
+    "2026-10-06",
+    "2026-10-13"
+  ],
+  "comparison": {
+    "168": {
+      "0": {
+        "current": {
+          "n": 5519,
+          "events": 192,
+          "actual_rate": 0.03478891103460772,
+          "mean_predicted": 0.03850296183178702,
+          "brier": 0.0335453804460862,
+          "log_loss": 0.15060011036902238,
+          "auc": 0.5342960977097804,
+          "top10_rate": 0.05651340996168582,
+          "top10_payer_capture": 0.16247605363984674,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 17,
+              "events": 2,
+              "predicted": 0.024483190562998133,
+              "actual": 0.11764705882352941
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 4845,
+              "events": 152,
+              "predicted": 0.03642114906813587,
+              "actual": 0.03137254901960784
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 657,
+              "events": 38,
+              "predicted": 0.05421790696338398,
+              "actual": 0.0578386605783866
+            }
+          ],
+          "timing": {
+            "n": 192,
+            "mae_days": 1.1050038379444491,
+            "median_error_days": 0.6311350463012113,
+            "within_1_day": 0.7395833333333334,
+            "within_3_days": 0.9010416666666666,
+            "central80_coverage": 0.8333333333333334,
+            "central50_coverage": 0.5260416666666666
+          }
+        },
+        "candidate": {
+          "n": 5519,
+          "events": 192,
+          "actual_rate": 0.03478891103460772,
+          "mean_predicted": 0.04068845198678876,
+          "brier": 0.0334933092892043,
+          "log_loss": 0.14988400917382913,
+          "auc": 0.5684103388398724,
+          "top10_rate": 0.059782608695652176,
+          "top10_payer_capture": 0.171875,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 9,
+              "events": 0,
+              "predicted": 0.023927954341682232,
+              "actual": 0.0
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 4952,
+              "events": 159,
+              "predicted": 0.03890410315353479,
+              "actual": 0.03210823909531502
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 557,
+              "events": 33,
+              "predicted": 0.05669979766815393,
+              "actual": 0.059245960502693
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 1,
+              "events": 0,
+              "predicted": 0.1093088085460253,
+              "actual": 0.0
+            }
+          ],
+          "timing": {
+            "n": 192,
+            "mae_days": 1.1305632482083132,
+            "median_error_days": 0.3044332678902989,
+            "within_1_day": 0.6927083333333334,
+            "within_3_days": 0.8854166666666666,
+            "central80_coverage": 0.875,
+            "central50_coverage": 0.5052083333333334
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -5.2071156881906815e-05,
+          "difference_95_interval": [
+            -0.00013339991130493362,
+            2.8416042105882854e-05
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0007161011951932438,
+          "difference_95_interval": [
+            -0.001725419987560015,
+            0.00032204714747263713
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 28,
+          "replicates": 2000,
+          "candidate_minus_current": 0.025559410263864102,
+          "difference_95_interval": [
+            -0.02987083786822772,
+            0.0800906125705231
+          ]
+        }
+      },
+      "1": {
+        "current": {
+          "n": 5475,
+          "events": 148,
+          "actual_rate": 0.027031963470319633,
+          "mean_predicted": 0.026313630991808286,
+          "brier": 0.025169791343248166,
+          "log_loss": 0.11073059131497479,
+          "auc": 0.7425633818537892,
+          "top10_rate": 0.11131386861313869,
+          "top10_payer_capture": 0.41216216216216217,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 685,
+              "events": 4,
+              "predicted": 0.009555577593511532,
+              "actual": 0.00583941605839416
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 3395,
+              "events": 48,
+              "predicted": 0.01579853486936081,
+              "actual": 0.014138438880706922
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 603,
+              "events": 14,
+              "predicted": 0.028557814066036646,
+              "actual": 0.02321724709784411
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 630,
+              "events": 57,
+              "predicted": 0.07323898415656606,
+              "actual": 0.09047619047619047
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 154,
+              "events": 23,
+              "predicted": 0.12217060970159838,
+              "actual": 0.14935064935064934
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 8,
+              "events": 2,
+              "predicted": 0.21379216907652243,
+              "actual": 0.25
+            }
+          ],
+          "timing": {
+            "n": 148,
+            "mae_days": 1.2540015934801523,
+            "median_error_days": 0.8299597426705574,
+            "within_1_day": 0.5743243243243243,
+            "within_3_days": 0.9054054054054054,
+            "central80_coverage": 0.777027027027027,
+            "central50_coverage": 0.5608108108108109
+          }
+        },
+        "candidate": {
+          "n": 5475,
+          "events": 148,
+          "actual_rate": 0.027031963470319633,
+          "mean_predicted": 0.03323367144501318,
+          "brier": 0.02362907183911057,
+          "log_loss": 0.10092927922652466,
+          "auc": 0.8115699470824307,
+          "top10_rate": 0.14963503649635038,
+          "top10_payer_capture": 0.5540540540540541,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 1017,
+              "events": 5,
+              "predicted": 0.008324433591253393,
+              "actual": 0.004916420845624385
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 3062,
+              "events": 36,
+              "predicted": 0.013899359845468947,
+              "actual": 0.011757021554539516
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 719,
+              "events": 16,
+              "predicted": 0.03499285685799326,
+              "actual": 0.022253129346314324
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 378,
+              "events": 24,
+              "predicted": 0.06920705598966247,
+              "actual": 0.06349206349206349
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 158,
+              "events": 26,
+              "predicted": 0.13696452846566864,
+              "actual": 0.16455696202531644
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 77,
+              "events": 13,
+              "predicted": 0.279801795913469,
+              "actual": 0.16883116883116883
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 64,
+              "events": 28,
+              "predicted": 0.5691140206939724,
+              "actual": 0.4375
+            }
+          ],
+          "timing": {
+            "n": 148,
+            "mae_days": 1.2638761712396351,
+            "median_error_days": 0.820404165992729,
+            "within_1_day": 0.5743243243243243,
+            "within_3_days": 0.8918918918918919,
+            "central80_coverage": 0.8243243243243243,
+            "central50_coverage": 0.5337837837837838
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0015407195041375905,
+          "difference_95_interval": [
+            -0.0027440709377328284,
+            -0.00025706142785123025
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -0.009801312088450117,
+          "difference_95_interval": [
+            -0.0132675513633343,
+            -0.006161957132102818
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 27,
+          "replicates": 2000,
+          "candidate_minus_current": 0.009874577759482668,
+          "difference_95_interval": [
+            -0.09501609461924226,
+            0.09969955390801712
+          ]
+        }
+      },
+      "6": {
+        "current": {
+          "n": 5436,
+          "events": 109,
+          "actual_rate": 0.02005150846210449,
+          "mean_predicted": 0.01827957729644586,
+          "brier": 0.018412442990819514,
+          "log_loss": 0.08305600073950707,
+          "auc": 0.7922923379770358,
+          "top10_rate": 0.10110294117647059,
+          "top10_payer_capture": 0.5045871559633027,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 2922,
+              "events": 17,
+              "predicted": 0.007667289827647323,
+              "actual": 0.005817932922655715
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1492,
+              "events": 18,
+              "predicted": 0.014450353274182245,
+              "actual": 0.012064343163538873
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 648,
+              "events": 28,
+              "predicted": 0.03982196196378467,
+              "actual": 0.043209876543209874
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 319,
+              "events": 27,
+              "predicted": 0.06457464180104723,
+              "actual": 0.08463949843260188
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 49,
+              "events": 16,
+              "predicted": 0.15679287794631824,
+              "actual": 0.32653061224489793
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 6,
+              "events": 3,
+              "predicted": 0.21954018592969557,
+              "actual": 0.5
+            }
+          ],
+          "timing": {
+            "n": 109,
+            "mae_days": 1.3838964301496572,
+            "median_error_days": 1.04089508669515,
+            "within_1_day": 0.47706422018348627,
+            "within_3_days": 0.908256880733945,
+            "central80_coverage": 0.7798165137614679,
+            "central50_coverage": 0.48623853211009177
+          }
+        },
+        "candidate": {
+          "n": 5436,
+          "events": 109,
+          "actual_rate": 0.02005150846210449,
+          "mean_predicted": 0.025125879859398945,
+          "brier": 0.016644230751349003,
+          "log_loss": 0.07344414398517604,
+          "auc": 0.8476895441777478,
+          "top10_rate": 0.12683823529411764,
+          "top10_payer_capture": 0.6330275229357798,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 3134,
+              "events": 14,
+              "predicted": 0.007075117827183149,
+              "actual": 0.004467134652201659
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1469,
+              "events": 22,
+              "predicted": 0.014714414076327178,
+              "actual": 0.014976174268209666
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 432,
+              "events": 10,
+              "predicted": 0.03498953022722374,
+              "actual": 0.023148148148148147
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 183,
+              "events": 8,
+              "predicted": 0.06843038456378246,
+              "actual": 0.04371584699453552
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 87,
+              "events": 13,
+              "predicted": 0.13446491784471445,
+              "actual": 0.14942528735632185
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 81,
+              "events": 13,
+              "predicted": 0.29850436644321765,
+              "actual": 0.16049382716049382
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 50,
+              "events": 29,
+              "predicted": 0.5855970079890482,
+              "actual": 0.58
+            }
+          ],
+          "timing": {
+            "n": 109,
+            "mae_days": 1.3193858484718315,
+            "median_error_days": 1.0331255146238525,
+            "within_1_day": 0.45871559633027525,
+            "within_3_days": 0.9174311926605505,
+            "central80_coverage": 0.8348623853211009,
+            "central50_coverage": 0.47706422018348627
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0017682122394705117,
+          "difference_95_interval": [
+            -0.003297653295505367,
+            -0.00036261446432272207
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -0.009611856754331028,
+          "difference_95_interval": [
+            -0.014820164315504276,
+            -0.004714233786572852
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0645105816778259,
+          "difference_95_interval": [
+            -0.1713900969501616,
+            0.032095969852572424
+          ]
+        }
+      },
+      "24": {
+        "current": {
+          "n": 5399,
+          "events": 72,
+          "actual_rate": 0.013335802926467865,
+          "mean_predicted": 0.012348403403194666,
+          "brier": 0.012689114252358457,
+          "log_loss": 0.061862267007826204,
+          "auc": 0.7778403520847673,
+          "top10_rate": 0.06879910213243547,
+          "top10_payer_capture": 0.515993265993266,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 3633,
+              "events": 17,
+              "predicted": 0.00496823557937648,
+              "actual": 0.004679328378750344
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 781,
+              "events": 10,
+              "predicted": 0.01355624068827476,
+              "actual": 0.012804097311139564
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 903,
+              "events": 33,
+              "predicted": 0.03460232901100499,
+              "actual": 0.036544850498338874
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 57,
+              "events": 5,
+              "predicted": 0.06717015175597484,
+              "actual": 0.08771929824561403
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 25,
+              "events": 7,
+              "predicted": 0.11829617557610346,
+              "actual": 0.28
+            }
+          ],
+          "timing": {
+            "n": 72,
+            "mae_days": 1.453138021686533,
+            "median_error_days": 1.2389402077378084,
+            "within_1_day": 0.4027777777777778,
+            "within_3_days": 0.9166666666666666,
+            "central80_coverage": 0.6805555555555556,
+            "central50_coverage": 0.4583333333333333
+          }
+        },
+        "candidate": {
+          "n": 5399,
+          "events": 72,
+          "actual_rate": 0.013335802926467865,
+          "mean_predicted": 0.016337853305897855,
+          "brier": 0.012030060705804924,
+          "log_loss": 0.05588731787137296,
+          "auc": 0.8339682018229981,
+          "top10_rate": 0.08148148148148149,
+          "top10_payer_capture": 0.6111111111111112,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 4063,
+              "events": 17,
+              "predicted": 0.004586162048386805,
+              "actual": 0.0041841004184100415
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 834,
+              "events": 11,
+              "predicted": 0.015516206077533214,
+              "actual": 0.013189448441247002
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 249,
+              "events": 8,
+              "predicted": 0.03419273235318337,
+              "actual": 0.0321285140562249
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 102,
+              "events": 6,
+              "predicted": 0.06820871662166642,
+              "actual": 0.058823529411764705
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 65,
+              "events": 8,
+              "predicted": 0.14922883447290747,
+              "actual": 0.12307692307692308
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 56,
+              "events": 11,
+              "predicted": 0.2685555283862268,
+              "actual": 0.19642857142857142
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 30,
+              "events": 11,
+              "predicted": 0.5474571481854634,
+              "actual": 0.36666666666666664
+            }
+          ],
+          "timing": {
+            "n": 72,
+            "mae_days": 1.260557778647416,
+            "median_error_days": 1.109643031685846,
+            "within_1_day": 0.4444444444444444,
+            "within_3_days": 0.9444444444444444,
+            "central80_coverage": 0.7638888888888888,
+            "central50_coverage": 0.4722222222222222
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0006590535465535305,
+          "difference_95_interval": [
+            -0.0015448899087690557,
+            0.00019297804443082708
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -0.005974949136453235,
+          "difference_95_interval": [
+            -0.009634291617114937,
+            -0.002339453445236135
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.19258024303911705,
+          "difference_95_interval": [
+            -0.34434808714912296,
+            -0.061544498336166244
+          ]
+        }
+      },
+      "72": {
+        "current": {
+          "n": 5351,
+          "events": 24,
+          "actual_rate": 0.004485142963931975,
+          "mean_predicted": 0.005807578831042986,
+          "brier": 0.0044576386781484244,
+          "log_loss": 0.026510140439117556,
+          "auc": 0.7718931856579688,
+          "top10_rate": 0.014925373134328358,
+          "top10_payer_capture": 0.3333333333333333,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 4277,
+              "events": 9,
+              "predicted": 0.0025915357270876386,
+              "actual": 0.002104278700023381
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 858,
+              "events": 11,
+              "predicted": 0.01377185804141159,
+              "actual": 0.01282051282051282
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 185,
+              "events": 3,
+              "predicted": 0.03054175678167669,
+              "actual": 0.016216216216216217
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 31,
+              "events": 1,
+              "predicted": 0.08147989729083406,
+              "actual": 0.03225806451612903
+            }
+          ],
+          "timing": {
+            "n": 24,
+            "mae_days": 1.0571882379961626,
+            "median_error_days": 1.204659021154857,
+            "within_1_day": 0.3333333333333333,
+            "within_3_days": 1,
+            "central80_coverage": 0.8333333333333334,
+            "central50_coverage": 0.3333333333333333
+          }
+        },
+        "candidate": {
+          "n": 5351,
+          "events": 24,
+          "actual_rate": 0.004485142963931975,
+          "mean_predicted": 0.007479777213794738,
+          "brier": 0.004604697041222221,
+          "log_loss": 0.02605601703464394,
+          "auc": 0.8004075151742694,
+          "top10_rate": 0.020522388059701493,
+          "top10_payer_capture": 0.4583333333333333,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 4865,
+              "events": 13,
+              "predicted": 0.002668067534003445,
+              "actual": 0.002672147995889003
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 251,
+              "events": 3,
+              "predicted": 0.014464457548533526,
+              "actual": 0.01195219123505976
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 105,
+              "events": 0,
+              "predicted": 0.03530782249088252,
+              "actual": 0.0
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 68,
+              "events": 1,
+              "predicted": 0.0678637024019789,
+              "actual": 0.014705882352941176
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 29,
+              "events": 2,
+              "predicted": 0.13951198100439088,
+              "actual": 0.06896551724137931
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 25,
+              "events": 3,
+              "predicted": 0.27698835774865377,
+              "actual": 0.12
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 8,
+              "events": 2,
+              "predicted": 0.5151188694607577,
+              "actual": 0.25
+            }
+          ],
+          "timing": {
+            "n": 24,
+            "mae_days": 1.0221592813839397,
+            "median_error_days": 1.1409287908275751,
+            "within_1_day": 0.375,
+            "within_3_days": 1,
+            "central80_coverage": 0.8333333333333334,
+            "central50_coverage": 0.3333333333333333
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": 0.00014705836307379646,
+          "difference_95_interval": [
+            -0.0004491100573668958,
+            0.000665688804072621
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 33,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0004541234044736163,
+          "difference_95_interval": [
+            -0.0035363451775746305,
+            0.0023485873222905567
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 16,
+          "replicates": 2000,
+          "candidate_minus_current": -0.03502895661222283,
+          "difference_95_interval": [
+            -0.08812771918917803,
+            0.004906304047179139
+          ]
+        }
+      }
+    },
+    "336": {
+      "0": {
+        "current": {
+          "n": 5224,
+          "events": 196,
+          "actual_rate": 0.03751914241960184,
+          "mean_predicted": 0.042683831653137626,
+          "brier": 0.03605577364617647,
+          "log_loss": 0.1593921814052132,
+          "auc": 0.5386245190200185,
+          "top10_rate": 0.06782268521570954,
+          "top10_payer_capture": 0.1809758386113066,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 4601,
+              "events": 153,
+              "predicted": 0.04022339699291032,
+              "actual": 0.03325364051293197
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 623,
+              "events": 43,
+              "predicted": 0.06085471427224815,
+              "actual": 0.06902086677367576
+            }
+          ],
+          "timing": {
+            "n": 196,
+            "mae_days": 1.7561524139578257,
+            "median_error_days": 0.7832468911015031,
+            "within_1_day": 0.5561224489795918,
+            "within_3_days": 0.8316326530612245,
+            "central80_coverage": 0.8010204081632653,
+            "central50_coverage": 0.5357142857142857
+          }
+        },
+        "candidate": {
+          "n": 5224,
+          "events": 196,
+          "actual_rate": 0.03751914241960184,
+          "mean_predicted": 0.04429415138608814,
+          "brier": 0.035993155811357126,
+          "log_loss": 0.1585531383483268,
+          "auc": 0.5791876714886431,
+          "top10_rate": 0.07138304652644997,
+          "top10_payer_capture": 0.1904761904761905,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 2,
+              "events": 0,
+              "predicted": 0.023239432584719163,
+              "actual": 0.0
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 4317,
+              "events": 147,
+              "predicted": 0.0415737581960583,
+              "actual": 0.034051424600416956
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 900,
+              "events": 49,
+              "predicted": 0.05703497876545545,
+              "actual": 0.05444444444444444
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 5,
+              "events": 0,
+              "predicted": 0.10815459089228582,
+              "actual": 0.0
+            }
+          ],
+          "timing": {
+            "n": 196,
+            "mae_days": 1.7812792681544571,
+            "median_error_days": 0.46409801498728087,
+            "within_1_day": 0.6683673469387755,
+            "within_3_days": 0.8214285714285714,
+            "central80_coverage": 0.8520408163265306,
+            "central50_coverage": 0.5153061224489796
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -6.261783481934617e-05,
+          "difference_95_interval": [
+            -0.00013966096640109955,
+            2.266063619028911e-05
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0008390430568864212,
+          "difference_95_interval": [
+            -0.001768268588247471,
+            0.00015262515861884943
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 24,
+          "replicates": 2000,
+          "candidate_minus_current": 0.025126854196631493,
+          "difference_95_interval": [
+            -0.04030766463718838,
+            0.08783936788840764
+          ]
+        }
+      },
+      "1": {
+        "current": {
+          "n": 5183,
+          "events": 155,
+          "actual_rate": 0.02990546015820953,
+          "mean_predicted": 0.03009039740564945,
+          "brier": 0.02770954584980944,
+          "log_loss": 0.11964474792933155,
+          "auc": 0.7525053250186055,
+          "top10_rate": 0.11464354527938343,
+          "top10_payer_capture": 0.38387096774193546,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 23,
+              "events": 0,
+              "predicted": 0.00925960587387194,
+              "actual": 0.0
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 3391,
+              "events": 42,
+              "predicted": 0.016453451990867313,
+              "actual": 0.012385726924211147
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 1032,
+              "events": 30,
+              "predicted": 0.03155551466958173,
+              "actual": 0.029069767441860465
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 560,
+              "events": 53,
+              "predicted": 0.0791868231924102,
+              "actual": 0.09464285714285714
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 170,
+              "events": 28,
+              "predicted": 0.126582811360315,
+              "actual": 0.16470588235294117
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 7,
+              "events": 2,
+              "predicted": 0.21755900847705312,
+              "actual": 0.2857142857142857
+            }
+          ],
+          "timing": {
+            "n": 155,
+            "mae_days": 2.002096066796787,
+            "median_error_days": 1.3264918435629403,
+            "within_1_day": 0.4064516129032258,
+            "within_3_days": 0.7935483870967742,
+            "central80_coverage": 0.7870967741935484,
+            "central50_coverage": 0.5483870967741935
+          }
+        },
+        "candidate": {
+          "n": 5183,
+          "events": 155,
+          "actual_rate": 0.02990546015820953,
+          "mean_predicted": 0.03664623989728637,
+          "brier": 0.025891330327250713,
+          "log_loss": 0.10979964544639739,
+          "auc": 0.810809787769138,
+          "top10_rate": 0.1599229287090559,
+          "top10_payer_capture": 0.535483870967742,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 539,
+              "events": 2,
+              "predicted": 0.009272461304159811,
+              "actual": 0.0037105751391465678
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 3077,
+              "events": 38,
+              "predicted": 0.015584601307183973,
+              "actual": 0.012349691257718558
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 838,
+              "events": 24,
+              "predicted": 0.03468240323041295,
+              "actual": 0.028639618138424822
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 421,
+              "events": 22,
+              "predicted": 0.0690504568355478,
+              "actual": 0.052256532066508314
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 173,
+              "events": 26,
+              "predicted": 0.13576668615660378,
+              "actual": 0.15028901734104047
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 75,
+              "events": 15,
+              "predicted": 0.2778376522789202,
+              "actual": 0.2
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 60,
+              "events": 28,
+              "predicted": 0.575437161027081,
+              "actual": 0.4666666666666667
+            }
+          ],
+          "timing": {
+            "n": 155,
+            "mae_days": 1.9919279775311003,
+            "median_error_days": 1.0380442911113263,
+            "within_1_day": 0.49032258064516127,
+            "within_3_days": 0.7935483870967742,
+            "central80_coverage": 0.8516129032258064,
+            "central50_coverage": 0.5225806451612903
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0018182155225587306,
+          "difference_95_interval": [
+            -0.003299875806313246,
+            -0.00045912155162983176
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.00984510248293416,
+          "difference_95_interval": [
+            -0.013928529978264019,
+            -0.005824802139874016
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 23,
+          "replicates": 2000,
+          "candidate_minus_current": -0.010168089265686919,
+          "difference_95_interval": [
+            -0.14737717723715882,
+            0.11880672756111907
+          ]
+        }
+      },
+      "6": {
+        "current": {
+          "n": 5144,
+          "events": 116,
+          "actual_rate": 0.02255054432348367,
+          "mean_predicted": 0.022028453001524385,
+          "brier": 0.020696737497892668,
+          "log_loss": 0.09219051480322668,
+          "auc": 0.7912508915589938,
+          "top10_rate": 0.10679611650485436,
+          "top10_payer_capture": 0.47413793103448276,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 1307,
+              "events": 11,
+              "predicted": 0.008000262077466208,
+              "actual": 0.008416220351951033
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 2479,
+              "events": 21,
+              "predicted": 0.013365479239332349,
+              "actual": 0.008471157724889069
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 749,
+              "events": 26,
+              "predicted": 0.03365717968725444,
+              "actual": 0.03471295060080107
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 557,
+              "events": 39,
+              "predicted": 0.06401927834596195,
+              "actual": 0.07001795332136446
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 42,
+              "events": 13,
+              "predicted": 0.15832660136545654,
+              "actual": 0.30952380952380953
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 10,
+              "events": 6,
+              "predicted": 0.22073137884846422,
+              "actual": 0.6
+            }
+          ],
+          "timing": {
+            "n": 116,
+            "mae_days": 2.2220229404396727,
+            "median_error_days": 1.6574648892787485,
+            "within_1_day": 0.3017241379310345,
+            "within_3_days": 0.7931034482758621,
+            "central80_coverage": 0.7931034482758621,
+            "central50_coverage": 0.4827586206896552
+          }
+        },
+        "candidate": {
+          "n": 5144,
+          "events": 116,
+          "actual_rate": 0.02255054432348367,
+          "mean_predicted": 0.028314784853163348,
+          "brier": 0.018770121917452413,
+          "log_loss": 0.08308696283057326,
+          "auc": 0.8323500466353935,
+          "top10_rate": 0.13203883495145632,
+          "top10_payer_capture": 0.5862068965517241,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 1840,
+              "events": 9,
+              "predicted": 0.008215514853346846,
+              "actual": 0.004891304347826087
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 2331,
+              "events": 27,
+              "predicted": 0.014208011543881764,
+              "actual": 0.011583011583011582
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 523,
+              "events": 16,
+              "predicted": 0.03459276672429512,
+              "actual": 0.030592734225621414
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 232,
+              "events": 9,
+              "predicted": 0.06726531528485914,
+              "actual": 0.03879310344827586
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 97,
+              "events": 15,
+              "predicted": 0.13275630324094617,
+              "actual": 0.15463917525773196
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 66,
+              "events": 10,
+              "predicted": 0.2938326195223303,
+              "actual": 0.15151515151515152
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 55,
+              "events": 30,
+              "predicted": 0.5717808472724802,
+              "actual": 0.5454545454545454
+            }
+          ],
+          "timing": {
+            "n": 116,
+            "mae_days": 2.1431543083649878,
+            "median_error_days": 1.3707101710454594,
+            "within_1_day": 0.3275862068965517,
+            "within_3_days": 0.7844827586206896,
+            "central80_coverage": 0.8793103448275862,
+            "central50_coverage": 0.4827586206896552
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0019266155804402584,
+          "difference_95_interval": [
+            -0.003576907365111791,
+            -0.0004085135955304961
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.00910355197265342,
+          "difference_95_interval": [
+            -0.01466867745879454,
+            -0.003962354977890319
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 22,
+          "replicates": 2000,
+          "candidate_minus_current": -0.07886863207468518,
+          "difference_95_interval": [
+            -0.21119008613282647,
+            0.07059385628321233
+          ]
+        }
+      },
+      "24": {
+        "current": {
+          "n": 5108,
+          "events": 80,
+          "actual_rate": 0.015661707126076743,
+          "mean_predicted": 0.016110901129189364,
+          "brier": 0.014879478145521301,
+          "log_loss": 0.07075779452559208,
+          "auc": 0.7834750397772474,
+          "top10_rate": 0.07436399217221135,
+          "top10_payer_capture": 0.475,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 3327,
+              "events": 18,
+              "predicted": 0.006715375570047436,
+              "actual": 0.005410279531109108
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 785,
+              "events": 11,
+              "predicted": 0.016975226246625542,
+              "actual": 0.014012738853503185
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 638,
+              "events": 19,
+              "predicted": 0.03756824831855163,
+              "actual": 0.029780564263322883
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 329,
+              "events": 25,
+              "predicted": 0.058072488201936154,
+              "actual": 0.07598784194528875
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 29,
+              "events": 7,
+              "predicted": 0.12249947576129196,
+              "actual": 0.2413793103448276
+            }
+          ],
+          "timing": {
+            "n": 80,
+            "mae_days": 2.6397761858709075,
+            "median_error_days": 2.163789638226735,
+            "within_1_day": 0.25,
+            "within_3_days": 0.65,
+            "central80_coverage": 0.6875,
+            "central50_coverage": 0.425
+          }
+        },
+        "candidate": {
+          "n": 5108,
+          "events": 80,
+          "actual_rate": 0.015661707126076743,
+          "mean_predicted": 0.01930964498963545,
+          "brier": 0.014176023780222988,
+          "log_loss": 0.06523142478020141,
+          "auc": 0.8305128778838504,
+          "top10_rate": 0.08610567514677103,
+          "top10_payer_capture": 0.55,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 3346,
+              "events": 15,
+              "predicted": 0.005993934297789962,
+              "actual": 0.004482964734010759
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1107,
+              "events": 18,
+              "predicted": 0.015291449176124048,
+              "actual": 0.016260162601626018
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 374,
+              "events": 10,
+              "predicted": 0.033808739511544596,
+              "actual": 0.026737967914438502
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 140,
+              "events": 8,
+              "predicted": 0.0681354471411153,
+              "actual": 0.05714285714285714
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 57,
+              "events": 7,
+              "predicted": 0.15011111938379987,
+              "actual": 0.12280701754385964
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 56,
+              "events": 11,
+              "predicted": 0.27410182643080405,
+              "actual": 0.19642857142857142
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 28,
+              "events": 11,
+              "predicted": 0.5557450338074256,
+              "actual": 0.39285714285714285
+            }
+          ],
+          "timing": {
+            "n": 80,
+            "mae_days": 2.3586288547580514,
+            "median_error_days": 1.6638895486384042,
+            "within_1_day": 0.3,
+            "within_3_days": 0.7375,
+            "central80_coverage": 0.8625,
+            "central50_coverage": 0.475
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0007034543652983174,
+          "difference_95_interval": [
+            -0.0016155767987468313,
+            0.00025071602308780354
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.005526369745390677,
+          "difference_95_interval": [
+            -0.00938735533464918,
+            -0.0016132146590114142
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 22,
+          "replicates": 2000,
+          "candidate_minus_current": -0.2811473311128562,
+          "difference_95_interval": [
+            -0.4758885489610011,
+            -0.06734960397513683
+          ]
+        }
+      },
+      "72": {
+        "current": {
+          "n": 5066,
+          "events": 38,
+          "actual_rate": 0.007500986971969996,
+          "mean_predicted": 0.009562924466278957,
+          "brier": 0.00738545949983436,
+          "log_loss": 0.04032802730168013,
+          "auc": 0.7861135535736716,
+          "top10_rate": 0.030040964952207556,
+          "top10_payer_capture": 0.40080971659919024,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 3397,
+              "events": 8,
+              "predicted": 0.003416140649429205,
+              "actual": 0.0023550191345304682
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1144,
+              "events": 14,
+              "predicted": 0.014872348783428142,
+              "actual": 0.012237762237762238
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 478,
+              "events": 13,
+              "predicted": 0.03413003665422018,
+              "actual": 0.027196652719665274
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 47,
+              "events": 3,
+              "predicted": 0.0747451283212583,
+              "actual": 0.06382978723404255
+            }
+          ],
+          "timing": {
+            "n": 38,
+            "mae_days": 2.538872016760543,
+            "median_error_days": 2.1725896261152773,
+            "within_1_day": 0.2631578947368421,
+            "within_3_days": 0.631578947368421,
+            "central80_coverage": 0.8157894736842105,
+            "central50_coverage": 0.47368421052631576
+          }
+        },
+        "candidate": {
+          "n": 5066,
+          "events": 38,
+          "actual_rate": 0.007500986971969996,
+          "mean_predicted": 0.01100545823217724,
+          "brier": 0.00763565311827511,
+          "log_loss": 0.04018801262077045,
+          "auc": 0.7959427207637232,
+          "top10_rate": 0.03550295857988166,
+          "top10_payer_capture": 0.47368421052631576,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 4125,
+              "events": 16,
+              "predicted": 0.003993438929111559,
+              "actual": 0.0038787878787878787
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 625,
+              "events": 7,
+              "predicted": 0.015087814940567443,
+              "actual": 0.0112
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 143,
+              "events": 4,
+              "predicted": 0.03438583096235587,
+              "actual": 0.027972027972027972
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 95,
+              "events": 2,
+              "predicted": 0.0695483139037132,
+              "actual": 0.021052631578947368
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 38,
+              "events": 3,
+              "predicted": 0.13062327076478036,
+              "actual": 0.07894736842105263
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 30,
+              "events": 4,
+              "predicted": 0.2772372266838169,
+              "actual": 0.13333333333333333
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 10,
+              "events": 2,
+              "predicted": 0.5045766745724263,
+              "actual": 0.2
+            }
+          ],
+          "timing": {
+            "n": 38,
+            "mae_days": 2.341266438811161,
+            "median_error_days": 1.5439273806518656,
+            "within_1_day": 0.2894736842105263,
+            "within_3_days": 0.631578947368421,
+            "central80_coverage": 0.868421052631579,
+            "central50_coverage": 0.5526315789473685
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": 0.00025019361844074947,
+          "difference_95_interval": [
+            -0.00036143969165299667,
+            0.0008210721518492518
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0001400146809096913,
+          "difference_95_interval": [
+            -0.003524747475852152,
+            0.0031809282857489314
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 19,
+          "replicates": 2000,
+          "candidate_minus_current": -0.19760557794938194,
+          "difference_95_interval": [
+            -0.553052270998964,
+            0.13962538621131765
+          ]
+        }
+      },
+      "168": {
+        "current": {
+          "n": 5043,
+          "events": 15,
+          "actual_rate": 0.00297441998810232,
+          "mean_predicted": 0.0038227744110296102,
+          "brier": 0.002945461947422081,
+          "log_loss": 0.017731825310715234,
+          "auc": 0.8591288782816229,
+          "top10_rate": 0.015841584158415842,
+          "top10_payer_capture": 0.5333333333333333,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 4471,
+              "events": 6,
+              "predicted": 0.0021392307475703483,
+              "actual": 0.0013419816595839856
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 530,
+              "events": 8,
+              "predicted": 0.016019670629550283,
+              "actual": 0.01509433962264151
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 42,
+              "events": 1,
+              "predicted": 0.029126791637467737,
+              "actual": 0.023809523809523808
+            }
+          ],
+          "timing": {
+            "n": 15,
+            "mae_days": 1.4388573404795353,
+            "median_error_days": 1.8673190861924216,
+            "within_1_day": 0.4,
+            "within_3_days": 1,
+            "central80_coverage": 0.9333333333333333,
+            "central50_coverage": 0.4666666666666667
+          }
+        },
+        "candidate": {
+          "n": 5043,
+          "events": 15,
+          "actual_rate": 0.00297441998810232,
+          "mean_predicted": 0.003711339590628176,
+          "brier": 0.002880646415467307,
+          "log_loss": 0.0167593775416706,
+          "auc": 0.867574913815964,
+          "top10_rate": 0.02178217821782178,
+          "top10_payer_capture": 0.7333333333333333,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 4702,
+              "events": 8,
+              "predicted": 0.0022012439646124766,
+              "actual": 0.0017014036580178648
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 241,
+              "events": 3,
+              "predicted": 0.015536536366225415,
+              "actual": 0.012448132780082987
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 70,
+              "events": 1,
+              "predicted": 0.03417100237481737,
+              "actual": 0.014285714285714285
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 27,
+              "events": 2,
+              "predicted": 0.06968286835279137,
+              "actual": 0.07407407407407407
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 3,
+              "events": 1,
+              "predicted": 0.11610785263570549,
+              "actual": 0.3333333333333333
+            }
+          ],
+          "timing": {
+            "n": 15,
+            "mae_days": 1.4360625377435101,
+            "median_error_days": 1.868526698268963,
+            "within_1_day": 0.4,
+            "within_3_days": 1,
+            "central80_coverage": 0.9333333333333333,
+            "central50_coverage": 0.4666666666666667
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -6.481553195477387e-05,
+          "difference_95_interval": [
+            -0.00017640916735633613,
+            1.991278679287063e-05
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 26,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0009724477690446326,
+          "difference_95_interval": [
+            -0.0024913109931521244,
+            0.0004158878242015864
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 11,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0027948027360253035,
+          "difference_95_interval": [
+            -0.02290383733125054,
+            0.012330766868270822
+          ]
+        }
+      }
+    },
+    "720": {
+      "0": {
+        "current": {
+          "n": 2426,
+          "events": 107,
+          "actual_rate": 0.04410552349546579,
+          "mean_predicted": 0.0465915695965437,
+          "brier": 0.04206612656671354,
+          "log_loss": 0.1798001392496691,
+          "auc": 0.561195004292053,
+          "top10_rate": 0.07407407407407407,
+          "top10_payer_capture": 0.16822429906542055,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 1966,
+              "events": 82,
+              "predicted": 0.04402356671324425,
+              "actual": 0.04170905391658189
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 460,
+              "events": 25,
+              "predicted": 0.05756699061516704,
+              "actual": 0.05434782608695652
+            }
+          ],
+          "timing": {
+            "n": 107,
+            "mae_days": 2.9206491492593125,
+            "median_error_days": 0.6716743598884851,
+            "within_1_day": 0.5233644859813084,
+            "within_3_days": 0.7850467289719626,
+            "central80_coverage": 0.7757009345794392,
+            "central50_coverage": 0.514018691588785
+          }
+        },
+        "candidate": {
+          "n": 2426,
+          "events": 107,
+          "actual_rate": 0.04410552349546579,
+          "mean_predicted": 0.04791955851352056,
+          "brier": 0.041918249903746756,
+          "log_loss": 0.17796739394121075,
+          "auc": 0.6084640092208614,
+          "top10_rate": 0.07304526748971193,
+          "top10_payer_capture": 0.1658878504672897,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 1480,
+              "events": 55,
+              "predicted": 0.042999054762664864,
+              "actual": 0.037162162162162164
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 941,
+              "events": 51,
+              "predicted": 0.055323974653542544,
+              "actual": 0.05419766206163656
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 5,
+              "events": 1,
+              "predicted": 0.11087755121466938,
+              "actual": 0.2
+            }
+          ],
+          "timing": {
+            "n": 107,
+            "mae_days": 2.929926414553274,
+            "median_error_days": 0.5749652185963242,
+            "within_1_day": 0.6261682242990654,
+            "within_3_days": 0.7850467289719626,
+            "central80_coverage": 0.8598130841121495,
+            "central50_coverage": 0.4766355140186916
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.00014787666296678931,
+          "difference_95_interval": [
+            -0.0002742083761843835,
+            -2.179057228844365e-05
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.001832745308458329,
+          "difference_95_interval": [
+            -0.0033033534259670635,
+            -0.0004435829606016289
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 9,
+          "replicates": 2000,
+          "candidate_minus_current": 0.009277265293962104,
+          "difference_95_interval": [
+            -0.08391814676471052,
+            0.11108907399537035
+          ]
+        }
+      },
+      "1": {
+        "current": {
+          "n": 2401,
+          "events": 82,
+          "actual_rate": 0.034152436484798,
+          "mean_predicted": 0.0354963965546261,
+          "brier": 0.03140459678075273,
+          "log_loss": 0.13456964505474533,
+          "auc": 0.725622903059561,
+          "top10_rate": 0.11203319502074689,
+          "top10_payer_capture": 0.32926829268292684,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1427,
+              "events": 25,
+              "predicted": 0.01933217148040535,
+              "actual": 0.01751927119831815
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 571,
+              "events": 14,
+              "predicted": 0.03488552790659629,
+              "actual": 0.024518388791593695
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 272,
+              "events": 23,
+              "predicted": 0.07765475831132825,
+              "actual": 0.08455882352941177
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 127,
+              "events": 18,
+              "predicted": 0.12381534072048768,
+              "actual": 0.14173228346456693
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 4,
+              "events": 2,
+              "predicted": 0.21839011456728474,
+              "actual": 0.5
+            }
+          ],
+          "timing": {
+            "n": 82,
+            "mae_days": 3.2958321299444227,
+            "median_error_days": 1.4382399950357216,
+            "within_1_day": 0.43902439024390244,
+            "within_3_days": 0.7926829268292683,
+            "central80_coverage": 0.7439024390243902,
+            "central50_coverage": 0.5365853658536586
+          }
+        },
+        "candidate": {
+          "n": 2401,
+          "events": 82,
+          "actual_rate": 0.034152436484798,
+          "mean_predicted": 0.0434782898118172,
+          "brier": 0.02903596791797146,
+          "log_loss": 0.12271836853095645,
+          "auc": 0.7902139273656643,
+          "top10_rate": 0.17842323651452283,
+          "top10_payer_capture": 0.524390243902439,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 4,
+              "events": 0,
+              "predicted": 0.00975423012119851,
+              "actual": 0.0
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1496,
+              "events": 21,
+              "predicted": 0.017411340732601772,
+              "actual": 0.014037433155080214
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 510,
+              "events": 15,
+              "predicted": 0.03461948006550722,
+              "actual": 0.029411764705882353
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 211,
+              "events": 6,
+              "predicted": 0.0698172294278738,
+              "actual": 0.02843601895734597
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 103,
+              "events": 14,
+              "predicted": 0.1354377167890341,
+              "actual": 0.13592233009708737
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 41,
+              "events": 10,
+              "predicted": 0.28340801212014577,
+              "actual": 0.24390243902439024
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 36,
+              "events": 16,
+              "predicted": 0.565216878134153,
+              "actual": 0.4444444444444444
+            }
+          ],
+          "timing": {
+            "n": 82,
+            "mae_days": 3.3954635588384314,
+            "median_error_days": 1.228348769050809,
+            "within_1_day": 0.4024390243902439,
+            "within_3_days": 0.6951219512195121,
+            "central80_coverage": 0.8292682926829268,
+            "central50_coverage": 0.5487804878048781
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0023686288627812746,
+          "difference_95_interval": [
+            -0.004998633900886017,
+            0.0009872176549263181
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.011851276523788876,
+          "difference_95_interval": [
+            -0.018950995364038832,
+            -0.0025130057335075564
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 8,
+          "replicates": 2000,
+          "candidate_minus_current": 0.09963142889400856,
+          "difference_95_interval": [
+            -0.08914312236260115,
+            0.2688812111002311
+          ]
+        }
+      },
+      "6": {
+        "current": {
+          "n": 2383,
+          "events": 64,
+          "actual_rate": 0.026856903063365505,
+          "mean_predicted": 0.02727262939011119,
+          "brier": 0.024421274050907882,
+          "log_loss": 0.10818516852929523,
+          "auc": 0.7478775873221216,
+          "top10_rate": 0.11297071129707113,
+          "top10_payer_capture": 0.421875,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 269,
+              "events": 1,
+              "predicted": 0.00962493530722373,
+              "actual": 0.0037174721189591076
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1350,
+              "events": 19,
+              "predicted": 0.015011650757640271,
+              "actual": 0.014074074074074074
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 353,
+              "events": 11,
+              "predicted": 0.03239604147910079,
+              "actual": 0.031161473087818695
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 378,
+              "events": 17,
+              "predicted": 0.06634940448347733,
+              "actual": 0.04497354497354497
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 25,
+              "events": 12,
+              "predicted": 0.15636382890010675,
+              "actual": 0.48
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 8,
+              "events": 4,
+              "predicted": 0.21385830709971648,
+              "actual": 0.5
+            }
+          ],
+          "timing": {
+            "n": 64,
+            "mae_days": 4.166331935446505,
+            "median_error_days": 2.317543224649966,
+            "within_1_day": 0.3125,
+            "within_3_days": 0.59375,
+            "central80_coverage": 0.734375,
+            "central50_coverage": 0.40625
+          }
+        },
+        "candidate": {
+          "n": 2383,
+          "events": 64,
+          "actual_rate": 0.026856903063365505,
+          "mean_predicted": 0.03424982558958344,
+          "brier": 0.02154821373601323,
+          "log_loss": 0.0963842013641086,
+          "auc": 0.8030064144027598,
+          "top10_rate": 0.14225941422594143,
+          "top10_payer_capture": 0.53125,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 295,
+              "events": 1,
+              "predicted": 0.008777392337487028,
+              "actual": 0.003389830508474576
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1537,
+              "events": 22,
+              "predicted": 0.015295160888254635,
+              "actual": 0.014313597918022121
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 301,
+              "events": 7,
+              "predicted": 0.0339923074202997,
+              "actual": 0.023255813953488372
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 134,
+              "events": 3,
+              "predicted": 0.06789451841889288,
+              "actual": 0.022388059701492536
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 51,
+              "events": 6,
+              "predicted": 0.1307039483408844,
+              "actual": 0.11764705882352941
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 32,
+              "events": 6,
+              "predicted": 0.29731482193251546,
+              "actual": 0.1875
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 33,
+              "events": 19,
+              "predicted": 0.6063580511001163,
+              "actual": 0.5757575757575758
+            }
+          ],
+          "timing": {
+            "n": 64,
+            "mae_days": 3.858244599075387,
+            "median_error_days": 1.4368163829984,
+            "within_1_day": 0.3125,
+            "within_3_days": 0.671875,
+            "central80_coverage": 0.828125,
+            "central50_coverage": 0.40625
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.00287306031489465,
+          "difference_95_interval": [
+            -0.005913561734610863,
+            0.000648560567210783
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.011800967165186646,
+          "difference_95_interval": [
+            -0.021294205439935307,
+            -0.0005314241162789421
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 8,
+          "replicates": 2000,
+          "candidate_minus_current": -0.3080873363711185,
+          "difference_95_interval": [
+            -0.9278625474374761,
+            0.21036040364683165
+          ]
+        }
+      },
+      "24": {
+        "current": {
+          "n": 2359,
+          "events": 40,
+          "actual_rate": 0.01695633743111488,
+          "mean_predicted": 0.020728475527587668,
+          "brier": 0.016424697297846298,
+          "log_loss": 0.08141012662961039,
+          "auc": 0.7009702457956015,
+          "top10_rate": 0.059322033898305086,
+          "top10_payer_capture": 0.35,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 648,
+              "events": 5,
+              "predicted": 0.007611247490502539,
+              "actual": 0.007716049382716049
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 1138,
+              "events": 14,
+              "predicted": 0.013305426878327304,
+              "actual": 0.012302284710017574
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 337,
+              "events": 7,
+              "predicted": 0.03786233827858735,
+              "actual": 0.020771513353115726
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 215,
+              "events": 10,
+              "predicted": 0.06320783383656926,
+              "actual": 0.046511627906976744
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 21,
+              "events": 4,
+              "predicted": 0.11788177778337461,
+              "actual": 0.19047619047619047
+            }
+          ],
+          "timing": {
+            "n": 40,
+            "mae_days": 5.693333376007347,
+            "median_error_days": 4.148096565669079,
+            "within_1_day": 0.25,
+            "within_3_days": 0.425,
+            "central80_coverage": 0.775,
+            "central50_coverage": 0.45
+          }
+        },
+        "candidate": {
+          "n": 2359,
+          "events": 40,
+          "actual_rate": 0.01695633743111488,
+          "mean_predicted": 0.023414681571891756,
+          "brier": 0.015868600390680304,
+          "log_loss": 0.07560259388825377,
+          "auc": 0.7609206554549375,
+          "top10_rate": 0.07627118644067797,
+          "top10_payer_capture": 0.45,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 1112,
+              "events": 5,
+              "predicted": 0.007866603245538157,
+              "actual": 0.0044964028776978415
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 873,
+              "events": 16,
+              "predicted": 0.014845910701495971,
+              "actual": 0.018327605956471937
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 215,
+              "events": 2,
+              "predicted": 0.0345655085595821,
+              "actual": 0.009302325581395349
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 88,
+              "events": 4,
+              "predicted": 0.06752944071263033,
+              "actual": 0.045454545454545456
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 28,
+              "events": 4,
+              "predicted": 0.1444214539158041,
+              "actual": 0.14285714285714285
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 27,
+              "events": 2,
+              "predicted": 0.26948797108039096,
+              "actual": 0.07407407407407407
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 16,
+              "events": 7,
+              "predicted": 0.5520587453008466,
+              "actual": 0.4375
+            }
+          ],
+          "timing": {
+            "n": 40,
+            "mae_days": 5.412601296080384,
+            "median_error_days": 2.9893532639647904,
+            "within_1_day": 0.2,
+            "within_3_days": 0.525,
+            "central80_coverage": 0.775,
+            "central50_coverage": 0.525
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0005560969071659935,
+          "difference_95_interval": [
+            -0.0016454139745669572,
+            0.0007369610108810989
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.005807532741356627,
+          "difference_95_interval": [
+            -0.009912164380751928,
+            -0.0006412908591707743
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 8,
+          "replicates": 2000,
+          "candidate_minus_current": -0.280732079926964,
+          "difference_95_interval": [
+            -1.3082249366045968,
+            0.4796043475971323
+          ]
+        }
+      },
+      "72": {
+        "current": {
+          "n": 2344,
+          "events": 25,
+          "actual_rate": 0.010665529010238909,
+          "mean_predicted": 0.01397322299908133,
+          "brier": 0.010482867592393903,
+          "log_loss": 0.05677400835324045,
+          "auc": 0.6939025442000862,
+          "top10_rate": 0.03404255319148936,
+          "top10_payer_capture": 0.32,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 1401,
+              "events": 8,
+              "predicted": 0.005543329978845689,
+              "actual": 0.005710206995003569
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 629,
+              "events": 8,
+              "predicted": 0.017644538565667632,
+              "actual": 0.012718600953895072
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 220,
+              "events": 5,
+              "predicted": 0.03598012295747104,
+              "actual": 0.022727272727272728
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 90,
+              "events": 3,
+              "predicted": 0.0617597919905618,
+              "actual": 0.03333333333333333
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 4,
+              "events": 1,
+              "predicted": 0.10365158047117393,
+              "actual": 0.25
+            }
+          ],
+          "timing": {
+            "n": 25,
+            "mae_days": 6.526311161110552,
+            "median_error_days": 4.778563075632621,
+            "within_1_day": 0.04,
+            "within_3_days": 0.12,
+            "central80_coverage": 0.8,
+            "central50_coverage": 0.36
+          }
+        },
+        "candidate": {
+          "n": 2344,
+          "events": 25,
+          "actual_rate": 0.010665529010238909,
+          "mean_predicted": 0.015443318317181966,
+          "brier": 0.01078238270478978,
+          "log_loss": 0.05625279455653702,
+          "auc": 0.7315825786977145,
+          "top10_rate": 0.04680851063829787,
+          "top10_payer_capture": 0.44,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 1610,
+              "events": 11,
+              "predicted": 0.005746656590435917,
+              "actual": 0.0068322981366459624
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 487,
+              "events": 3,
+              "predicted": 0.015135344534656267,
+              "actual": 0.006160164271047228
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 138,
+              "events": 5,
+              "predicted": 0.033004079960706416,
+              "actual": 0.036231884057971016
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 58,
+              "events": 2,
+              "predicted": 0.07130063379448834,
+              "actual": 0.034482758620689655
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 33,
+              "events": 2,
+              "predicted": 0.1323052693311839,
+              "actual": 0.06060606060606061
+            },
+            {
+              "low": 0.2,
+              "high": 0.4,
+              "n": 12,
+              "events": 0,
+              "predicted": 0.28661313730463234,
+              "actual": 0.0
+            },
+            {
+              "low": 0.4,
+              "high": 1,
+              "n": 6,
+              "events": 2,
+              "predicted": 0.5134461510421052,
+              "actual": 0.3333333333333333
+            }
+          ],
+          "timing": {
+            "n": 25,
+            "mae_days": 6.43574044472341,
+            "median_error_days": 6.165967293170743,
+            "within_1_day": 0.12,
+            "within_3_days": 0.24,
+            "central80_coverage": 0.84,
+            "central50_coverage": 0.44
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": 0.00029951511239587715,
+          "difference_95_interval": [
+            -0.0006026336878470447,
+            0.001378381013143625
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0005212137967034352,
+          "difference_95_interval": [
+            -0.00457487482360348,
+            0.004364646409603775
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 7,
+          "replicates": 2000,
+          "candidate_minus_current": -0.09057071638714205,
+          "difference_95_interval": [
+            -1.3611384770735144,
+            1.1598606494109505
+          ]
+        }
+      },
+      "168": {
+        "current": {
+          "n": 2333,
+          "events": 14,
+          "actual_rate": 0.006000857265323617,
+          "mean_predicted": 0.008019641909116042,
+          "brier": 0.005918817977359503,
+          "log_loss": 0.03430026177657443,
+          "auc": 0.7368939813959219,
+          "top10_rate": 0.029914529914529916,
+          "top10_payer_capture": 0.5,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 1698,
+              "events": 4,
+              "predicted": 0.003735372244853255,
+              "actual": 0.002355712603062426
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 442,
+              "events": 5,
+              "predicted": 0.014514780442166813,
+              "actual": 0.011312217194570135
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 192,
+              "events": 5,
+              "predicted": 0.030718841082034404,
+              "actual": 0.026041666666666668
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 1,
+              "events": 0,
+              "predicted": 0.05361205901856206,
+              "actual": 0.0
+            }
+          ],
+          "timing": {
+            "n": 14,
+            "mae_days": 4.279304495323649,
+            "median_error_days": 3.943436456594629,
+            "within_1_day": 0.21428571428571427,
+            "within_3_days": 0.42857142857142855,
+            "central80_coverage": 1,
+            "central50_coverage": 0.7142857142857143
+          }
+        },
+        "candidate": {
+          "n": 2333,
+          "events": 14,
+          "actual_rate": 0.006000857265323617,
+          "mean_predicted": 0.008592351834291002,
+          "brier": 0.005828104511142505,
+          "log_loss": 0.03161953826868094,
+          "auc": 0.8094006037084951,
+          "top10_rate": 0.042735042735042736,
+          "top10_payer_capture": 0.7142857142857143,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 1934,
+              "events": 4,
+              "predicted": 0.004176881437297544,
+              "actual": 0.002068252326783868
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 266,
+              "events": 3,
+              "predicted": 0.015520786473659134,
+              "actual": 0.011278195488721804
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 80,
+              "events": 3,
+              "predicted": 0.03609430744197134,
+              "actual": 0.0375
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 32,
+              "events": 2,
+              "predicted": 0.06644446688422119,
+              "actual": 0.0625
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 21,
+              "events": 2,
+              "predicted": 0.13455101866768296,
+              "actual": 0.09523809523809523
+            }
+          ],
+          "timing": {
+            "n": 14,
+            "mae_days": 4.494546129703392,
+            "median_error_days": 4.747920025753944,
+            "within_1_day": 0.07142857142857142,
+            "within_3_days": 0.21428571428571427,
+            "central80_coverage": 0.9285714285714286,
+            "central50_coverage": 0.5714285714285714
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -9.071346621699953e-05,
+          "difference_95_interval": [
+            -0.0004331952741034348,
+            0.00017644061986752955
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0026807235078934876,
+          "difference_95_interval": [
+            -0.00563822686472565,
+            -0.0002794127751814482
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 5,
+          "replicates": 2000,
+          "candidate_minus_current": 0.21524163437974206,
+          "difference_95_interval": [
+            -1.2001547649669142,
+            1.6357619790160243
+          ]
+        }
+      },
+      "336": {
+        "current": {
+          "n": 2326,
+          "events": 7,
+          "actual_rate": 0.0030094582975064487,
+          "mean_predicted": 0.0041289234125876815,
+          "brier": 0.0029824431990568686,
+          "log_loss": 0.019343492120532532,
+          "auc": 0.6995934208094622,
+          "top10_rate": 0.008583690987124463,
+          "top10_payer_capture": 0.2857142857142857,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 2082,
+              "events": 5,
+              "predicted": 0.0030126805867548845,
+              "actual": 0.0024015369836695487
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 231,
+              "events": 1,
+              "predicted": 0.012847382365682907,
+              "actual": 0.004329004329004329
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 13,
+              "events": 1,
+              "predicted": 0.027979196121732806,
+              "actual": 0.07692307692307693
+            }
+          ],
+          "timing": {
+            "n": 7,
+            "mae_days": 2.5630045867589595,
+            "median_error_days": 2.6039357790747575,
+            "within_1_day": 0.2857142857142857,
+            "within_3_days": 0.5714285714285714,
+            "central80_coverage": 1,
+            "central50_coverage": 0.8571428571428571
+          }
+        },
+        "candidate": {
+          "n": 2326,
+          "events": 7,
+          "actual_rate": 0.0030094582975064487,
+          "mean_predicted": 0.0041902192086498745,
+          "brier": 0.0029493440252019464,
+          "log_loss": 0.01760203432075163,
+          "auc": 0.8098318240620958,
+          "top10_rate": 0.02145922746781116,
+          "top10_payer_capture": 0.7142857142857143,
+          "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+          "calibration": [
+            {
+              "low": 0,
+              "high": 0.01,
+              "n": 2155,
+              "events": 2,
+              "predicted": 0.0028217669523672266,
+              "actual": 0.0009280742459396752
+            },
+            {
+              "low": 0.01,
+              "high": 0.025,
+              "n": 134,
+              "events": 4,
+              "predicted": 0.01553810005951467,
+              "actual": 0.029850746268656716
+            },
+            {
+              "low": 0.025,
+              "high": 0.05,
+              "n": 30,
+              "events": 0,
+              "predicted": 0.036103377395588526,
+              "actual": 0.0
+            },
+            {
+              "low": 0.05,
+              "high": 0.1,
+              "n": 6,
+              "events": 1,
+              "predicted": 0.06525498434571343,
+              "actual": 0.16666666666666666
+            },
+            {
+              "low": 0.1,
+              "high": 0.2,
+              "n": 1,
+              "events": 0,
+              "predicted": 0.10880546105133196,
+              "actual": 0.0
+            }
+          ],
+          "timing": {
+            "n": 7,
+            "mae_days": 2.550499087312461,
+            "median_error_days": 2.6101477243961684,
+            "within_1_day": 0.2857142857142857,
+            "within_3_days": 0.5714285714285714,
+            "central80_coverage": 1,
+            "central50_coverage": 0.8571428571428571
+          }
+        },
+        "paired_brier": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -3.3099173854921707e-05,
+          "difference_95_interval": [
+            -0.00010312383976650316,
+            1.6938413733842087e-05
+          ]
+        },
+        "paired_log_loss": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 10,
+          "replicates": 2000,
+          "candidate_minus_current": -0.0017414577997809004,
+          "difference_95_interval": [
+            -0.002924912312300597,
+            -0.000592340221061218
+          ]
+        },
+        "paired_timing": {
+          "unit": "Philippine first-inquiry calendar day",
+          "days": 5,
+          "replicates": 2000,
+          "candidate_minus_current": -0.012505499446498496,
+          "difference_95_interval": [
+            -0.06613086070865393,
+            0.009296370359758535
+          ]
+        }
+      }
+    }
+  },
+  "pages_day30_at24": {
+    "Azshinari": {
+      "current": {
+        "n": 999,
+        "events": 15,
+        "actual_rate": 0.015015015015015015,
+        "mean_predicted": 0.02011970330459983,
+        "brier": 0.01427990358223788,
+        "log_loss": 0.0715068924739826,
+        "auc": 0.6979674796747968,
+        "top10_rate": 0.07,
+        "top10_payer_capture": 0.4666666666666667,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0,
+            "high": 0.01,
+            "n": 80,
+            "events": 2,
+            "predicted": 0.008891041747720835,
+            "actual": 0.025
+          },
+          {
+            "low": 0.01,
+            "high": 0.025,
+            "n": 675,
+            "events": 5,
+            "predicted": 0.01195005949705801,
+            "actual": 0.007407407407407408
+          },
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 192,
+            "events": 2,
+            "predicted": 0.0387637135964162,
+            "actual": 0.010416666666666666
+          },
+          {
+            "low": 0.05,
+            "high": 0.1,
+            "n": 36,
+            "events": 2,
+            "predicted": 0.05804298081516812,
+            "actual": 0.05555555555555555
+          },
+          {
+            "low": 0.1,
+            "high": 0.2,
+            "n": 16,
+            "events": 4,
+            "predicted": 0.11186436131909014,
+            "actual": 0.25
+          }
+        ],
+        "timing": {
+          "n": 15,
+          "mae_days": 5.802982714437091,
+          "median_error_days": 1.889081425533902,
+          "within_1_day": 0.4,
+          "within_3_days": 0.6666666666666666,
+          "central80_coverage": 0.7333333333333333,
+          "central50_coverage": 0.5333333333333333
+        }
+      },
+      "candidate": {
+        "n": 999,
+        "events": 15,
+        "actual_rate": 0.015015015015015015,
+        "mean_predicted": 0.022871388548781794,
+        "brier": 0.012494808863233668,
+        "log_loss": 0.062112939110841814,
+        "auc": 0.8047086720867209,
+        "top10_rate": 0.08,
+        "top10_payer_capture": 0.5333333333333333,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0,
+            "high": 0.01,
+            "n": 441,
+            "events": 1,
+            "predicted": 0.00820038066895854,
+            "actual": 0.0022675736961451248
+          },
+          {
+            "low": 0.01,
+            "high": 0.025,
+            "n": 413,
+            "events": 6,
+            "predicted": 0.014879391493856737,
+            "actual": 0.014527845036319613
+          },
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 86,
+            "events": 0,
+            "predicted": 0.03425773223147143,
+            "actual": 0.0
+          },
+          {
+            "low": 0.05,
+            "high": 0.1,
+            "n": 33,
+            "events": 2,
+            "predicted": 0.06451375457678254,
+            "actual": 0.06060606060606061
+          },
+          {
+            "low": 0.1,
+            "high": 0.2,
+            "n": 12,
+            "events": 1,
+            "predicted": 0.13492889614100223,
+            "actual": 0.08333333333333333
+          },
+          {
+            "low": 0.2,
+            "high": 0.4,
+            "n": 6,
+            "events": 0,
+            "predicted": 0.2954836405492459,
+            "actual": 0.0
+          },
+          {
+            "low": 0.4,
+            "high": 1,
+            "n": 8,
+            "events": 5,
+            "predicted": 0.5774741410414492,
+            "actual": 0.625
+          }
+        ],
+        "timing": {
+          "n": 15,
+          "mae_days": 4.638061512165541,
+          "median_error_days": 2.0773201612990424,
+          "within_1_day": 0.3333333333333333,
+          "within_3_days": 0.6666666666666666,
+          "central80_coverage": 0.7333333333333333,
+          "central50_coverage": 0.6
+        }
+      }
+    },
+    "Loki Media": {
+      "current": {
+        "n": 227,
+        "events": 6,
+        "actual_rate": 0.02643171806167401,
+        "mean_predicted": 0.03271483793369266,
+        "brier": 0.026059845242067368,
+        "log_loss": 0.12513115026327287,
+        "auc": 0.4962292609351433,
+        "top10_rate": 0.01932367149758454,
+        "top10_payer_capture": 0.07407407407407407,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0.01,
+            "high": 0.025,
+            "n": 161,
+            "events": 3,
+            "predicted": 0.020439980806821682,
+            "actual": 0.018633540372670808
+          },
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 11,
+            "events": 1,
+            "predicted": 0.031344830119025155,
+            "actual": 0.09090909090909091
+          },
+          {
+            "low": 0.05,
+            "high": 0.1,
+            "n": 54,
+            "events": 2,
+            "predicted": 0.0679013772794371,
+            "actual": 0.037037037037037035
+          },
+          {
+            "low": 0.1,
+            "high": 0.2,
+            "n": 1,
+            "events": 0,
+            "predicted": 0.12396379665106345,
+            "actual": 0.0
+          }
+        ],
+        "timing": {
+          "n": 6,
+          "mae_days": 5.748856906445365,
+          "median_error_days": 5.046968887027621,
+          "within_1_day": 0.16666666666666666,
+          "within_3_days": 0.16666666666666666,
+          "central80_coverage": 0.6666666666666666,
+          "central50_coverage": 0.16666666666666666
+        }
+      },
+      "candidate": {
+        "n": 227,
+        "events": 6,
+        "actual_rate": 0.02643171806167401,
+        "mean_predicted": 0.0323910012090186,
+        "brier": 0.025678552082115585,
+        "log_loss": 0.12051590177398652,
+        "auc": 0.6534690799396682,
+        "top10_rate": 0.08695652173913043,
+        "top10_payer_capture": 0.3333333333333333,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0,
+            "high": 0.01,
+            "n": 45,
+            "events": 0,
+            "predicted": 0.009023435163059462,
+            "actual": 0.0
+          },
+          {
+            "low": 0.01,
+            "high": 0.025,
+            "n": 120,
+            "events": 4,
+            "predicted": 0.014559874192367444,
+            "actual": 0.03333333333333333
+          },
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 33,
+            "events": 0,
+            "predicted": 0.03538761205249101,
+            "actual": 0.0
+          },
+          {
+            "low": 0.05,
+            "high": 0.1,
+            "n": 18,
+            "events": 0,
+            "predicted": 0.06606260737929251,
+            "actual": 0.0
+          },
+          {
+            "low": 0.1,
+            "high": 0.2,
+            "n": 5,
+            "events": 1,
+            "predicted": 0.12817556979467357,
+            "actual": 0.2
+          },
+          {
+            "low": 0.2,
+            "high": 0.4,
+            "n": 4,
+            "events": 0,
+            "predicted": 0.2567397412439523,
+            "actual": 0.0
+          },
+          {
+            "low": 0.4,
+            "high": 1,
+            "n": 2,
+            "events": 1,
+            "predicted": 0.5873814222584037,
+            "actual": 0.5
+          }
+        ],
+        "timing": {
+          "n": 6,
+          "mae_days": 5.083809318570011,
+          "median_error_days": 4.014539417797479,
+          "within_1_day": 0,
+          "within_3_days": 0.5,
+          "central80_coverage": 1,
+          "central50_coverage": 0.5
+        }
+      }
+    },
+    "Manawari Studios": {
+      "current": {
+        "n": 544,
+        "events": 6,
+        "actual_rate": 0.011029411764705883,
+        "mean_predicted": 0.018368902269701143,
+        "brier": 0.010880824585682507,
+        "log_loss": 0.0568955365299863,
+        "auc": 0.7767967781908303,
+        "top10_rate": 0.01818181818181818,
+        "top10_payer_capture": 0.16666666666666666,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0,
+            "high": 0.01,
+            "n": 271,
+            "events": 0,
+            "predicted": 0.0074274489847594,
+            "actual": 0.0
+          },
+          {
+            "low": 0.01,
+            "high": 0.025,
+            "n": 109,
+            "events": 1,
+            "predicted": 0.011343819073908563,
+            "actual": 0.009174311926605505
+          },
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 132,
+            "events": 4,
+            "predicted": 0.0370841216412703,
+            "actual": 0.030303030303030304
+          },
+          {
+            "low": 0.05,
+            "high": 0.1,
+            "n": 32,
+            "events": 1,
+            "predicted": 0.05775824450449723,
+            "actual": 0.03125
+          }
+        ],
+        "timing": {
+          "n": 6,
+          "mae_days": 5.073822588388597,
+          "median_error_days": 3.983098614204037,
+          "within_1_day": 0.16666666666666666,
+          "within_3_days": 0.3333333333333333,
+          "central80_coverage": 1,
+          "central50_coverage": 0.3333333333333333
+        }
+      },
+      "candidate": {
+        "n": 544,
+        "events": 6,
+        "actual_rate": 0.011029411764705883,
+        "mean_predicted": 0.023828695779767782,
+        "brier": 0.01091465575120029,
+        "log_loss": 0.050715372591216196,
+        "auc": 0.8946716232961586,
+        "top10_rate": 0.09090909090909091,
+        "top10_payer_capture": 0.8333333333333334,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0,
+            "high": 0.01,
+            "n": 276,
+            "events": 0,
+            "predicted": 0.007836294199981369,
+            "actual": 0.0
+          },
+          {
+            "low": 0.01,
+            "high": 0.025,
+            "n": 182,
+            "events": 1,
+            "predicted": 0.015003825256257552,
+            "actual": 0.005494505494505495
+          },
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 46,
+            "events": 1,
+            "predicted": 0.0340255084969428,
+            "actual": 0.021739130434782608
+          },
+          {
+            "low": 0.05,
+            "high": 0.1,
+            "n": 21,
+            "events": 1,
+            "predicted": 0.07099881734033515,
+            "actual": 0.047619047619047616
+          },
+          {
+            "low": 0.1,
+            "high": 0.2,
+            "n": 8,
+            "events": 2,
+            "predicted": 0.16432262504449643,
+            "actual": 0.25
+          },
+          {
+            "low": 0.2,
+            "high": 0.4,
+            "n": 8,
+            "events": 0,
+            "predicted": 0.2774239518961126,
+            "actual": 0.0
+          },
+          {
+            "low": 0.4,
+            "high": 1,
+            "n": 3,
+            "events": 1,
+            "predicted": 0.493058645942887,
+            "actual": 0.3333333333333333
+          }
+        ],
+        "timing": {
+          "n": 6,
+          "mae_days": 5.950586923199611,
+          "median_error_days": 5.369612614774226,
+          "within_1_day": 0.16666666666666666,
+          "within_3_days": 0.5,
+          "central80_coverage": 0.6666666666666666,
+          "central50_coverage": 0.3333333333333333
+        }
+      }
+    },
+    "SAMA KANA MEDIA": {
+      "current": {
+        "n": 1,
+        "events": 0,
+        "actual_rate": 0.0,
+        "mean_predicted": 0.042794730385661936,
+        "brier": 0.001831388948781497,
+        "log_loss": 0.04373741772452465,
+        "auc": null,
+        "top10_rate": 0.0,
+        "top10_payer_capture": null,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 1,
+            "events": 0,
+            "predicted": 0.042794730385661936,
+            "actual": 0.0
+          }
+        ],
+        "timing": {
+          "n": 0,
+          "mae_days": null,
+          "median_error_days": null,
+          "within_1_day": null,
+          "within_3_days": null,
+          "central80_coverage": null,
+          "central50_coverage": null
+        }
+      },
+      "candidate": {
+        "n": 1,
+        "events": 0,
+        "actual_rate": 0.0,
+        "mean_predicted": 0.03189207963510456,
+        "brier": 0.001017104743451851,
+        "log_loss": 0.03241170993961915,
+        "auc": null,
+        "top10_rate": 0.0,
+        "top10_payer_capture": null,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 1,
+            "events": 0,
+            "predicted": 0.03189207963510456,
+            "actual": 0.0
+          }
+        ],
+        "timing": {
+          "n": 0,
+          "mae_days": null,
+          "median_error_days": null,
+          "within_1_day": null,
+          "within_3_days": null,
+          "central80_coverage": null,
+          "central50_coverage": null
+        }
+      }
+    },
+    "Vista Media Agency": {
+      "current": {
+        "n": 588,
+        "events": 13,
+        "actual_rate": 0.022108843537414966,
+        "mean_predicted": 0.019280857809919668,
+        "brier": 0.0215028102269633,
+        "log_loss": 0.1041010590781331,
+        "auc": 0.6621404682274248,
+        "top10_rate": 0.0662557781201849,
+        "top10_payer_capture": 0.30069930069930073,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0,
+            "high": 0.01,
+            "n": 297,
+            "events": 3,
+            "predicted": 0.007434230165515763,
+            "actual": 0.010101010101010102
+          },
+          {
+            "low": 0.01,
+            "high": 0.025,
+            "n": 193,
+            "events": 5,
+            "predicted": 0.013201929730922223,
+            "actual": 0.025906735751295335
+          },
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 1,
+            "events": 0,
+            "predicted": 0.03428307102940689,
+            "actual": 0.0
+          },
+          {
+            "low": 0.05,
+            "high": 0.1,
+            "n": 93,
+            "events": 5,
+            "predicted": 0.06435697600304112,
+            "actual": 0.053763440860215055
+          },
+          {
+            "low": 0.1,
+            "high": 0.2,
+            "n": 4,
+            "events": 0,
+            "predicted": 0.14043093892359038,
+            "actual": 0.0
+          }
+        ],
+        "timing": {
+          "n": 13,
+          "mae_days": 5.827116719594905,
+          "median_error_days": 4.492823008205677,
+          "within_1_day": 0.15384615384615385,
+          "within_3_days": 0.3076923076923077,
+          "central80_coverage": 0.7692307692307693,
+          "central50_coverage": 0.5384615384615384
+        }
+      },
+      "candidate": {
+        "n": 588,
+        "events": 13,
+        "actual_rate": 0.022108843537414966,
+        "mean_predicted": 0.020474926546910955,
+        "brier": 0.022421927059877136,
+        "log_loss": 0.104280627055108,
+        "auc": 0.7137123745819398,
+        "top10_rate": 0.05084745762711865,
+        "top10_payer_capture": 0.23076923076923078,
+        "top10_tie_handling": "Expected random allocation within boundary-score tie; never sorted by outcome",
+        "calibration": [
+          {
+            "low": 0,
+            "high": 0.01,
+            "n": 350,
+            "events": 4,
+            "predicted": 0.00732120900712909,
+            "actual": 0.011428571428571429
+          },
+          {
+            "low": 0.01,
+            "high": 0.025,
+            "n": 158,
+            "events": 5,
+            "predicted": 0.014793735795697361,
+            "actual": 0.03164556962025317
+          },
+          {
+            "low": 0.025,
+            "high": 0.05,
+            "n": 49,
+            "events": 1,
+            "predicted": 0.03511352449340675,
+            "actual": 0.02040816326530612
+          },
+          {
+            "low": 0.05,
+            "high": 0.1,
+            "n": 16,
+            "events": 1,
+            "predicted": 0.07084592404395881,
+            "actual": 0.0625
+          },
+          {
+            "low": 0.1,
+            "high": 0.2,
+            "n": 3,
+            "events": 0,
+            "predicted": 0.15639836887371622,
+            "actual": 0.0
+          },
+          {
+            "low": 0.2,
+            "high": 0.4,
+            "n": 9,
+            "events": 2,
+            "predicted": 0.2507691995255968,
+            "actual": 0.2222222222222222
+          },
+          {
+            "low": 0.4,
+            "high": 1,
+            "n": 3,
+            "events": 0,
+            "predicted": 0.5197360047121614,
+            "actual": 0.0
+          }
+        ],
+        "timing": {
+          "n": 13,
+          "mae_days": 6.209750131547271,
+          "median_error_days": 4.990196602379286,
+          "within_1_day": 0.15384615384615385,
+          "within_3_days": 0.38461538461538464,
+          "central80_coverage": 0.7692307692307693,
+          "central50_coverage": 0.5384615384615384
+        }
+      }
+    }
+  },
+  "decision": {
+    "release_passed": true,
+    "gates": {
+      "log_loss_at_least_2pct_better": true,
+      "brier_no_worse": true,
+      "day30_at24_auc_not_down_over_002": true,
+      "day30_at24_timing_mae_not_worse": true
+    },
+    "relative_log_loss_improvement": 0.057666453155508335,
+    "relative_brier_improvement": 0.04137000114959133,
+    "day30_at24_auc_delta": 0.05995040965933596,
+    "day30_at24_timing_mae_improvement": 0.04930891296652584,
+    "aggregate_equal_horizon_checkpoint_metrics": {
+      "current": {
+        "log_loss": 0.08595483571443746,
+        "brier": 0.018758202653463767
+      },
+      "candidate": {
+        "log_loss": 0.08099812520722144,
+        "brier": 0.017982175788125703
+      }
+    }
+  },
+  "unique_test_contacts": 5519,
+  "paired_scores": 74520,
+  "notes": [
+    "No final replay outcomes used for candidate or parameter selection.",
+    "Each weekly refit sees outcomes only through its training cutoff.",
+    "Every horizon requires full elapsed observation; immature cases excluded, not counted as failures.",
+    "A contact appears at multiple landmarks/horizons; score rows are not independent customers.",
+    "Dates are conditional on confirmation by the chosen horizon, not promises.",
+    "Previously inspected September history is reused; this is historical replay, not a new prospective trial.",
+    "Day-30 timing measures every eligible later payer on identical records, without excluding difficult cases.",
+    "Bootstrap intervals use whole first-inquiry calendar days. Small samples and time drift remain."
+  ],
+  "method_references": [
+    "https://scikit-learn.org/1.8/modules/generated/sklearn.ensemble.HistGradientBoostingRegressor.html",
+    "https://scikit-learn.org/stable/modules/calibration.html"
+  ]
+}

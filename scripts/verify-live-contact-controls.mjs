@@ -7,6 +7,7 @@ import pg from 'pg';
 const require=createRequire(import.meta.url),{parse}=require('../../node_modules/dotenv'),{encode}=require('next-auth/jwt');
 const env=parse(fs.readFileSync(new URL('../.env.local',import.meta.url))),base='https://veochatbot.vercel.app';
 const fbIds=['656646850875530','717828411409985','725843003947429','619355471260631','781078668411527'];
+const releasedVersion=JSON.parse(fs.readFileSync(new URL('../src/lib/conversion-runtime/model-v2.json',import.meta.url))).version,allowedVersions=new Set(['eddb1b3d6b59c75e',releasedVersion]);
 const db=new pg.Client({connectionString:env.DATABASE_POOLER_URL_5432||env.DATABASE_URL,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:15000});
 const receipt={at:new Date().toISOString(),base,customer_permissions_changed:0,messages_sent:0,checks:[],pages:[],refresh:null};
 try{
@@ -36,7 +37,7 @@ try{
   }
   if(contact){
    const path='/api/pages/'+page.id+'/contacts/'+contact.id;
-   const r=await call(path+'/projection');assert.equal(r.status,200);assert.equal(r.body.conversion_projection?.model_version,'eddb1b3d6b59c75e');
+   const r=await call(path+'/projection');assert.equal(r.status,200);assert(allowedVersions.has(r.body.conversion_projection?.model_version));
    const cross=await call(path+'/bot',{method:'PATCH',headers:{Origin:'https://unrelated.example','Content-Type':'application/json'},body:'{"enabled":false}'});assert.equal(cross.status,403);
   }
   const absent=await call('/api/pages/'+page.id+'/contacts/'+randomUUID()+'/bot',{method:'PATCH',headers:{Origin:base,'Content-Type':'application/json'},body:'{"enabled":false}'});assert.equal(absent.status,404);
@@ -50,6 +51,7 @@ try{
  const refresh=await call('/api/pages/'+recent.page_id+'/contacts/'+recent.id+'/projection',{method:'POST',headers:{Origin:base}});
  assert.equal(refresh.status,200,'Verified history refresh did not complete: '+String(refresh.body.error||refresh.status));
  const projection=refresh.body.conversion_projection;assert(projection?.as_of);assert(Date.now()-Date.parse(projection.as_of)<180000);assert(projection.first_inquiry_at<=projection.as_of);
+ assert.equal(projection.model_version,releasedVersion);assert.equal(projection.forecast_method,'conversation_survival_v2');assert(projection.backtest?.n>0);
  for(const score of Object.values(projection.scores||{}))assert(score.probability===null||score.probability>=0&&score.probability<=1);
  const cache=(await db.query('SELECT complete_history,source_kind FROM contact_conversion_cache WHERE contact_id=$1',[recent.id])).rows[0];assert.equal(cache.complete_history,true);assert.equal(cache.source_kind,'live_graph');
  const ledger=(await db.query('SELECT count(*)::int AS n FROM contact_conversion_prediction_issues WHERE contact_id=$1 AND model_version=$2',[recent.id,projection.model_version])).rows[0];assert(ledger.n>0);

@@ -18,7 +18,7 @@ export function projectionCacheFromMessages(raw:any[],input:{contactId:string;pa
  if(!buyer)throw Error('No identifiable customer inquiry in accessible history');
  const previous=input.previous,first=Math.min(buyer.ms,previous?Date.parse(previous.first_inquiry_at):Infinity);
  const missingOlder=buyer.ms>first;
- const snapshots=missingOlder&&previous?previous.snapshots:CHECKPOINTS.filter((h:number)=>first+h*HOUR<=input.cutoff).map((h:number)=>{const f=featureAt(seq.map(m=>({...m})),first,h);return {h:f.h,i:f.i,s:f.s,b:f.b,industry_evidence_id:f.industry_evidence_id,industry_evidence_ms:f.industry_evidence_ms};});
+ const snapshots=missingOlder&&previous?previous.snapshots:CHECKPOINTS.filter((h:number)=>first+h*HOUR<=input.cutoff).map((h:number)=>{const f=featureAt(seq.map(m=>({...m})),first,h);return {h:f.h,i:f.i,s:f.s,b:f.b,industry_evidence_id:f.industry_evidence_id,industry_evidence_ms:f.industry_evidence_ms,inbound:f.inbound,quoted:f.quoted,form:f.form,duration:f.duration,returned:f.returned,price_question:f.price_question,last_inbound_h:f.last_inbound_h};});
  let paymentAt=previous?.payment_at||null,evidenceId=previous?.payment_evidence_id||null;
  for(const m of seq){if(m.ms<first)continue;const signal=paymentSignal(m,seq);if(signal?.confirmed&&['payment_ack','full_payment_ack'].includes(signal.kind)&&(!paymentAt||m.ms<Date.parse(paymentAt))){paymentAt=new Date(m.ms).toISOString();evidenceId=m.id;}}
  return {contact_id:input.contactId,page_id:input.pageId,first_inquiry_at:new Date(first).toISOString(),first_message_id:missingOlder?previous?.first_message_id||null:buyer.id,source_cutoff_at:new Date(input.cutoff).toISOString(),snapshots,payment_at:paymentAt,payment_evidence_id:evidenceId,source_kind:'live_graph',complete_history:true,dirty_at:null};
@@ -34,7 +34,7 @@ export async function refreshContactProjection(db:Db,pageId:string,contactId:str
  if(!contact||!page)throw Error('Contact not found');
  const pageName=forecastPageName(page.fb_page_id),cached=scoreContactForecast(previous,pageName);
  if(cached.status==='unsupported_page')return cached;
- if(previous&&!cached.needs_refresh)return{...cached,...(contact.pipeline_stage==='converted'&&!previous.payment_at?{status:'payment_verification_needed',scores:null,close_window:null}:{}),from_cache:true};
+ if(previous&&!cached.needs_refresh)return{...cached,...(contact.pipeline_stage==='converted'&&!previous.payment_at?{status:'payment_verification_needed',scores:null,close_window:null,close_windows:{}}:{}),from_cache:true};
  const cutoff=Date.now(),fields='id,messages.limit(100){id,message,from,created_time,attachments{mime_type,image_data}}';
  const url=new URL(`https://graph.facebook.com/v24.0/${page.fb_page_id}/conversations`);
  url.searchParams.set('user_id',contact.psid);url.searchParams.set('fields',fields);url.searchParams.set('limit','1');
@@ -50,7 +50,7 @@ export async function refreshContactProjection(db:Db,pageId:string,contactId:str
  if(saved.error||!saved.data)throw Error('Could not save verified projection');
  const cache=saved.data as ForecastCache;
  let prediction:any=scoreContactForecast(cache,pageName);
- if(contact.pipeline_stage==='converted'&&!cache.payment_at)prediction={...prediction,status:'payment_verification_needed',scores:null,close_window:null,message:'CRM converted is recorded, but payment evidence has not been verified in this source.'};
+ if(contact.pipeline_stage==='converted'&&!cache.payment_at)prediction={...prediction,status:'payment_verification_needed',scores:null,close_window:null,close_windows:{},message:'CRM converted is recorded, but payment evidence has not been verified in this source.'};
  const hour=new Date(Math.floor(Date.now()/HOUR)*HOUR).toISOString();
  await db.from('contact_conversion_prediction_issues').upsert({page_id:pageId,contact_id:contactId,model_version:prediction.model_version,score_hour:hour,source_cutoff_at:cache.source_cutoff_at,prediction},{onConflict:'contact_id,model_version,score_hour',ignoreDuplicates:true});
  return prediction;
