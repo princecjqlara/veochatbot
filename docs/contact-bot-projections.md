@@ -24,6 +24,21 @@ probability. Independent Python and TypeScript implementations match on 210
 synthetic upgraded cases and 48 prior-model cases. No customer records are embedded
 in either model asset.
 
+Projections are available from the first identifiable inquiry, including a single
+question with no agreement, quote, selected duration, completed form or known
+industry. Each contact shows Day-7, Day-14 and Day-30 payment probabilities. The
+signal-stage replay disclosure compares historically similar early conversation
+signals with later confirmed outcomes. Agreement itself was not independently
+labeled; a quote or completed form does not prove acceptance or payment.
+
+Projection policy `stage-validation-2026-10-29` keeps probabilities unchanged and
+requires at least 30 later replay confirmations and 100 replay contacts within the
+signal group before displaying an individual conditional date, in addition to
+the existing training/support checks. A supported shorter horizon may be shown
+when a Day-30 date is unavailable; its actual horizon is explicitly labeled.
+The existing first-issue ledger remains immutable and stores the policy version
+inside the prediction. See `early-contact-backtest.md` for the descriptive audit.
+
 The target is first documentary payment/deposit confirmation, not private purchase
 intent or bank settlement. Historical audited payment evidence is retained. New
 live confirmation accepts explicit page payment acknowledgements; customer claims,

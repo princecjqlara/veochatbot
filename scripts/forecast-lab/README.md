@@ -44,6 +44,15 @@ qualification decisions in the earlier feature vector. Refreshing conversation
 evidence is separate from retraining. The forward issue ledger preserves each
 version's first forecast per contact/hour; never rewrite it after a later outcome.
 
+`analyze_stage_replay.py` describes the locked replay using each contact's frozen
+conversation signals. Packaging runs it without refitting parameters. Its output
+supports probabilities before an agreement and discloses accuracy for early
+inquiries separately. An agreement was not independently labeled: never equate
+these signal groups with verified agreed / not agreed. Individual dates require
+the existing 30-replay-confirmation minimum within the signal group, plus training
+support. Model-version mismatches withhold stage-specific dates. Probability
+formulas are unchanged. The policy version is recorded in every forecast response.
+
 `node upgrade-snapshots.mjs` rehearses the audited feature-cache upgrade inside a
 rolled-back transaction. `--apply` commits it. It changes only the exact older
 audited cache snapshot, never newer live sources, contact permissions or stages.

@@ -52,8 +52,10 @@ export async function verifyContactBrowser({base,cookie}){
   await until("document.querySelector('[role=dialog]')?.innerText.includes('Experimental payment/deposit confirmation forecast')",'Forecast details missing');checks.push('Projection details disclose PHT source dates and forecast limitations');
   const releasedModel=JSON.parse(fs.readFileSync(new URL('../src/lib/conversion-runtime/model-v2.json',import.meta.url))).version;
   await until(`document.querySelector('[role=dialog]')?.innerText.includes('Model ${releasedModel}')`,'Released forecast model not visible');
-  await until("document.querySelector('[role=dialog]')?.innerText.includes('days from the source check')",'Estimated remaining days missing');
-  assert(await evaluate("document.querySelector('[role=dialog]').innerText.includes('Historical replay at this checkpoint:')"));checks.push('Released model shows conditional remaining days, ranges and measured replay error');
+  await until("document.querySelector('[role=dialog]')?.innerText.includes('Available before agreeing to a commercial')",'Forecast before agreement missing');
+  await until("document.querySelector('[role=dialog]')?.innerText.includes('Ranking AUC:')",'Conversation-stage replay accuracy missing');
+  assert(await evaluate("(()=>{const t=document.querySelector('[role=dialog]').innerText;return t.includes('days from the source check')||t.includes('Too few validated later confirmations');})()"));
+  assert(await evaluate("document.querySelector('[role=dialog]').innerText.includes('Historical replay at this checkpoint:')"));checks.push('Released model forecasts before agreement and shows stage-specific accuracy; dates require enough replay buyers');
   assert(await evaluate("document.querySelector('[role=dialog]').innerText.includes('Percentage calibration remains imperfect.')"));checks.push('Forecast details disclose average predicted versus observed confirmation rates');
   for(const value of ['off','on','all']){await choose('Ad contacts bot filter',value);await sleep(700);assert(requests.some(r=>r.path==='/api/ad-quality/contacts'&&new URLSearchParams(r.query).get('bot')===value));}
   await until("!!document.querySelector('[role=dialog] button[role=switch]')",'Restored contacts missing');checks.push('Ad detail ON / OFF / all filters issue server queries');
