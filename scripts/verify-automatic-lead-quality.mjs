@@ -6,7 +6,7 @@ const receipt={at:new Date().toISOString(),production:base,pages:[],checks:[],cu
 try{
  await db.connect();const owner=(await db.query('SELECT up.user_id,count(*) AS n FROM user_pages up JOIN pages p ON p.id=up.page_id WHERE p.fb_page_id=ANY($1::text[]) GROUP BY up.user_id ORDER BY n DESC LIMIT 1',[ids])).rows[0];assert.equal(Number(owner.n),5);
  const cookie=await encode({token:{id:owner.user_id,name:'Lead quality release verification'},secret:env.NEXTAUTH_SECRET,maxAge:1800}),headers={Cookie:'__Secure-next-auth.session-token='+cookie};
- const get=async p=>{const r=await fetch(base+p,{headers,signal:AbortSignal.timeout(125000)});assert.equal(r.status,200);return r.json();};
+ const get=async p=>{const r=await fetch(base+p,{headers,signal:AbortSignal.timeout(125000)}),body=await r.json();assert.equal(r.status,200,p+': '+JSON.stringify(body));return body;};
  for(const p of(await db.query('SELECT id,name FROM pages WHERE fb_page_id=ANY($1::text[])',[ids])).rows){
   const pipeline=await get('/api/pages/'+p.id+'/pipeline?stage=not_qualified&pageSize=5');
   for(const c of pipeline.contacts){assert.equal(c.pipeline_stage,'not_qualified');assert.equal(c.lead_quality.status,'poor');}
