@@ -73,7 +73,7 @@ export async function GET(
         const [contactsResult, stageCountResult, configResult] = await Promise.all([
             contactsQuery.range(from, to),
             db.rpc('get_contact_pipeline_counts', { p_page_id: pageId }),
-            db.from('chatbot_configs').select('commercial_video_intake_enabled,details_to_collect').eq('page_id', pageId).maybeSingle()
+            db.from('chatbot_configs').select('*').eq('page_id', pageId).maybeSingle()
         ]);
         if (contactsResult.error) throw contactsResult.error;
         if (stageCountResult.error) throw stageCountResult.error;
@@ -84,7 +84,7 @@ export async function GET(
         const { data: chatbotStates, error: stateError } = contactIds.length > 0
             ? await db
                 .from('chatbot_contact_states')
-                .select('contact_id,status,collected_details,missing_details,stop_reason,last_inbound_at,last_bot_reply_at,updated_at')
+                .select('*')
                 .eq('page_id', pageId)
                 .in('contact_id', contactIds)
             : { data: [], error: null };

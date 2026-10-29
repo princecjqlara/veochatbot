@@ -37,6 +37,9 @@ import { cleanCommercialVideoCopy, commercialVideoFirstName, commercialVideoSale
 import { getCommercialVideoMessageControls, type ChatbotMessageControls } from '@/lib/chatbot-interactions';
 import { ChatbotFollowUpRepeatedError, hasRepeatedChatbotCopy, splitConversationalCopy } from '@/lib/chatbot-message-copy';
 import { withContactPricingKnowledge, type PricingCatalog } from '@/lib/chatbot-pricing-catalogs';
+import { containsGuidedSalesForm, guidedSalesPrompt, isNewSalesConversation, mergeGuidedSalesDetails, normalizeGuidedSalesDetails, normalizeSalesFormFields } from '@/lib/chatbot-guided-sales';
+import { usesSalesAssistant, salesSettings, normalizeSalesDetails, mergeSalesChatDetails, salesAssistantPrompt, selectSalesSample, renderSalesMessages, chatbotPricingEnabled, approvedSalesRates, type SalesProgress } from '@/lib/chatbot-sales-assistant';
+import { loadAssignedSalesSamples } from '@/lib/chatbot-sales-store';
 
 export const DEFAULT_CHATBOT_MODEL = '~deepseek/deepseek-flash-latest';
 export const DEFAULT_CHATBOT_INSTRUCTIONS =
@@ -50,6 +53,7 @@ const FOLLOW_UP_MAX_CHARS = 320;
 const FOLLOW_UP_MAX_PARTS = 2;
 
 export type ChatbotConfig = {
+    sales_assistant_settings?: unknown;
     page_id: string;
     knowledge_source_page_id?: string | null;
     enabled: boolean;
@@ -88,6 +92,8 @@ export type ChatbotConfig = {
     continuation_review_minute?: number;
     continuation_enabled_at?: string | null;
     commercial_video_intake_enabled?: boolean;
+    guided_sales_enabled?: boolean;
+    sales_form_fields?: string[];
     policy_revision?: number;
 };
 
@@ -130,6 +136,7 @@ export type ChatbotTokenUsage = {
 };
 
 export type ChatbotResponse = {
+    sales_progress?: SalesProgress;
     reply: string;
     messages: string[];
     knowledge: ChatbotKnowledgeMatch[];
@@ -153,6 +160,7 @@ export type ChatbotResponse = {
 };
 
 export type ChatbotFollowUpResponse = {
+    sales_progress?: SalesProgress;
     message: string;
     messages: string[];
     message_controls?: ChatbotMessageControls[];
@@ -453,8 +461,8 @@ function parseChatbotPlan(
     config: ChatbotConfig,
     existingDetails: Record<string, string>,
     knowledge: ChatbotKnowledgeMatch[],
-    intakeContext?: { request: CommercialVideoRequest; requestInput: Parameters<typeof resolveCommercialVideoRequest>[0]; formPreviouslySent: boolean; contactName?: string | null }
-): Pick<ChatbotResponse, 'reply' | 'messages' | 'collected_details' | 'missing_details' | 'details_complete' | 'detected_stop_reason' | 'media_document_ids' | 'media_document_id' | 'drive_file_document_ids' | 'link_document_id' | 'has_clear_request' | 'request_type' | 'request_evidence' | 'request_evidence_message_id' | 'intake_action' | 'message_controls'> {
+    intakeContext?: { request: CommercialVideoRequest; requestInput: Parameters<typeof resolveCommercialVideoRequest>[0] & { salesProgress?: SalesProgress; formUrl?: string }; formPreviouslySent: boolean; contactName?: string | null }
+): Pick<ChatbotResponse, 'sales_progress' | 'reply' | 'messages' | 'collected_details' | 'missing_details' | 'details_complete' | 'detected_stop_reason' | 'media_document_ids' | 'media_document_id' | 'drive_file_document_ids' | 'link_document_id' | 'has_clear_request' | 'request_type' | 'request_evidence' | 'request_evidence_message_id' | 'intake_action' | 'message_controls'> {
     let parsed: Record<string, unknown> | null = null;
     const jsonCandidate = content.trim()
         .replace(/^```(?:json)?\s*/i, '')
@@ -473,8 +481,10 @@ function parseChatbotPlan(
 
     const commercialIntake = isCommercialVideoIntake(config);
     const requestedDetails = commercialIntake ? COMMERCIAL_VIDEO_REQUIRED_DETAILS : normalizeDetailsToCollect(config.details_to_collect);
-    const collectedDetails = commercialIntake ? mergeCommercialVideoChatDetails(existingDetails, parsed?.collected_details,
-        commercialVideoCustomerTexts(intakeContext?.requestInput.history || [], intakeContext?.requestInput.pageId || '', intakeContext?.requestInput.inboundMessage), intakeContext?.requestInput.inboundMessage) : {
+    const collectedDetails = usesSalesAssistant(config) ? mergeSalesChatDetails(existingDetails, parsed?.collected_details,
+        commercialVideoCustomerTexts(intakeContext?.requestInput.history || [], intakeContext?.requestInput.pageId || '', intakeContext?.requestInput.inboundMessage),
+        intakeContext?.requestInput.inboundMessage || '', salesSettings(config.sales_assistant_settings), intakeContext?.requestInput.salesProgress?.last_question) : commercialIntake ? (config.guided_sales_enabled ? mergeGuidedSalesDetails : mergeCommercialVideoChatDetails)(existingDetails, parsed?.collected_details,
+        commercialVideoCustomerTexts(intakeContext?.requestInput.history || [], intakeContext?.requestInput.pageId || '', intakeContext?.requestInput.inboundMessage), intakeContext?.requestInput.inboundMessage, config.sales_form_fields) : {
         ...normalizeCollectedChatbotDetails(existingDetails, requestedDetails),
         ...normalizeCollectedChatbotDetails(parsed?.collected_details, requestedDetails)
     };
@@ -502,10 +512,10 @@ function parseChatbotPlan(
         hasClearRequest: request?.has_clear_request, requestType: request?.request_type
     }) : undefined;
     const pricing = getCommercialVideoPricing(knowledge, salesFlow?.durationSeconds || null);
-    const priceList = getCommercialVideoPriceList(knowledge);
+    const priceList = usesSalesAssistant(config) ? approvedSalesRates(knowledge) : getCommercialVideoPriceList(knowledge);
     // At this step all generated copy is replaced by the verified package,
     // production process and proceed question. Validate that delivered copy.
-    const canonicalPricing = salesFlow?.pricingReady === true && priceList.length > 0 && ((salesFlow.step === 'pricing_process' && !salesFlow.pricingSent) || isCommercialVideoPriceRequested(intakeContext?.requestInput.inboundMessage || '')) && parsed?.stop_reason !== 'opt_out' && parsed?.stop_reason !== 'refusal';
+    const canonicalPricing = chatbotPricingEnabled(config) && salesFlow?.pricingReady === true && priceList.length > 0 && ((salesFlow.step === 'pricing_process' && !salesFlow.pricingSent) || isCommercialVideoPriceRequested(intakeContext?.requestInput.inboundMessage || '')) && parsed?.stop_reason !== 'opt_out' && parsed?.stop_reason !== 'refusal';
     if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.length ? unsanitizedMessages.join('\n') : parsed ? '' : content, pricing?.ownerVerifiedCatalog ? pricing.bonusVideoSeconds : undefined)) {
         throw new Error('Unauthorized free personalized video offer');
     }
@@ -523,16 +533,36 @@ function parseChatbotPlan(
         ? rawStopReason
         : undefined;
     const intakeAction: CommercialVideoIntakeAction | undefined = salesFlow
-        ? salesFlow.step === 'form' ? intakeContext?.formPreviouslySent && !salesFlow.formRequested ? 'ask_missing_field' : 'send_form'
+        ? salesFlow.step === 'form' ? config.guided_sales_enabled ? salesFlow.formRequested ? 'send_form' : 'ask_missing_field' : intakeContext?.formPreviouslySent && !salesFlow.formRequested ? 'ask_missing_field' : 'send_form'
             : salesFlow.step === 'complete' ? policy?.nextAction : 'none'
         : policy?.nextAction;
-    if (salesFlow?.step === 'sample') {
+    let salesSample;
+    if (usesSalesAssistant(config)) {
+        parsed ||= {};
+        const settings = salesSettings(config.sales_assistant_settings);
+        // Keep explicit photo/folder requests on the existing verified media
+        // path. Automatic commercial recommendations prefer relevant videos.
+        if (/\b(?:photos?|pictures?|images?|logo|folder)\b|drive\s+link/i.test(intakeContext?.requestInput.inboundMessage || '')) {
+            const inactive = new Set(settings.samples.filter(sample => !sample.active).map(sample => sample.document_id));
+            for (const key of ['media_document_ids', 'drive_file_document_ids']) {
+                if (Array.isArray(parsed[key])) parsed[key] = (parsed[key] as unknown[]).filter(id => typeof id === 'string' && !inactive.has(id));
+            }
+            for (const key of ['media_document_id', 'link_document_id']) if (typeof parsed[key] === 'string' && inactive.has(parsed[key] as string)) parsed[key] = null;
+        } else salesSample = selectSalesSample(parsed, knowledge, collectedDetails, settings,
+            /sample|portfolio|example/i.test(intakeContext?.requestInput.inboundMessage || '') ? [] : intakeContext?.requestInput.salesProgress?.samples_sent);
+    } else if (salesFlow?.step === 'sample') {
         parsed ||= {};
         ensureCommercialVideoSampleSelection(parsed, knowledge, salesFlow.business);
     }
     const hasSample = hasVerifiedCommercialVideoSample(parsed || {}, knowledge);
-    const allowMedia = !commercialIntake || salesFlow?.step !== 'complete' || isCommercialVideoSampleRequested(intakeContext?.requestInput.inboundMessage || '');
-    const messages = commercialIntake && !detectedStopReason ? renderCommercialVideoMessages({
+    const allowMedia = usesSalesAssistant(config) || !commercialIntake || salesFlow?.step !== 'complete' || isCommercialVideoSampleRequested(intakeContext?.requestInput.inboundMessage || '');
+    const enhanced = usesSalesAssistant(config) && !detectedStopReason && intakeContext ? renderSalesMessages({
+        parts: rawMessages.length ? rawMessages : [messageContent], details: collectedDetails, settings: salesSettings(config.sales_assistant_settings),
+        progress: intakeContext.requestInput.salesProgress, history: intakeContext.requestInput.history, pageId: intakeContext.requestInput.pageId,
+        customerMessage: intakeContext.requestInput.inboundMessage || '', contactName: intakeContext.contactName, formUrl: intakeContext.requestInput.formUrl,
+        rates: priceList, sampleReason: salesSample?.reason, sampleId: salesSample?.match.document_id, buyingIntent: request?.has_clear_request, handoff: intakeAction === 'handoff', requestType: request?.request_type
+    }) : undefined;
+    const messages = enhanced ? enhanced.messages : commercialIntake && !detectedStopReason ? renderCommercialVideoMessages({
         parts: rawMessages.length > 0 ? rawMessages : [messageContent], details: collectedDetails,
         contactName: intakeContext?.contactName, salesFlow, hasSample,
         pricing, priceList,
@@ -543,7 +573,9 @@ function parseChatbotPlan(
                 JSON.stringify(normalizeCommercialVideoDetails(existingDetails)) !== JSON.stringify(collectedDetails)),
         recentMessages: intakeContext ? getChatbotReplyHistory(intakeContext.requestInput.history || [], intakeContext.requestInput.pageId)
             .filter(message => message.role === 'assistant').map(message => message.content) : [],
-        splitMessages: config.split_messages, maxMessageParts: config.max_message_parts
+        splitMessages: config.split_messages, maxMessageParts: config.max_message_parts,
+        guidedSales: config.guided_sales_enabled, salesFormFields: config.sales_form_fields,
+        introduceProcess: config.guided_sales_enabled && intakeContext ? isNewSalesConversation(intakeContext.requestInput) : false
     }) : formatChatbotReplyMessages(rawMessages.length > 0 ? rawMessages : [messageContent], config);
     const freeOfferCheckMessages = messages.filter(message => !/PRICING PARA SA /i.test(message));
     if (canonicalPricing && (hasForbiddenFreeVideoOffer(freeOfferCheckMessages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')))) {
@@ -597,6 +629,7 @@ function parseChatbotPlan(
         : undefined;
 
     return {
+        ...(enhanced ? { sales_progress: enhanced.progress } : {}),
         reply: messages.join('\n\n'),
         messages,
         ...(commercialIntake && !detectedStopReason ? { message_controls: getCommercialVideoMessageControls(messages) } : {}),
@@ -653,6 +686,8 @@ export function buildChatbotKnowledgeQuery(input: {
 }
 
 export function buildChatbotMessages(input: {
+    salesAssistantSettings?: unknown;
+    salesProgress?: SalesProgress;
     instructions: string;
     contactName?: string | null;
     pageName?: string | null;
@@ -668,6 +703,8 @@ export function buildChatbotMessages(input: {
     botDonts?: string;
     splitMessages?: boolean;
     commercialVideoIntakeEnabled?: boolean;
+    guidedSalesEnabled?: boolean;
+    salesFormFields?: string[];
     hasClearRequest?: boolean;
     requestType?: CommercialVideoRequestType | null;
 }) {
@@ -683,7 +720,7 @@ export function buildChatbotMessages(input: {
         : '';
     const commercialIntake = input.commercialVideoIntakeEnabled === true;
     const details = commercialIntake ? COMMERCIAL_VIDEO_REQUIRED_DETAILS : normalizeDetailsToCollect(input.detailsToCollect);
-    const collectedDetails = commercialIntake ? normalizeCommercialVideoDetails(input.collectedDetails) : includeKnownContactName(
+    const collectedDetails = input.salesAssistantSettings ? normalizeSalesDetails(input.collectedDetails, salesSettings(input.salesAssistantSettings)) : commercialIntake ? input.guidedSalesEnabled ? normalizeGuidedSalesDetails(input.collectedDetails, input.salesFormFields) : normalizeCommercialVideoDetails(input.collectedDetails) : includeKnownContactName(
         details,
         input.collectedDetails,
         input.contactName
@@ -788,6 +825,7 @@ export function buildChatbotMessages(input: {
         ownerInstructions + customerRequestRule + immutableRules + responseFormat +
         (commercialIntake ? commercialVideoPolicyPrompt(collectedDetails) +
             commercialVideoSalesFlowPrompt(resolveCommercialVideoSalesFlow({ history: input.history, pageId: input.pageId, inboundMessage: input.inboundMessage, details: collectedDetails, hasClearRequest: input.hasClearRequest, requestType: input.requestType }), input.contactName) +
+            (input.guidedSalesEnabled ? guidedSalesPrompt(input.salesFormFields) : '') +
             `Verified saved clear request: ${input.hasClearRequest === true}. Preserve it unless the customer changes or cancels their request.` : '');
 
     const history = getChatbotReplyHistory(input.history || [], input.pageId);
@@ -798,10 +836,12 @@ export function buildChatbotMessages(input: {
         history.push({ role: 'user', content: inboundMessage });
     }
 
-    return [{ role: 'system' as const, content: system }, ...history];
+    return [{ role: 'system' as const, content: system + (input.salesAssistantSettings ? salesAssistantPrompt(salesSettings(input.salesAssistantSettings), input.salesProgress) : '') }, ...history];
 }
 
 export async function generateChatbotResponse(input: {
+    salesProgress?: SalesProgress;
+    formUrl?: string;
     config: ChatbotConfig;
     contactName?: string | null;
     pageName?: string | null;
@@ -821,6 +861,18 @@ export async function generateChatbotResponse(input: {
 
     input = { ...input, config: normalizeCommercialVideoIntakeConfig(input.config) };
     const commercialIntake = isCommercialVideoIntake(input.config);
+    if (usesSalesAssistant(input.config) && !input.salesProgress?.introduced_at && !Object.keys(input.collectedDetails || {}).length &&
+        !(input.history || []).some(message => message.from?.id === input.pageId)) {
+        input = { ...input, salesProgress: { ...input.salesProgress, introduction_pending: true } };
+    }
+    if (usesSalesAssistant(input.config) && !input.salesProgress?.introduced_at && !Object.keys(input.collectedDetails || {}).length &&
+        !(input.history || []).some(message => message.from?.id === input.pageId) &&
+        /^(?:hi|hello|good (?:morning|afternoon|evening)|interested|inquire)(?:\s+po)?[!.\s]*$/i.test(input.inboundMessage)) {
+        const rendered = renderSalesMessages({ parts: [], details: {}, settings: salesSettings(input.config.sales_assistant_settings),
+            progress: input.salesProgress, history: input.history, pageId: input.pageId, customerMessage: input.inboundMessage, formUrl: input.formUrl });
+        return { reply: rendered.messages.join('\n\n'), messages: rendered.messages, collected_details: {}, missing_details: [...COMMERCIAL_VIDEO_REQUIRED_DETAILS],
+            details_complete: false, knowledge: [], sales_progress: rendered.progress, has_clear_request: false, request_type: null, intake_action: 'none' };
+    }
 
     // Each resumed intake raises this contact's goal without changing the Page
     // target or discarding answers from earlier rounds.
@@ -830,7 +882,7 @@ export async function generateChatbotResponse(input: {
             Math.floor(Math.min(totalDetails, Math.max(1, input.detailTargetCount)) * 100 / totalDetails) } };
     }
 
-    const collectedDetails = commercialIntake ? normalizeCommercialVideoDetails(input.collectedDetails) : includeKnownContactName(
+    const collectedDetails = usesSalesAssistant(input.config) ? normalizeSalesDetails(input.collectedDetails, salesSettings(input.config.sales_assistant_settings)) : commercialIntake ? input.config.guided_sales_enabled ? normalizeGuidedSalesDetails(input.collectedDetails, input.config.sales_form_fields) : normalizeCommercialVideoDetails(input.collectedDetails) : includeKnownContactName(
         input.config.details_to_collect,
         input.collectedDetails,
         input.contactName
@@ -839,7 +891,7 @@ export async function generateChatbotResponse(input: {
         request: resolveCommercialVideoRequest(input),
         contactName: input.contactName,
         requestInput: input,
-        formPreviouslySent: (input.history || []).some(message => message.from?.id === input.pageId && containsCommercialVideoForm(message.message || ''))
+        formPreviouslySent: (input.history || []).some(message => message.from?.id === input.pageId && (containsCommercialVideoForm(message.message || '') || containsGuidedSalesForm(message.message || '')))
     } : undefined;
     let knowledge = input.knowledge || [];
     let retrievalWarning: string | undefined;
@@ -859,9 +911,14 @@ export async function generateChatbotResponse(input: {
         }
     }
 
+    if (usesSalesAssistant(input.config) && input.knowledge === undefined) {
+        try { knowledge = [...await loadAssignedSalesSamples(input.config), ...knowledge]; }
+        catch (error) { retrievalWarning = error instanceof Error ? error.message : 'Could not load assigned samples'; }
+    }
     knowledge = withContactPricingKnowledge(knowledge, input.pricingCatalog);
     const model = input.config.model || process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL;
     const messages = buildChatbotMessages({
+        salesAssistantSettings: usesSalesAssistant(input.config) ? input.config.sales_assistant_settings : undefined, salesProgress: input.salesProgress,
         instructions: input.config.instructions + (input.pricingCatalog ? '\nFor this customer use CONTACT-CATALOG exclusively for package prices, freebies and duration choices. Other catalog rates are not their current offer. Keep the existing production process and PHP150 deposit.' : ''),
         contactName: input.contactName,
         pageName: input.pageName,
@@ -877,6 +934,8 @@ export async function generateChatbotResponse(input: {
         botDonts: input.config.bot_donts,
         splitMessages: input.config.split_messages,
         commercialVideoIntakeEnabled: commercialIntake,
+        guidedSalesEnabled: input.config.guided_sales_enabled,
+        salesFormFields: input.config.sales_form_fields,
         hasClearRequest: intakeContext?.request.has_clear_request,
         requestType: intakeContext?.request.request_type
     });
@@ -941,8 +1000,8 @@ export async function extractChatbotContactDetails(
     input: Parameters<typeof generateChatbotResponse>[0]
 ): Promise<{ collected_details: Record<string, string>; missing_details: string[] } & Partial<CommercialVideoRequest>> {
     const commercialIntake = isCommercialVideoIntake(input.config);
-    const requested = commercialIntake ? COMMERCIAL_VIDEO_REQUIRED_DETAILS : normalizeDetailsToCollect(input.config.details_to_collect);
-    const existing = commercialIntake ? normalizeCommercialVideoDetails(input.collectedDetails) : includeKnownContactName(requested, input.collectedDetails, input.contactName);
+    const requested = commercialIntake ? [...new Set([...COMMERCIAL_VIDEO_REQUIRED_DETAILS, ...(usesSalesAssistant(input.config) ? salesSettings(input.config.sales_assistant_settings).fields.map(field => field.label) : input.config.guided_sales_enabled ? normalizeSalesFormFields(input.config.sales_form_fields) : [])])] : normalizeDetailsToCollect(input.config.details_to_collect);
+    const existing = usesSalesAssistant(input.config) ? normalizeSalesDetails(input.collectedDetails, salesSettings(input.config.sales_assistant_settings)) : commercialIntake ? input.config.guided_sales_enabled ? normalizeGuidedSalesDetails(input.collectedDetails, input.config.sales_form_fields) : normalizeCommercialVideoDetails(input.collectedDetails) : includeKnownContactName(requested, input.collectedDetails, input.contactName);
     if (requested.length === 0) return { collected_details: existing, missing_details: [] };
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) throw new Error('OPENROUTER_API_KEY is not configured');
@@ -980,8 +1039,8 @@ export async function extractChatbotContactDetails(
         !parsed.collected_details || typeof parsed.collected_details !== 'object' || Array.isArray(parsed.collected_details)) {
         throw new Error('Invalid contact detail extraction');
     }
-    const collected = commercialIntake ? mergeCommercialVideoChatDetails(existing, parsed.collected_details,
-        commercialVideoCustomerTexts(input.history || [], input.pageId, input.inboundMessage), input.inboundMessage)
+    const collected = usesSalesAssistant(input.config) ? mergeSalesChatDetails(existing, parsed.collected_details, commercialVideoCustomerTexts(input.history || [], input.pageId, input.inboundMessage), input.inboundMessage, salesSettings(input.config.sales_assistant_settings), input.salesProgress?.last_question) : commercialIntake ? (input.config.guided_sales_enabled ? mergeGuidedSalesDetails : mergeCommercialVideoChatDetails)(existing, parsed.collected_details,
+        commercialVideoCustomerTexts(input.history || [], input.pageId, input.inboundMessage), input.inboundMessage, input.config.sales_form_fields)
         : { ...existing, ...normalizeCollectedChatbotDetails(parsed.collected_details, requested) };
     return { collected_details: collected, missing_details: commercialIntake ? getMissingCommercialVideoDetails(collected) : getMissingChatbotDetails(requested, collected),
         ...(commercialIntake ? resolveCommercialVideoRequest({ ...input, requestCandidate: parsed }) : {}) };
@@ -1039,6 +1098,9 @@ export async function analyzeChatbotContinuation(input: {
 }
 
 export async function generateChatbotFollowUp(input: {
+    formSubmission?: boolean;
+    salesProgress?: SalesProgress;
+    formUrl?: string;
     config: ChatbotConfig;
     contactName?: string | null;
     pageName?: string | null;
@@ -1072,7 +1134,7 @@ export async function generateChatbotFollowUp(input: {
     }
 
     const commercialIntake = isCommercialVideoIntake(input.config);
-    const collectedDetails = commercialIntake ? mergeCommercialVideoChatDetails(input.collectedDetails, {}, commercialVideoCustomerTexts(input.history || [], input.pageId)) : Object.fromEntries(
+    const collectedDetails = usesSalesAssistant(input.config) ? normalizeSalesDetails(input.collectedDetails, salesSettings(input.config.sales_assistant_settings)) : commercialIntake ? (input.config.guided_sales_enabled ? mergeGuidedSalesDetails : mergeCommercialVideoChatDetails)(input.collectedDetails, {}, commercialVideoCustomerTexts(input.history || [], input.pageId), undefined, input.config.sales_form_fields) : Object.fromEntries(
         Object.entries(input.collectedDetails || {})
             .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0)
             .map(([key, value]) => [key.trim().slice(0, 80), value.trim().slice(0, 500)])
@@ -1082,7 +1144,7 @@ export async function generateChatbotFollowUp(input: {
     const missingDetails = commercialIntake ? getMissingCommercialVideoDetails(collectedDetails) : normalizeDetailsToCollect(input.missingDetails);
     const intakeRequest = commercialIntake ? resolveCommercialVideoRequest(input) : null;
     const intakePolicy = commercialIntake ? evaluateCommercialVideoIntake(collectedDetails, intakeRequest?.has_clear_request === true) : null;
-    const formPreviouslySent = completeHistory.some(message => message.role === 'assistant' && containsCommercialVideoForm(message.content));
+    const formPreviouslySent = completeHistory.some(message => message.role === 'assistant' && (containsCommercialVideoForm(message.content) || containsGuidedSalesForm(message.content)));
     const retrievalConversation = customerMessages
         .slice(-6)
         .map((message) => message.content)
@@ -1103,6 +1165,10 @@ export async function generateChatbotFollowUp(input: {
         }
     }
 
+    if (usesSalesAssistant(input.config)) {
+        try { knowledge = [...await loadAssignedSalesSamples(input.config), ...knowledge]; }
+        catch (error) { retrievalWarning = error instanceof Error ? error.message : 'Could not load assigned samples'; }
+    }
     knowledge = withContactPricingKnowledge(knowledge, input.pricingCatalog);
     const knowledgeContext = knowledge.length > 0
         ? knowledge.map((match, index) =>
@@ -1185,11 +1251,12 @@ export async function generateChatbotFollowUp(input: {
         'When selecting a Drive folder, naturally introduce the button without pasting its raw URL.' +
         (commercialIntake ? commercialVideoPolicyPrompt(collectedDetails) +
             commercialVideoSalesFlowPrompt(resolveCommercialVideoSalesFlow({ history: input.history, pageId: input.pageId, details: collectedDetails, hasClearRequest: intakeRequest?.has_clear_request, requestType: intakeRequest?.request_type }), input.contactName) +
+            (input.config.guided_sales_enabled ? guidedSalesPrompt(input.config.sales_form_fields) : '') +
             `Verified customer request: ${JSON.stringify(intakeRequest)}. Prior full form sent: ${formPreviouslySent}. ` +
             'Keep the follow-up personalized to one unresolved topic. Do not use intake_action=send_form to repeat an already delivered form. Do not replay an earlier price or process question as a fresh customer request. Vary question construction, not just politeness.' : '');
     const user = 'Create the personalized follow-up now using only the verified conversation, collected details, Page instructions, and Page knowledge above.';
     const model = input.config.model || process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL;
-    const messages = [{ role: 'system' as const, content: system }, ...history, { role: 'user' as const, content: user }];
+    const messages = [{ role: 'system' as const, content: system + (usesSalesAssistant(input.config) ? salesAssistantPrompt(salesSettings(input.config.sales_assistant_settings), input.salesProgress) : '') }, ...history, { role: 'user' as const, content: user }];
     let tokenUsage: ChatbotTokenUsage | undefined;
     let invalidReason = 'empty';
 
@@ -1226,8 +1293,8 @@ export async function generateChatbotFollowUp(input: {
             const followUpFlow = commercialIntake ? resolveCommercialVideoSalesFlow({ history: input.history, pageId: input.pageId,
                 details: collectedDetails, hasClearRequest: intakeRequest?.has_clear_request, requestType: intakeRequest?.request_type }) : undefined;
             const pricing = getCommercialVideoPricing(knowledge, followUpFlow?.durationSeconds || null);
-            const priceList = getCommercialVideoPriceList(knowledge);
-            const canonicalPricing = followUpFlow?.pricingReady === true && priceList.length > 0 && !followUpFlow.pricingSent && (followUpFlow.step === 'pricing_process' || isCommercialVideoPriceRequested(latestCustomerMessage));
+            const priceList = usesSalesAssistant(input.config) ? approvedSalesRates(knowledge) : getCommercialVideoPriceList(knowledge);
+            const canonicalPricing = chatbotPricingEnabled(input.config) && followUpFlow?.pricingReady === true && priceList.length > 0 && !followUpFlow.pricingSent && (followUpFlow.step === 'pricing_process' || isCommercialVideoPriceRequested(latestCustomerMessage));
             if (commercialIntake && !canonicalPricing && hasForbiddenFreeVideoOffer(unsanitizedMessages.join('\n'), pricing?.ownerVerifiedCatalog ? pricing.bonusVideoSeconds : undefined)) throw new Error('Unauthorized free personalized video offer');
             if (commercialIntake && !canonicalPricing && hasForbiddenFreePreproductionCharge(unsanitizedMessages.join('\n'))) throw new Error('Unauthorized charge or quote for free concept/script');
             const rawMessages = unsanitizedMessages
@@ -1235,8 +1302,14 @@ export async function generateChatbotFollowUp(input: {
                 .filter(Boolean);
             if (hasRepeatedChatbotCopy(commercialIntake ? rawMessages : rawMessages.flatMap(splitConversationalCopy), [], { allowRepeatedFormsAndSamples: commercialIntake })) throw new Error('follow-up repeated copy within its draft');
             const cappedRawMessages = capCombinedMessageLength(rawMessages, FOLLOW_UP_MAX_CHARS);
-            if (followUpFlow?.step === 'sample') ensureCommercialVideoSampleSelection(parsed, knowledge, followUpFlow.business);
-            const messages = commercialIntake ? renderCommercialVideoMessages({
+            let salesSample;
+            if (usesSalesAssistant(input.config)) salesSample = selectSalesSample(parsed, knowledge, collectedDetails, salesSettings(input.config.sales_assistant_settings), input.salesProgress?.samples_sent);
+            else if (followUpFlow?.step === 'sample') ensureCommercialVideoSampleSelection(parsed, knowledge, followUpFlow.business);
+            const enhanced = usesSalesAssistant(input.config) ? renderSalesMessages({ parts: rawMessages, details: collectedDetails,
+                settings: salesSettings(input.config.sales_assistant_settings), progress: input.salesProgress, history: input.history,
+                pageId: input.pageId, customerMessage: '', followUp: !input.formSubmission, rates: priceList, contactName: input.contactName,
+                sampleReason: salesSample?.reason, sampleId: salesSample?.match.document_id, requestType: intakeRequest?.request_type, buyingIntent: intakeRequest?.has_clear_request }) : undefined;
+            const messages = enhanced ? enhanced.messages : commercialIntake ? renderCommercialVideoMessages({
                 contactName: input.contactName, customerMessage: latestCustomerMessage, followUp: true, answerRequested: false,
                 pricing, priceList,
                 salesFlow: followUpFlow,
@@ -1244,6 +1317,7 @@ export async function generateChatbotFollowUp(input: {
                 parts: rawMessages, details: collectedDetails, action: formPreviouslySent && intakePolicy?.nextAction === 'send_form' ? 'ask_missing_field' : intakePolicy?.nextAction || 'none', requestType: intakeRequest?.request_type, formPreviouslySent,
                 recentMessages: [...completeHistory.filter(message => message.role === 'assistant').map(message => message.content), ...previousFollowUpMessages],
                 splitMessages: input.config.split_messages, maxMessageParts: input.config.max_message_parts
+                , guidedSales: input.config.guided_sales_enabled, salesFormFields: input.config.sales_form_fields
             }) : capCombinedMessageLength(limitNaturalMessageParts(
                 splitFollowUpMessages
                     ? cappedRawMessages.flatMap((message) => splitChatbotMessageBubbles(message, true))
@@ -1326,6 +1400,7 @@ export async function generateChatbotFollowUp(input: {
                 )
                 : undefined;
             return {
+                ...(enhanced ? { sales_progress: enhanced.progress } : {}),
                 message,
                 messages,
                 ...(commercialIntake ? { message_controls: getCommercialVideoMessageControls(messages) } : {}),

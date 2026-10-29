@@ -14,6 +14,8 @@ import { generateChatbotFollowUp, getChatbotKnowledgePageId, type ChatbotConfig 
 import { getChatbotHandoffOptions, isChatbotContactAllowed, saveChatbotContactState, type ChatbotContactState } from '@/lib/chatbot-control';
 import { evaluateCommercialVideoIntake, isCommercialVideoIntake, resolveCommercialVideoRequest } from '@/lib/chatbot-policy';
 import { normalizeCommercialVideoDetails } from '@/lib/chatbot-intake';
+import { usesSalesAssistant, salesSettings, chatbotPricingEnabled, normalizeSalesDetails, type SalesProgress } from '@/lib/chatbot-sales-assistant';
+import { mergeSalesRecord } from '@/lib/chatbot-sales-store';
 import { findLatestMessengerSystemSignal, getMessengerHandoffMetadata, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 import { getReadyChatbotDriveFilesForDocuments, getReadyChatbotDriveFolderForDocument, type ChatbotDriveFile, type ChatbotDriveFolder } from '@/lib/chatbot-drive-folders';
 import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateContactPipelineStage, type ContactPipelineStage, type ContactPipelineSource } from '@/lib/contact-pipeline';
@@ -56,7 +58,7 @@ type FollowUpJob = {
     message_id?: string | null;
     attempt_count: number;
     media_asset_id?: string | null;
-    purpose?: 'scheduled' | 'nightly_continuation' | 'first_day_adaptive' | 'pricing_promotion';
+    purpose?: 'scheduled' | 'nightly_continuation' | 'first_day_adaptive' | 'pricing_promotion' | 'form_submission';
     automation_epoch?: number;
     policy_revision?: number;
     timing_context?: { initial_reply_end?: string; carried_sent_times?: string[] } | null;
@@ -295,6 +297,21 @@ export async function processDueChatbotFollowUps(input: {
                 if (lookup.error) throw new Error(lookup.error.message || 'Could not verify follow-up eligibility');
             }
             const [{ data: page }, { data: contact }, { data: config }, { data: state }] = eligibility;
+            let salesProgress: SalesProgress | undefined;
+            const deliveredSampleIds: string[] = [];
+            if (config && usesSalesAssistant(config) && job.purpose !== 'form_submission') {
+                const limit = salesSettings(config.sales_assistant_settings).max_follow_ups;
+                const permitted = !(job.purpose === 'pricing_promotion' && !chatbotPricingEnabled(config)) &&
+                    (job.schedule_type === 'manual_human_agent' || getAutomatedFollowUpMessagingType(job.schedule_type, job.anchor_inbound_at, now) === 'RESPONSE');
+                if (!supabase.rpc) throw new Error('Sales assistant migration is required');
+                const reservation = permitted ? await supabase.rpc('reserve_chatbot_sales_follow_up', { p_page_id: job.page_id, p_contact_id: job.contact_id,
+                    p_anchor: job.anchor_inbound_at, p_job_id: job.id, p_max: limit }) : { data: false, error: null };
+                if (reservation.error) throw new Error(reservation.error.message);
+                if (!reservation.data) {
+                    await markJob(supabase, job.id, { status: 'cancelled', claimed_at: null, cancelled_at: now.toISOString(), error_message: 'Sales follow-up limit reached or pricing disabled' });
+                    result.cancelled++; continue;
+                }
+            }
             const anchorTime = new Date(job.anchor_inbound_at).getTime();
             const latestInboundTime = new Date(contact?.last_inbound_at || contact?.last_interaction_at || 0).getTime();
             const messagingType = getAutomatedFollowUpMessagingType(
@@ -302,7 +319,7 @@ export async function processDueChatbotFollowUps(input: {
                 job.anchor_inbound_at,
                 now
             );
-            if (!page?.access_token || !contact?.psid || contact.chatbot_enabled === false || !config?.enabled || !config?.follow_up_enabled ||
+            if (!page?.access_token || !contact?.psid || contact.chatbot_enabled === false || !config?.enabled || (!config?.follow_up_enabled && job.purpose !== 'form_submission') ||
                 !isChatbotContactAllowed(config, job.contact_id) ||
                 state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source, config) ||
                 (isCommercialVideoIntake(config) && ((job.automation_epoch || 0) !== (state?.automation_epoch || 0) ||
@@ -473,7 +490,7 @@ export async function processDueChatbotFollowUps(input: {
             const quote = getPricingQuoteContext({ config, pageId: page.fb_page_id, history: conversationHistory,
                 collectedDetails: state?.collected_details || {}, hasClearRequest: request.has_clear_request });
             // Promotional catalogs use RESPONSE only, including when the ordinary scheduler permits HUMAN_AGENT.
-            if (job.purpose === 'pricing_promotion' && job.schedule_type === 'response' && messagingType === 'RESPONSE') {
+            if (chatbotPricingEnabled(config) && job.purpose === 'pricing_promotion' && job.schedule_type === 'response' && messagingType === 'RESPONSE') {
                 pricingOffer = await reservePricingOffer(supabase, { pageId: job.page_id, contactId: job.contact_id,
                     sourceKey: 'follow-up:' + job.id, followUp: true, quoteEligible: quote.eligible, durationSeconds: quote.durationSeconds,
                     enforceDiscovery: isCommercialVideoIntake(config) });
@@ -495,6 +512,8 @@ export async function processDueChatbotFollowUps(input: {
             try {
                 const knowledgePageId = getChatbotKnowledgePageId(config as ChatbotConfig);
                 const generated = await generateChatbotFollowUp({
+                    formSubmission: job.purpose === 'form_submission',
+                    salesProgress: state?.sales_progress,
                     pricingCatalog: await getContactPricingCatalog(supabase, job.page_id, job.contact_id),
                     config: job.purpose === 'nightly_continuation' || job.sequence_index >= 1000 ? { ...config,
                         follow_up_ai_instructions: `${config.follow_up_ai_instructions}\nThis is a reviewed intake continuation. Continue from the customer's unresolved question or objection and ask at most one previously unanswered detail. Keep all earlier answers; never restart intake or ask for an equivalent known detail.`
@@ -503,7 +522,7 @@ export async function processDueChatbotFollowUps(input: {
                     pageName: page.name,
                     pageId: page.fb_page_id,
                     history: conversationHistory,
-                    collectedDetails: isCommercialVideoIntake(config) ? normalizeCommercialVideoDetails(state?.collected_details || {}) : state?.collected_details || {},
+                    collectedDetails: usesSalesAssistant(config) ? state?.collected_details || {} : isCommercialVideoIntake(config) ? normalizeCommercialVideoDetails(state?.collected_details || {}) : state?.collected_details || {},
                     missingDetails: state?.missing_details || [],
                     hasClearRequest: request.has_clear_request,
                     requestType: request.request_type,
@@ -516,6 +535,7 @@ export async function processDueChatbotFollowUps(input: {
                     throw new Error('AI could not create a validated personalized follow-up');
                 }
                 personalizedMessage = generated.message;
+                salesProgress = generated.sales_progress;
                 personalizedMessages = generated.messages?.length
                     ? generated.messages
                     : [generated.message];
@@ -559,13 +579,18 @@ export async function processDueChatbotFollowUps(input: {
             const freshEligibility = await Promise.all([
                 supabase.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at,chatbot_enabled').eq('page_id', job.page_id).eq('id', job.contact_id).maybeSingle(),
                 supabase.from('chatbot_contact_states').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle(),
-                supabase.from('chatbot_configs').select('enabled,follow_up_enabled,follow_up_first_day_mode,trial_mode_enabled,trial_contact_id,commercial_video_intake_enabled,policy_revision').eq('page_id', job.page_id).maybeSingle()
+                supabase.from('chatbot_configs').select('*').eq('page_id', job.page_id).maybeSingle()
             ]);
             for (const lookup of freshEligibility) {
                 if (lookup.error) throw new Error(lookup.error.message || 'Could not recheck follow-up eligibility');
             }
             const [freshContact, freshState, freshConfig] = freshEligibility.map(lookup => lookup.data);
-            if (!freshContact || freshContact.chatbot_enabled === false || !freshConfig?.enabled || !freshConfig.follow_up_enabled ||
+            if (usesSalesAssistant(config)) {
+                const expected = normalizeSalesDetails(state?.collected_details, salesSettings(config.sales_assistant_settings));
+                const actual = normalizeSalesDetails(freshState?.collected_details, salesSettings(config.sales_assistant_settings));
+                if (Object.keys({ ...expected, ...actual }).some(key => expected[key] !== actual[key])) throw new Error('Customer details changed during follow-up generation; retry with current answers');
+            }
+            if (!freshContact || freshContact.chatbot_enabled === false || !freshConfig?.enabled || (!freshConfig.follow_up_enabled && job.purpose !== 'form_submission') ||
                 !isChatbotContactAllowed(freshConfig, job.contact_id) || freshState?.status === 'stopped' ||
                 isPipelineClosedForAutomation(freshContact.pipeline_stage, freshContact.pipeline_stage_source, freshConfig) ||
                 (isCommercialVideoIntake(freshConfig) && ((job.automation_epoch || 0) !== (freshState?.automation_epoch || 0) ||
@@ -630,7 +655,7 @@ export async function processDueChatbotFollowUps(input: {
                 }
                 return assertChatbotDeliveryAllowed({
                 supabase, pageId: job.page_id, facebookPageId: page.fb_page_id, accessToken: page.access_token,
-                contactId: job.contact_id, psid: contact.psid, followUp: true, followUpJobId: job.id, anchorInboundAt: job.anchor_inbound_at,
+                contactId: job.contact_id, psid: contact.psid, followUp: job.purpose !== 'form_submission', followUpJobId: job.id, anchorInboundAt: job.anchor_inbound_at,
                 automationEpoch: isCommercialVideoIntake(config) ? job.automation_epoch || 0 : undefined,
                 policyRevision: isCommercialVideoIntake(config) ? job.policy_revision || 1 : undefined
                 });
@@ -718,6 +743,7 @@ export async function processDueChatbotFollowUps(input: {
                             : `AI Chatbot follow-up Drive card: ${selectedDriveFiles[0].name}`,
                         messageKind: `${messagingType || 'RESPONSE'} Drive media ${selectedDriveFiles.length > 1 ? 'carousel' : 'card'}`
                     });
+                    deliveredSampleIds.push(...selectedDriveFiles.map(file => file.knowledge_document_id).filter((id): id is string => !!id));
                     result.mediaSent += 1;
                 } catch (driveCarouselError) {
                     if (driveCarouselError instanceof ChatbotDeliveryStoppedError) throw driveCarouselError;
@@ -762,6 +788,7 @@ export async function processDueChatbotFollowUps(input: {
                                 ? `${messagingType || 'RESPONSE'} media carousel`
                                 : `${messagingType || 'RESPONSE'} media card`
                         });
+                        deliveredSampleIds.push(...selectedMediaItems.map(media => media.knowledge_document_id).filter((id): id is string => !!id));
                         result.mediaSent += 1;
                     }
                 } catch (mediaError) {
@@ -786,6 +813,11 @@ export async function processDueChatbotFollowUps(input: {
                 error_message: null
             });
             result.sent += 1;
+            if (salesProgress && usesSalesAssistant(config)) {
+                try { await mergeSalesRecord(supabase, { pageId: job.page_id, contactId: job.contact_id,
+                    source: 'delivery', eventKey: 'follow-up:' + job.id, observedAt: (input.now || new Date()).toISOString(), progress: { ...salesProgress, samples_sent: deliveredSampleIds } }); }
+                catch (error) { console.warn('[SALES_FOLLOW_UP_PROGRESS]', error instanceof Error ? error.message : 'Could not update sales progress'); }
+            }
             if (pricingOffer) {
                 await schedulePricingPromotion(supabase, { pageId: job.page_id, contactId: job.contact_id,
                     anchorInboundAt: job.anchor_inbound_at, days: normalizeBestTimeFollowUpDays(config.follow_up_best_time_days),

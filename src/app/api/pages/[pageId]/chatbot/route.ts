@@ -21,6 +21,8 @@ import { getMissingChatbotDetails } from '@/lib/chatbot-control';
 import { normalizeCommercialVideoDetails, normalizeCommercialVideoIntakeConfig } from '@/lib/chatbot-intake';
 import { evaluateCommercialVideoIntake, extractClearVideoRequest, isCommercialVideoIntake } from '@/lib/chatbot-policy';
 import { getCommercialVideoMessageControls, resolveChatbotAction } from '@/lib/chatbot-interactions';
+import { salesSettings, validateSalesSettings } from '@/lib/chatbot-sales-assistant';
+import { DEFAULT_SALES_FORM_FIELDS, normalizeSalesFormFields } from '@/lib/chatbot-guided-sales';
 
 function defaultConfig(pageId: string): ChatbotConfig {
     return {
@@ -37,6 +39,9 @@ function defaultConfig(pageId: string): ChatbotConfig {
         details_to_collect: [],
         details_completion_percent: 100,
         commercial_video_intake_enabled: false,
+        sales_assistant_settings: salesSettings({}),
+        guided_sales_enabled: false,
+        sales_form_fields: [...DEFAULT_SALES_FORM_FIELDS],
         continuation_review_enabled: false,
         continuation_review_hour: 20,
         continuation_review_minute: 0,
@@ -95,6 +100,7 @@ function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): Chat
 
     return normalizeCommercialVideoIntakeConfig({
         ...stored,
+        ...(draft.sales_assistant_settings !== undefined ? { sales_assistant_settings: validateSalesSettings(draft.sales_assistant_settings) } : {}),
         page_id: stored.page_id,
         enabled: booleanValue('enabled', stored.enabled),
         trial_mode_enabled: booleanValue('trial_mode_enabled', stored.trial_mode_enabled === true),
@@ -108,6 +114,8 @@ function mergeDraftConfigForPreview(stored: ChatbotConfig, value: unknown): Chat
         model: requiredText('model', 200, stored.model),
         rag_enabled: booleanValue('rag_enabled', stored.rag_enabled),
         commercial_video_intake_enabled: booleanValue('commercial_video_intake_enabled', stored.commercial_video_intake_enabled === true),
+        guided_sales_enabled: booleanValue('guided_sales_enabled', stored.guided_sales_enabled === true),
+        sales_form_fields: Array.isArray(draft.sales_form_fields) ? normalizeSalesFormFields(draft.sales_form_fields) : normalizeSalesFormFields(stored.sales_form_fields),
         continuation_review_enabled: booleanValue('continuation_review_enabled',
             draft.commercial_video_intake_enabled === true && stored.commercial_video_intake_enabled !== true
                 ? true : stored.continuation_review_enabled === true),
@@ -194,7 +202,7 @@ export async function GET(
 
         const { data, error } = await getSupabaseAdmin()
             .from('chatbot_configs')
-            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_first_day_mode, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+            .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, guided_sales_enabled, sales_form_fields, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_first_day_mode, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
             .eq('page_id', pageId)
             .maybeSingle();
 
@@ -226,6 +234,13 @@ export async function PUT(
         if (authorization.error) return authorization.error;
 
         const body = await request.json();
+        if (body.guided_sales_enabled !== undefined && typeof body.guided_sales_enabled !== 'boolean') {
+            return NextResponse.json({ error: 'Guided sales must be true or false' }, { status: 400 });
+        }
+        if (body.sales_form_fields !== undefined && (!Array.isArray(body.sales_form_fields) || body.sales_form_fields.length > 20 ||
+            body.sales_form_fields.some((field: unknown) => typeof field !== 'string' || !field.trim() || field.length > 80) || !normalizeSalesFormFields(body.sales_form_fields).length)) {
+            return NextResponse.json({ error: 'Add 1 to 20 form field labels, each at most 80 characters' }, { status: 400 });
+        }
         if (body.commercial_video_intake_enabled !== undefined && typeof body.commercial_video_intake_enabled !== 'boolean') {
             return NextResponse.json({ error: 'Commercial video intake must be true or false' }, { status: 400 });
         }
@@ -366,7 +381,15 @@ export async function PUT(
             }
         }
 
+        let salesAssistantSettings;
+        if (body.sales_assistant_settings !== undefined) {
+            try { salesAssistantSettings = validateSalesSettings(body.sales_assistant_settings); }
+            catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid sales settings' }, { status: 400 }); }
+        }
         const sharedSettings = {
+                ...(salesAssistantSettings ? { sales_assistant_settings: salesAssistantSettings } : {}),
+                ...(typeof body.guided_sales_enabled === 'boolean' ? { guided_sales_enabled: body.guided_sales_enabled } : {}),
+                ...(Array.isArray(body.sales_form_fields) ? { sales_form_fields: normalizeSalesFormFields(body.sales_form_fields) } : {}),
                 enabled: body.enabled === true,
                 instructions,
                 fallback_reply: fallbackReply,
@@ -505,7 +528,7 @@ export async function POST(
         const [{ data, error }, { data: page, error: pageError }] = await Promise.all([
             supabase
                 .from('chatbot_configs')
-                .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_first_day_mode, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
+                .select('page_id, knowledge_source_page_id, enabled, trial_mode_enabled, trial_contact_id, instructions, fallback_reply, model, rag_enabled, follow_up_prompt, details_to_collect, details_completion_percent, commercial_video_intake_enabled, guided_sales_enabled, sales_form_fields, policy_revision, continuation_review_enabled, continuation_review_hour, continuation_review_minute, continuation_enabled_at, bot_dos, bot_donts, follow_up_enabled, follow_up_first_day_mode, follow_up_quick_delays_minutes, follow_up_best_time_days, follow_up_messages, follow_up_ai_instructions, follow_up_utility_template_name, follow_up_utility_template_language, follow_up_utility_text, follow_up_media_asset_id, split_messages, max_message_parts, stop_when_details_collected, stop_on_opt_out, stop_on_refusal, stop_on_qualified, stop_on_not_qualified, stop_on_converted, stop_on_order_created')
                 .eq('page_id', pageId)
                 .maybeSingle(),
             supabase.from('pages').select('name').eq('id', pageId).maybeSingle()
@@ -536,6 +559,7 @@ export async function POST(
             const followUpType = body.follow_up_type === 'human_agent' ? 'human_agent' : 'quick';
             const sequenceNumber = Math.min(10, Math.max(1, Math.round(Number(body.sequence_number) || 1)));
             const followUp = await generateChatbotFollowUp({
+                salesProgress: body.sales_progress && typeof body.sales_progress === 'object' && !Array.isArray(body.sales_progress) ? body.sales_progress : undefined,
                 config,
                 pageId: 'test-page',
                 pageName: page?.name,
@@ -585,6 +609,8 @@ export async function POST(
 
             return NextResponse.json({
                 reply: followUp.message,
+                ...(followUp.sales_progress ? { sales_progress: { ...followUp.sales_progress,
+                    samples_sent: followUpPreviews.length ? [...followUpMediaIds, ...(followUp.drive_file_document_ids || [])] : [] } } : {}),
                 messages: followUp.messages?.length ? followUp.messages : [followUp.message],
                 message_controls: isCommercialVideoIntake(config) ? getCommercialVideoMessageControls(followUp.messages?.length ? followUp.messages : [followUp.message]) : [],
                 mode: 'follow_up',
@@ -611,6 +637,7 @@ export async function POST(
         }
 
         const result = await generateChatbotResponse({
+            salesProgress: body.sales_progress && typeof body.sales_progress === 'object' && !Array.isArray(body.sales_progress) ? body.sales_progress : undefined,
             config,
             pageId: 'test-page',
             pageName: page?.name,
@@ -656,6 +683,8 @@ export async function POST(
 
         return NextResponse.json({
             reply: result.reply,
+            ...(result.sales_progress ? { sales_progress: { ...result.sales_progress,
+                samples_sent: selectedPreviews.length ? [...(result.media_document_ids || []), ...(result.drive_file_document_ids || [])] : [] } } : {}),
             messages: result.messages,
             message_controls: isCommercialVideoIntake(config) ? getCommercialVideoMessageControls(result.messages) : [],
             collected_details: result.collected_details,

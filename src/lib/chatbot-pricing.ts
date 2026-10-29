@@ -1,4 +1,5 @@
 import type { FacebookMessage } from '@/types';
+import { chatbotPricingEnabled, usesSalesAssistant } from '@/lib/chatbot-sales-assistant';
 import { getPricingPromotionDays } from '@/lib/chatbot-follow-up-timing';
 import type { ChatbotConfig } from '@/lib/chatbot';
 import { isCommercialVideoIntake } from '@/lib/chatbot-policy';
@@ -133,6 +134,10 @@ export function getPricingQuoteContext(input: {
     config: ChatbotConfig; pageId: string; history?: FacebookMessage[];
     inboundMessage?: string; collectedDetails?: Record<string, string>; hasClearRequest?: boolean;
 }) {
+    if (!chatbotPricingEnabled(input.config)) return { eligible: false, durationSeconds: null };
+    if (usesSalesAssistant(input.config) && isCommercialVideoPriceRequested(input.inboundMessage || '')) {
+        return { eligible: true, durationSeconds: resolveCommercialVideoSalesFlow({ ...input, details: input.collectedDetails }).durationSeconds };
+    }
     const priceRequested = isCommercialVideoPriceRequested(input.inboundMessage || '');
     if (!isCommercialVideoIntake(input.config)) return { eligible: priceRequested, durationSeconds: null };
     const flow = resolveCommercialVideoSalesFlow({ ...input, details: input.collectedDetails });

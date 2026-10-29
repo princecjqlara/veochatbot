@@ -67,6 +67,8 @@ export interface Contact {
 }
 
 export interface ChatbotConfig {
+  guided_sales_enabled?: boolean;
+  sales_form_fields?: string[];
   page_id: string;
   enabled: boolean;
   instructions: string;

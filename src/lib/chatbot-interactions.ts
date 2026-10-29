@@ -4,6 +4,7 @@ export type ChatbotChoice = { title: string; payload: string };
 export type ChatbotMessageControls = { message_index: number; buttons?: ChatbotChoice[]; quick_replies?: ChatbotChoice[] };
 export const COMMERCIAL_FORM_PAYLOAD = 'VEO:FORM:2';
 export const COMMERCIAL_FORM_CHOICE: ChatbotChoice = { title: 'Fill out form', payload: COMMERCIAL_FORM_PAYLOAD };
+export const COMMERCIAL_CHAT_CHOICE: ChatbotChoice = { title: 'Continue chatting', payload: 'VEO:CHAT:1' };
 export const COMMERCIAL_DURATION_CHOICES: ChatbotChoice[] = [16, 20, 24, 30, 60].map(seconds => ({
     title: seconds === 60 ? '1 min' : `${seconds}s`, payload: `VEO:DURATION:${seconds}`
 }));
@@ -11,6 +12,7 @@ export const COMMERCIAL_DURATION_CHOICES: ChatbotChoice[] = [16, 20, 24, 30, 60]
 /** Only app-owned actions map to conversation text. Opening a form is not buying consent. */
 export function resolveChatbotAction(payload: unknown): { title: string; message: string } | null {
     if (payload === COMMERCIAL_FORM_PAYLOAD) return { title: 'Fill out form', message: 'Pakisend ng fill-up form.' };
+    if (payload === COMMERCIAL_CHAT_CHOICE.payload) return { title: COMMERCIAL_CHAT_CHOICE.title, message: 'Dito na lang po tayo sa chat, hindi muna sa form.' };
     const duration = COMMERCIAL_DURATION_CHOICES.find(choice => choice.payload === payload);
     if (duration) return { title: duration.title, message: `${duration.payload.split(':').at(-1)} seconds` };
     if (payload === 'VEO:ORIENTATION:PORTRAIT') return { title: 'Portrait', message: 'Portrait ang preferred format ko.' };
@@ -23,6 +25,9 @@ export function getCommercialVideoMessageControls(messages: string[]): ChatbotMe
     const message_index = messages.length - 1;
     const question = splitConversationalCopy(messages[message_index] || '').at(-1) || '';
     if (!/\?\s*$/.test(question)) return [];
+    if (messages.some(message => message.includes('May optional quick form para mas mabilis'))) {
+        return [{ message_index, buttons: [COMMERCIAL_FORM_CHOICE, COMMERCIAL_CHAT_CHOICE] }];
+    }
     if (/(?:ilang|gaano|how|preferred|anong|ano|may).{0,75}(?:seconds?|segundo|duration|haba|length|katagal)|(?:duration|length).{0,45}\?/i.test(question)) {
         return [{ message_index, quick_replies: COMMERCIAL_DURATION_CHOICES }];
     }

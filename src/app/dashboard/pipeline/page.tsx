@@ -12,6 +12,7 @@ import {
 } from '@/lib/contact-pipeline';
 
 type ChatbotState = {
+    sales_progress?: import('@/lib/chatbot-sales-assistant').SalesProgress;
     status: 'active' | 'stopped';
     collected_details: Record<string, string> | null;
     missing_details: string[] | null;
@@ -474,6 +475,13 @@ export default function PipelinePage() {
                                                             </div>
                                                         ) : <p className="mt-2 text-xs font-semibold text-green-700">No missing requested details.</p>}
                                                         <dl className="mt-4 space-y-2 border-t border-gray-300 pt-3 text-xs">
+                                                            {contact.chatbot_state?.sales_progress && <>
+                                                                <div><dt className="text-gray-500">Sales stage / priority</dt><dd className="font-semibold">{contact.chatbot_state.sales_progress.stage?.replaceAll('_', ' ')} / {contact.chatbot_state.sales_progress.temperature || 'warm'}</dd></div>
+                                                                <div><dt className="text-gray-500">Last question</dt><dd>{contact.chatbot_state.sales_progress.last_question || '—'}</dd></div>
+                                                                <div><dt className="text-gray-500">Samples sent</dt><dd>{contact.chatbot_state.sales_progress.samples_sent?.length || 0}</dd></div>
+                                                                <div><dt className="text-gray-500">Asked about pricing</dt><dd>{contact.chatbot_state.sales_progress.pricing_inquiry ? 'Yes' : 'No'}</dd></div>
+                                                                {Object.entries(contact.chatbot_state.sales_progress.assumptions || {}).map(([label, value]) => <div key={label}><dt className="text-gray-500">Suggested {label} (unconfirmed)</dt><dd>{value}</dd></div>)}
+                                                            </>}
                                                             <div className="flex justify-between gap-3"><dt className="text-gray-500">Last customer message</dt><dd className="text-right font-semibold">{formatDate(contact.chatbot_state?.last_inbound_at || null)}</dd></div>
                                                             <div className="flex justify-between gap-3"><dt className="text-gray-500">Last bot reply</dt><dd className="text-right font-semibold">{formatDate(contact.chatbot_state?.last_bot_reply_at || null)}</dd></div>
                                                             <div className="flex justify-between gap-3"><dt className="text-gray-500">Bot record updated</dt><dd className="text-right font-semibold">{formatDate(contact.chatbot_state?.updated_at || null)}</dd></div>

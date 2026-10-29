@@ -33,6 +33,8 @@ import { getSupabaseClient } from '@/lib/supabase';
 import { COMMERCIAL_VIDEO_FIELDS, COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
 import { buildChatbotTestMessages, getChatbotTestHistory, type TestChatMessage, type TestMedia, type TestSource } from '@/lib/chatbot-test-preview';
 import { COMMERCIAL_FORM_CHOICE, resolveChatbotAction, type ChatbotChoice } from '@/lib/chatbot-interactions';
+import ChatbotSalesSettings from '@/components/ChatbotSalesSettings';
+import { DEFAULT_SALES_FORM_FIELDS } from '@/lib/chatbot-guided-sales';
 
 type PageSummary = {
     id: string;
@@ -40,6 +42,9 @@ type PageSummary = {
 };
 
 type ChatbotConfig = {
+    sales_assistant_settings?: unknown;
+    guided_sales_enabled?: boolean;
+    sales_form_fields?: string[];
     page_id: string;
     knowledge_source_page_id?: string | null;
     enabled: boolean;
@@ -399,6 +404,7 @@ export default function ChatbotPage() {
     const [testContactName, setTestContactName] = useState('Test Customer');
     const [testConversation, setTestConversation] = useState<TestChatMessage[]>([]);
     const [testCollectedDetails, setTestCollectedDetails] = useState<Record<string, string>>({});
+    const [testSalesProgress, setTestSalesProgress] = useState<import('@/lib/chatbot-sales-assistant').SalesProgress>({});
     const [testTokenUsage, setTestTokenUsage] = useState<TestTokenUsage | null>(null);
     const [testFollowUpType, setTestFollowUpType] = useState<'quick' | 'human_agent'>('quick');
     const [testFollowUpCount, setTestFollowUpCount] = useState(0);
@@ -462,6 +468,7 @@ export default function ChatbotPage() {
         setStatus('');
         setTestConversation([]);
         setTestCollectedDetails({});
+        setTestSalesProgress({});
         setTestTokenUsage(null);
         setTestFollowUpCount(0);
         setTestMessage('');
@@ -760,6 +767,7 @@ export default function ChatbotPage() {
                     contact_name: testContactName,
                     history,
                     collected_details: testCollectedDetails,
+                    sales_progress: testSalesProgress,
                     draft_config: config
                 })
             });
@@ -771,6 +779,9 @@ export default function ChatbotPage() {
             });
             setTestConversation((current) => [...current.map(entry => ({ ...entry, quickReplies: undefined })), ...assistantMessages]);
             setTestCollectedDetails(body.collected_details || {});
+            if (body.sales_progress) setTestSalesProgress(current => ({ ...current, ...body.sales_progress,
+                samples_sent: [...new Set([...(current.samples_sent || []), ...(body.sales_progress.samples_sent || [])])],
+                freebies_presented: [...new Set([...(current.freebies_presented || []), ...(body.sales_progress.freebies_presented || [])])] }));
             setTestTokenUsage(body.token_usage || null);
             setStatus([
                 body.retrieval_warning && 'Knowledge retrieval was unavailable: ' + body.retrieval_warning,
@@ -789,6 +800,7 @@ export default function ChatbotPage() {
     const resetTestConversation = () => {
         setTestConversation([]);
         setTestCollectedDetails({});
+        setTestSalesProgress({});
         setTestTokenUsage(null);
         setTestFollowUpType('quick');
         setTestFollowUpCount(0);
@@ -857,6 +869,7 @@ export default function ChatbotPage() {
                     sequence_number: testFollowUpCount + 1,
                     history: getChatbotTestHistory(testConversation),
                     collected_details: testCollectedDetails,
+                    sales_progress: testSalesProgress,
                     draft_config: config
                 })
             });
@@ -870,6 +883,9 @@ export default function ChatbotPage() {
             setTestConversation((current) => [...current.map(entry => ({ ...entry, quickReplies: undefined })), ...messages]);
             setTestTokenUsage(body.token_usage || null);
             setTestFollowUpCount((current) => current + 1);
+            if (body.sales_progress) setTestSalesProgress(current => ({ ...current, ...body.sales_progress,
+                samples_sent: [...new Set([...(current.samples_sent || []), ...(body.sales_progress.samples_sent || [])])],
+                freebies_presented: [...new Set([...(current.freebies_presented || []), ...(body.sales_progress.freebies_presented || [])])] }));
             setStatus([
                 body.retrieval_warning && 'Knowledge retrieval was unavailable: ' + body.retrieval_warning,
                 body.generation_warning && 'Follow-up generation warning: ' + body.generation_warning
@@ -1768,6 +1784,20 @@ export default function ChatbotPage() {
                             </span>
                         </label>
 
+                        {config.commercial_video_intake_enabled && !config.sales_assistant_settings && <div className="mb-4 border border-blue-200 p-4 space-y-3">
+                            <label className="flex items-start gap-3 text-sm">
+                                <input type="checkbox" className="mt-1" checked={config.guided_sales_enabled === true}
+                                    onChange={event => updateConfig({ guided_sales_enabled: event.target.checked })} />
+                                <span><strong>Guided sales with optional form</strong><span className="block text-xs text-gray-600 mt-1">Introduce the process once in a new conversation. Customers can fill out the form or keep chatting. Both save to the same customer record.</span></span>
+                            </label>
+                            <label className="block text-sm font-bold" htmlFor="sales-form-fields">Optional form fields, one per line</label>
+                            <textarea id="sales-form-fields" rows={6} className="input-wireframe w-full px-4 py-3 text-sm"
+                                value={(config.sales_form_fields || DEFAULT_SALES_FORM_FIELDS).join('\n')}
+                                onChange={event => updateConfig({ sales_form_fields: event.target.value.split('\n').slice(0, 20) })} />
+                            <button type="button" className="text-xs underline" onClick={() => updateConfig({ sales_form_fields: [...DEFAULT_SALES_FORM_FIELDS] })}>Use the six business fields</button>
+                            <p className="text-xs text-gray-600">Add, remove, or reorder up to 20 fields. The original eight production details and customer request still control the existing handoff. Collected form and chat answers remain visible in Pipeline.</p>
+                        </div>}
+
                         <label className="font-mono text-xs font-bold uppercase text-gray-500 mb-2 block">
                             Follow-up prompt
                         </label>
@@ -1795,9 +1825,10 @@ export default function ChatbotPage() {
                             className="input-wireframe min-h-[210px] w-full resize-y px-4 py-3 text-sm leading-6"
                             placeholder={'Full name\nMobile number\nService needed\nPreferred schedule\nBudget'}
                         />
+                        {config.commercial_video_intake_enabled && <ChatbotSalesSettings value={config.sales_assistant_settings} onChange={settings => updateConfig({ sales_assistant_settings: settings })} />}
                         <p className="mt-2 text-xs text-gray-500 font-mono">
                             {config.commercial_video_intake_enabled
-                                ? 'All eight form fields are required. Earlier answers and the chosen video length are prefilled, then the bot asks only for missing information.'
+                                ? 'The eight production details below retain the existing team-handoff criteria. The optional sales form above guides recommendations and never blocks customers from continuing in chat.'
                                 : 'The bot remembers customer-provided values and asks for only one missing detail at a time.'}
                         </p>
 

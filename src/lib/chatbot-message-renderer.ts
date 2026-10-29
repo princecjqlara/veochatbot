@@ -1,6 +1,7 @@
 import { COMMERCIAL_VIDEO_EARLY_FORM_REASON, containsCommercialVideoForm, getMissingCommercialVideoDetails, normalizeCommercialVideoDetails, renderCommercialVideoForm, type CommercialVideoIntakeAction } from '@/lib/chatbot-intake';
 import { isRepeatedChatbotCopy, splitConversationalCopy, uniqueChatbotCopy } from '@/lib/chatbot-message-copy';
 import { cleanCommercialVideoCopy, commercialVideoFirstName, isCommercialVideoPriceRequested, personalizeCommercialVideoMessages, type CommercialVideoSalesFlow, type CommercialVideoPricing } from '@/lib/chatbot-sales-flow';
+import { containsGuidedSalesForm, GUIDED_SALES_INTRO, normalizeGuidedSalesDetails, renderGuidedSalesForm } from '@/lib/chatbot-guided-sales';
 
 type MessageSettings = { splitMessages?: boolean; maxMessageParts?: number };
 export const COMMERCIAL_VIDEO_FORM_REASON = 'Para maihanda ang free concept para sa business mo, pakisagutan ang kulang dito. Walang bayad at walang kailangang bilhin.';
@@ -63,7 +64,8 @@ function isSummary(text: string): boolean {
     return /ito(?: po)? ang summary ng request (?:mo|ninyo):\n/i.test(text) && /\nPage \/ Social Media Link:/.test(text) && /\nPortrait or Landscape\?/.test(text);
 }
 export function isStructuredCommercialVideoMessage(text: string): boolean {
-    return containsCommercialVideoForm(text) || isSummary(text) || /STEP-BY-STEP PROCESS PO:/i.test(text) || /^(?:[^,\n]+,\s*)?PRICING PARA SA /im.test(text);
+    if (/SALES PROCESS:|Optional quick form:/.test(text)) return true;
+    return containsCommercialVideoForm(text) || containsGuidedSalesForm(text) || text.includes('Ganito lang kasimple ang process natin:') || isSummary(text) || /STEP-BY-STEP PROCESS PO:/i.test(text) || /^(?:[^,\n]+,\s*)?PRICING PARA SA /im.test(text);
 }
 
 /** Keep a conversational answer and its question together. A short introduction
@@ -106,10 +108,16 @@ const FIELD_PATTERNS: Record<string, RegExp> = {
 function nextQuestion(missing: string[], recent: string[], details: unknown): string {
     const questions = recent.flatMap(text => text.match(/[^.!?\n]+\?/g) || []);
     const last = questions.at(-1) || '';
-    const field = missing.find(label => !FIELD_PATTERNS[label].test(last)) || missing[0];
+    const field = missing.find(label => !FIELD_PATTERNS[label]?.test(last)) || missing[0];
     const business = normalizeCommercialVideoDetails(details)['Business Name']?.replace(/[?!\r\n]/g, ' ').trim().slice(0, 70);
     if (field === 'Business Location' && business && !questions.some(question => question.includes(business))) return 'Saang city o area ang ' + business + '?';
-    return FIELD_VARIANTS[field].find(question => !recent.some(text => text.includes(question))) || FIELD_VARIANTS[field][0];
+    const variants = FIELD_VARIANTS[field] || ['Ano ang ' + field.toLowerCase() + ' na ilalagay natin?'];
+    return variants.find(question => !recent.some(text => text.includes(question))) || variants[0];
+}
+/** Sales guidance reuses the current production-detail questions after consent. */
+export function getCommercialVideoNextQuestion(details: unknown, recent: string[] = []): string | undefined {
+    const missing = getMissingCommercialVideoDetails(details);
+    return missing.length ? nextQuestion(missing, recent, details) : undefined;
 }
 
 /** Generated answers contain facts only; the application owns sales questions,
@@ -155,6 +163,7 @@ export function renderCommercialVideoMessages(input: {
     answerRequested?: boolean; formPreviouslySent?: boolean; recentMessages?: string[]; summaryRequested?: boolean;
     contactName?: string | null; salesFlow?: CommercialVideoSalesFlow; hasSample?: boolean;
     pricing?: CommercialVideoPricing | null; priceList?: CommercialVideoPricing[]; followUp?: boolean;
+    guidedSales?: boolean; salesFormFields?: string[]; introduceProcess?: boolean;
 } & MessageSettings): string[] {
     const missing = getMissingCommercialVideoDetails(input.details);
     const recent = input.recentMessages || [];
@@ -172,6 +181,7 @@ export function renderCommercialVideoMessages(input: {
     }
     const answer = freshAnswer(conciseAnswer(factual), recent, input.answerRequested !== false);
     const messages: string[] = [];
+    if (input.guidedSales && input.introduceProcess && !input.followUp) messages.push(GUIDED_SALES_INTRO);
     const priceRequested = isCommercialVideoPriceRequested(customerMessage) && (!input.followUp || !flow?.pricingSent);
     if (answer && step !== 'pricing_process' && step !== 'sample') {
         messages.push(answer);
@@ -190,6 +200,7 @@ export function renderCommercialVideoMessages(input: {
         'Gaano kahabang video ang iniisip mo, ilang seconds kaya?'
     ]);
     const earlyForm = () => {
+        if (input.guidedSales) return;
         if (!flow?.formSent && !input.formPreviouslySent) messages.push(COMMERCIAL_VIDEO_EARLY_FORM_REASON + '\n\n' + renderCommercialVideoForm(input.details));
     };
     if (step === 'business') messages.push(chooseQuestion([
@@ -198,7 +209,7 @@ export function renderCommercialVideoMessages(input: {
         'Para sa anong business ang video na iniisip mo?'
     ]));
     else if (step === 'sample') {
-        if (answer && input.answerRequested && !/sample|portfolio/i.test(answer)) messages.push(answer);
+        if (answer && (input.answerRequested || input.guidedSales) && !/sample|portfolio/i.test(answer)) messages.push(answer);
         messages.push(input.hasSample
             ? 'Ito ang existing sample namin' + (business ? ' na related sa ' + business : '') + '.'
             : 'Wala pa akong verified sample' + (business ? ' para sa ' + business : '') + ' sa available na library ngayon.');
@@ -207,28 +218,33 @@ export function renderCommercialVideoMessages(input: {
             ? 'Gusto mo bang makita ang pricing at process para sa ' + flow.durationSeconds + '-second commercial video?'
             : durationQuestion);
     } else if (step === 'duration') { earlyForm(); messages.push(durationQuestion); }
-    else if (step === 'pricing_process' || step === 'decision') messages.push(chooseQuestion([
+    else if (step === 'pricing_process' || step === 'decision') messages.push(chooseQuestion(input.guidedSales ? [
+        'Simulan na ba natin ang commercial video' + (business ? ' para sa ' + business : '') + '?',
+        'Gusto mo bang mag-proceed sa commercial video at ihanda natin ang details?',
+        'Ready ka na bang simulan natin ang commercial video?'
+    ] : [
         'Gusto mo bang mag-proceed sa commercial video' + (business ? ' para sa ' + business : '') + ' para masend ko ang form?',
         'Gusto mo bang simulan ang commercial video at ibigay ang details sa form?',
         'Mag-proceed na ba tayo sa commercial video, ready ka nang sagutan ang form?'
     ]));
     else if (step === 'form') {
-        if (!input.formPreviouslySent || (!input.followUp && flow?.earlyFormSent && !flow.intakeFormSent) || formRequested) {
+        if (input.guidedSales ? formRequested && !input.followUp : !input.formPreviouslySent || (!input.followUp && flow?.earlyFormSent && !flow.intakeFormSent) || formRequested) {
             const reason = input.requestType?.startsWith('free_') ? 'Para maihanda ang free ' + (input.requestType === 'free_script' ? 'script' : 'concept') + ' mo, pakisagutan ang kulang dito. Walang bayad ito.' : COMMERCIAL_VIDEO_FORM_REASON;
             const name = commercialVideoFirstName(input.contactName);
-            messages.push((name ? name + ', ' + reason[0].toLowerCase() + reason.slice(1) : reason) + '\n\n' + renderCommercialVideoForm(input.details));
+            messages.push(input.guidedSales ? renderGuidedSalesForm(input.details, input.salesFormFields) + '\n\nWalang bayad ang free concept at walang kailangang bilhin.' : (name ? name + ', ' + reason[0].toLowerCase() + reason.slice(1) : reason) + '\n\n' + renderCommercialVideoForm(input.details));
         }
         const candidates = input.parts.flatMap(part => cleanCommercialVideoCopy(part, input.contactName).match(/[^.!?\n]+\?/g) || []);
         const candidate = candidates.find(question => question.length <= 140 && /^(?:ano(?:ng)?|saan(?:g)?|ilang|para\s+saan)\b/i.test(question.trim()) && missing.includes(Object.keys(FIELD_PATTERNS).find(field => FIELD_PATTERNS[field].test(question)) || '') &&
             !recent.some(previous => isRepeatedChatbotCopy(question, previous)) && !/budget/i.test(question));
         messages.push(candidate?.trim() || nextQuestion(missing, recent, input.details));
     } else {
-        const summary = renderCommercialVideoSummary(input.details);
+        const summary = input.guidedSales ? SUMMARY_PREFIX + '\n' + Object.entries(normalizeGuidedSalesDetails(input.details, input.salesFormFields)).map(([label, answer]) => label + ': ' + answer).join('\n') : renderCommercialVideoSummary(input.details);
         const summaryValues = summary.split('\n').slice(1);
         const summarySent = recent.some((text, index) => /ito(?: po)? ang summary ng request (?:mo|ninyo):/i.test(text) &&
             [recent.slice(index, index + 4), recent.slice(Math.max(0, index - 3), index + 1)].some(block =>
                 summaryValues.every(line => block.join('\n').includes(line))));
-        if (formRequested || (!input.followUp && flow?.earlyFormSent && !flow.intakeFormSent && input.action === 'handoff')) messages.push(COMMERCIAL_VIDEO_FORM_REASON + '\n\n' + renderCommercialVideoForm(input.details));
+        if (input.guidedSales && formRequested) messages.push(renderGuidedSalesForm(input.details, input.salesFormFields));
+        else if (!input.guidedSales && (formRequested || (!input.followUp && flow?.earlyFormSent && !flow.intakeFormSent && input.action === 'handoff'))) messages.push(COMMERCIAL_VIDEO_FORM_REASON + '\n\n' + renderCommercialVideoForm(input.details));
         else if (!summarySent || input.summaryRequested) messages.push(summary);
         if (input.action === 'handoff') {
             const free = input.requestType === 'free_concept' ? 'free concept' : input.requestType === 'free_script' ? 'free script' : null;

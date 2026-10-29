@@ -48,6 +48,8 @@ import { composeContactName, hasUsableContactName, normalizeContactName, pickPre
 import { classifyMessengerSystemMessage, findLatestMessengerLeadStageEvent, findLatestMessengerSystemSignal, getMessengerHandoffMetadata, isMessengerAutomaticNotice, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 import { evaluateCommercialVideoIntake, isCommercialVideoIntake } from '@/lib/chatbot-policy';
 import { captureCommercialVideoFormProgress } from '@/lib/chatbot-form-progress';
+import { usesSalesAssistant, salesSettings, normalizeSalesDetails, mergeSalesChatDetails, salesAssumptions, type SalesProgress } from '@/lib/chatbot-sales-assistant';
+import { mergeSalesRecord, salesFormUrl } from '@/lib/chatbot-sales-store';
 import { applyPricingOffer, assertPricingOfferActive, beginPricingDelivery, getContactPricingCatalog, getPricingQuoteContext, recordPricingDelivery, releasePricingOffer, renderPricingOffer, reservePricingOffer, type PricingOffer } from '@/lib/chatbot-pricing';
 import { captureContactAdSource, captureStandaloneAdReferral } from '@/lib/ad-attribution';
 
@@ -1090,6 +1092,17 @@ export async function POST(request: NextRequest) {
                                         }
                                     }
 
+                                    if (usesSalesAssistant(chatbotConfig) && inboundMessageText) {
+                                        const settings = salesSettings(chatbotConfig.sales_assistant_settings);
+                                        const base = chatbotState?.collected_details || {};
+                                        const details = mergeSalesChatDetails(base, {}, [inboundMessageText], inboundMessageText, settings, chatbotState?.sales_progress?.last_question);
+                                        const synced = await mergeSalesRecord(supabase, { pageId: page.id, contactId: contact.id,
+                                            base, details, source: 'chat', eventKey: 'capture:' + inboundMessageId, observedAt: interactionAt,
+                                            progress: { assumptions: salesAssumptions(details, settings),
+                                                ...(!chatbotState?.last_bot_reply_at && !Object.keys(base).length && !chatbotConversationHistory.some(message => message.from?.id === pageId)
+                                                    ? { introduction_pending: true } : {}) } });
+                                        chatbotState = synced.state;
+                                    }
                                     if (stateStopReason) {
                                         if (
                                             inboundMessageText && !conversationAuditFailed &&
@@ -1098,6 +1111,7 @@ export async function POST(request: NextRequest) {
                                         ) {
                                             try {
                                                 const details = await extractChatbotContactDetails({
+                                                    salesProgress: chatbotState?.sales_progress,
                                                     config: chatbotConfig, pageId, pageName: page.name,
                                                     contactName: contact.name, inboundMessage: inboundMessageText,
                                                     history: chatbotConversationHistory,
@@ -1108,11 +1122,13 @@ export async function POST(request: NextRequest) {
                                                 });
                                                 // Refresh the state before merging late answers so a
                                                 // concurrent human handoff remains stopped.
-                                                const latestState = await getChatbotContactState(supabase, page.id, contact.id);
+                                                const latestState = usesSalesAssistant(chatbotConfig) ? (await mergeSalesRecord(supabase, {
+                                                    pageId: page.id, contactId: contact.id, base: chatbotState?.collected_details || {}, details: details.collected_details,
+                                                    source: 'chat', eventKey: 'extract:' + inboundMessageId, observedAt: interactionAt })).state : await getChatbotContactState(supabase, page.id, contact.id);
                                                 await saveChatbotContactState(supabase, {
                                                     pageId: page.id, contactId: contact.id,
                                                     existingState: latestState || chatbotState,
-                                                    collectedDetails: details.collected_details,
+                                                    collectedDetails: usesSalesAssistant(chatbotConfig) ? latestState?.collected_details : details.collected_details,
                                                     missingDetails: details.missing_details,
                                                     inboundAt: interactionAt,
                                                     stopReason: latestState?.stop_reason || stateStopReason,
@@ -1160,9 +1176,10 @@ export async function POST(request: NextRequest) {
                                         let pricingMessage: string | null = null;
                                         let pricingSendStarted = false;
                                         try {
-                                            if (isCommercialVideoIntake(chatbotConfig)) {
+                                            if (isCommercialVideoIntake(chatbotConfig) && !usesSalesAssistant(chatbotConfig)) {
                                                 chatbotState = await captureCommercialVideoFormProgress(supabase, {
                                                     pageId: page.id, contactId: contact.id, existingState: chatbotState,
+                                                    guidedSales: chatbotConfig.guided_sales_enabled, salesFormFields: chatbotConfig.sales_form_fields,
                                                     customerText: inboundMessageText, inboundAt: interactionAt
                                                 });
                                             }
@@ -1181,6 +1198,7 @@ export async function POST(request: NextRequest) {
                                             let generatedMediaDocumentIds: string[] = [];
                                             let generatedDriveFileDocumentIds: string[] = [];
                                             let generatedLinkDocumentId: string | undefined;
+                                            let salesProgress: SalesProgress | undefined;
                                             try {
                                                 let chatbotInboundMessage = inboundMessageText;
                                                 if (inboundImageUrls.length > 0) {
@@ -1209,6 +1227,7 @@ export async function POST(request: NextRequest) {
                                                     }
                                                 }
                                                 const generated = await generateChatbotResponse({
+                                                    salesProgress: chatbotState?.sales_progress, formUrl: salesFormUrl(page.id, contact.id),
                                                     pricingCatalog: await getContactPricingCatalog(supabase, page.id, contact.id),
                                                     config: chatbotConfig,
                                                     contactName: (contact as { name?: string | null }).name,
@@ -1223,6 +1242,7 @@ export async function POST(request: NextRequest) {
                                                     requestEvidence
                                                 });
                                                 replyMessages = generated.messages;
+                                                salesProgress = generated.sales_progress;
                                                 collectedDetails = generated.collected_details;
                                                 missingDetails = generated.missing_details;
                                                 detailsComplete = generated.details_complete;
@@ -1289,6 +1309,17 @@ export async function POST(request: NextRequest) {
                                                 }
                                             }
 
+                                            if (usesSalesAssistant(chatbotConfig)) {
+                                                const synced = await mergeSalesRecord(supabase, { pageId: page.id, contactId: contact.id,
+                                                    details: collectedDetails, base: chatbotState?.collected_details || {}, source: 'chat',
+                                                    eventKey: 'extract:' + inboundMessageId, observedAt: interactionAt });
+                                                const expected = normalizeSalesDetails(collectedDetails, salesSettings(chatbotConfig.sales_assistant_settings));
+                                                const actual = normalizeSalesDetails(synced.state.collected_details, salesSettings(chatbotConfig.sales_assistant_settings));
+                                                if (synced.conflicts.length || Object.keys({ ...expected, ...actual }).some(key => expected[key] !== actual[key])) {
+                                                    throw new Error('Customer details changed during generation; retry with the latest form answers');
+                                                }
+                                                collectedDetails = synced.state.collected_details;
+                                            }
                                             const [freshContactResult, freshState] = await Promise.all([
                                                 supabase.from('contacts').select('pipeline_stage,pipeline_stage_source,chatbot_enabled')
                                                     .eq('page_id', page.id).eq('id', contact.id).maybeSingle(),
@@ -1505,12 +1536,17 @@ export async function POST(request: NextRequest) {
 
                                             if (deferQuestion) await sendReplyPart(replyMessages.length - 1);
 
+                                            if (salesProgress && usesSalesAssistant(chatbotConfig)) {
+                                                await mergeSalesRecord(supabase, { pageId: page.id, contactId: contact.id,
+                                                    source: 'delivery', eventKey: 'delivered:' + inboundMessageId, observedAt: interactionAt,
+                                                    progress: { ...salesProgress, ...(sentMedia ? { samples_sent: [...generatedMediaDocumentIds, ...generatedDriveFileDocumentIds] } : {}) } });
+                                            }
                                             const latestDeliveryState = await getChatbotContactState(supabase, page.id, contact.id);
                                             await saveChatbotContactState(supabase, {
                                                 pageId: page.id,
                                                 contactId: contact.id,
                                                 existingState: latestDeliveryState || chatbotState,
-                                                collectedDetails,
+                                                collectedDetails: usesSalesAssistant(chatbotConfig) ? latestDeliveryState?.collected_details || collectedDetails : collectedDetails,
                                                 missingDetails,
                                                 inboundAt: interactionAt,
                                                 botRepliedAt: replyMessages.length > 0 || sentMedia ? new Date().toISOString() : undefined,

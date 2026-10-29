@@ -2,6 +2,7 @@ import type { FacebookMessage } from '@/types';
 import { normalizeContactName } from '@/lib/contact-names';
 import { COMMERCIAL_VIDEO_EARLY_FORM_REASON, containsCommercialVideoForm, containsLegacyCommercialVideoForm, getMissingCommercialVideoDetails, normalizeCommercialVideoDetails } from '@/lib/chatbot-intake';
 import type { ChatbotKnowledgeMatch } from '@/lib/chatbot-knowledge';
+import { containsGuidedSalesForm } from '@/lib/chatbot-guided-sales';
 
 function sampleKind(match: ChatbotKnowledgeMatch): 'drive_file' | 'media' | null {
     if (/GOOGLE DRIVE MEDIA FILE \(/.test(match.content) || /^\[Drive (?:image|video)\]/i.test(match.title)) return 'drive_file';
@@ -207,7 +208,7 @@ export function resolveCommercialVideoSalesFlow(input: {
                 const pricingBody = text.includes('\n') ? text.slice(text.indexOf('\n') + 1) : text;
                 pricedDurationSeconds = durationIn(pricingBody, true) || durationSeconds;
             }
-            if (containsCommercialVideoForm(text) || containsLegacyCommercialVideoForm(text)) {
+            if (containsCommercialVideoForm(text) || containsLegacyCommercialVideoForm(text) || containsGuidedSalesForm(text)) {
                 formSent = true;
                 if (text.toLowerCase().includes(COMMERCIAL_VIDEO_EARLY_FORM_REASON.toLowerCase())) earlyFormSent = true;
                 else intakeFormSent = true;

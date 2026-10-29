@@ -12,6 +12,7 @@ export type ChatbotStopReason =
     | 'manual';
 
 export type ChatbotContactState = {
+    sales_progress?: import('@/lib/chatbot-sales-assistant').SalesProgress;
     id?: string;
     page_id: string;
     contact_id: string;
