@@ -25,3 +25,18 @@ it('shows saved partial answers as incomplete and filters clients without changi
     expect(vi.mocked(fetch).mock.calls.every(call=>!call[1]?.method)).toBe(true);
     await act(async()=>view.unmount());
 });
+
+it('immediately marks a manually changed Not Qualified lead poor and clears it when corrected',async()=>{
+    let stage='new';
+    vi.stubGlobal('window',{setTimeout,clearTimeout,location:{search:'?pageId=page'}});
+    vi.stubGlobal('fetch',vi.fn(async(url:string,options?:RequestInit)=>{
+        if(url==='/api/pages')return new Response(JSON.stringify({pages:[{id:'page',name:'SAMA KANA MEDIA'}]}));
+        if(options?.method==='PATCH'){stage=JSON.parse(String(options.body)).stage;return new Response(JSON.stringify({success:true,stage}));}
+        return new Response(JSON.stringify({contacts:[{id:'client',psid:'123',name:'Synthetic Client',pipeline_stage:stage,pipeline_stage_source:'manual',pipeline_stage_updated_at:'2026-10-29T00:00:00Z',chatbot_state:null,detail_progress:{collected_details:{},saved_count:0,collected_count:0,required_count:0,missing_details:[],complete:false}}],total:1,stageCounts:{[stage]:1}}));
+    }));
+    let view!:ReactTestRenderer;await act(async()=>{view=create(createElement(PipelinePage));});
+    const select=()=>view.root.findAllByType('select').find(s=>s.findAllByType('option').some(o=>o.props.value==='not_qualified')&&s.props.value===stage)!;
+    await act(async()=>select().props.onChange({target:{value:'not_qualified'}}));expect(JSON.stringify(view.toJSON())).toContain('Poor lead quality');
+    await act(async()=>select().props.onChange({target:{value:'qualified'}}));expect(JSON.stringify(view.toJSON())).toContain('Good lead quality');expect(JSON.stringify(view.toJSON())).not.toContain('Poor lead quality');
+    await act(async()=>view.unmount());
+});

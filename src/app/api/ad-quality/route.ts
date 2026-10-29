@@ -3,6 +3,7 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getUserPageIds } from '@/lib/page-access';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { adQualityRange } from '@/lib/ad-quality-range';
+import{qualityForAdRow}from'@/lib/lead-quality';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -28,7 +29,8 @@ export async function GET(request: NextRequest) {
             reports.push(...await Promise.all((pages || []).slice(offset, offset + 5).map(async page => {
                 const result = await db.rpc('get_ad_lead_quality', { p_page_id: page.id, p_from: range.from, p_to: range.to });
                 if (result.error) throw result.error;
-                return { page, ...result.data, tracked_ads:catalog.filter((a:any)=>a.page_id===page.id) };
+                const rows=(result.data.rows||[]).map((r:any)=>({...r,lead_quality:qualityForAdRow(r)}));
+                return { page, ...result.data,rows, tracked_ads:catalog.filter((a:any)=>a.page_id===page.id) };
             })));
         }
         return NextResponse.json({ range, pages: reports, generated_at: range.generated_at,catalog_warning:catalogResult.error?'Ad inventory is temporarily unavailable. Recorded lead counts remain visible.':null }, { headers: { 'Cache-Control': 'no-store' } });

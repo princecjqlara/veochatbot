@@ -32,7 +32,7 @@ describe('pipeline Page-member access', () => {
         mocks.cancelPendingChatbotFollowUps.mockResolvedValue(undefined);
     });
 
-    it('lets any user_pages collaborator edit a contact stage', async () => {
+    it.each(['qualified','not_qualified'])('lets a collaborator edit %s and immediately returns the matching lead quality', async (stage) => {
         const builder: Record<string, any> = {};
         builder.select = vi.fn(() => builder);
         builder.eq = vi.fn(() => builder);
@@ -42,17 +42,18 @@ describe('pipeline Page-member access', () => {
         const response = await PATCH(new Request('http://localhost/api/pages/page_1/pipeline', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contact_id: 'contact_1', stage: 'qualified' })
+            body: JSON.stringify({ contact_id: 'contact_1', stage })
         }) as NextRequest, { params: Promise.resolve({ pageId: 'page_1' }) });
 
         expect(response.status).toBe(200);
+        expect((await response.json()).lead_quality.status).toBe(stage==='not_qualified'?'poor':'good');
         expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
         expect(mocks.updateContactPipelineStage).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({
                 pageId: 'page_1',
                 contactId: 'contact_1',
-                stage: 'qualified',
+                stage,
                 source: 'manual',
                 force: true
             })

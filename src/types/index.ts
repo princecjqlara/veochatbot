@@ -42,6 +42,7 @@ export interface UserPage {
 }
 
 export interface Contact {
+  lead_quality?:ReturnType<typeof import('@/lib/lead-quality').leadQualityForStage>;
   chatbot_enabled?: boolean;
   bot_control?: {enabled:boolean;can_reply:boolean;reason:string;loaded_at?:string};
   conversion_projection?: any;

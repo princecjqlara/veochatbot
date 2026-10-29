@@ -18,6 +18,7 @@ describe('ad quality authorization and complete reports', () => {
     it('returns database aggregates without the 1000-row client pagination trap', async () => {
         const res = await GET(new NextRequest('https://example.com/api/ad-quality?range=all')), b = await res.json();
         expect(res.status).toBe(200); expect(b.pages).toHaveLength(2); expect(b.pages[0].inquiries).toBe(1200);
+        expect(b.pages[0].rows[0].lead_quality).toMatchObject({poor:17,poor_rate:17/1200});
         expect(m.rpc).toHaveBeenCalledWith('get_ad_lead_quality', expect.objectContaining({ p_from: null, p_page_id: 'page-a' }));
         expect(res.headers.get('Cache-Control')).toBe('no-store');
     });

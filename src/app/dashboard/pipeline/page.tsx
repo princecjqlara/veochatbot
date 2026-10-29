@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Bot, CheckCircle2, ChevronDown, ChevronUp, CircleDashed, Filter, GitBranch, RefreshCw, Search, Users } from 'lucide-react';
 import Pagination from '@/components/Pagination';
+import LeadQualityBadge from '@/components/LeadQualityBadge';
 import type { Page } from '@/types';
 import {
     CONTACT_PIPELINE_LABELS,
@@ -185,6 +186,13 @@ export default function PipelinePage() {
     }, [pageId, page, pageSize, stage, search, detailsFilter]);
 
     useEffect(() => { void loadPipeline(); }, [loadPipeline]);
+    useEffect(()=>{
+        if(!pageId||savingContactId)return;
+        const tick=()=>{if(typeof document==='undefined'||!document.hidden)void loadPipeline();};
+        const timer=setInterval(tick,15_000);
+        window.addEventListener?.('focus',tick);
+        return()=>{clearInterval(timer);window.removeEventListener?.('focus',tick);};
+    },[pageId,savingContactId,loadPipeline]);
 
     const totalContacts = useMemo(
         () => Object.values(counts).reduce((sum, count) => sum + count, 0),
@@ -384,6 +392,7 @@ export default function PipelinePage() {
                                             >
                                                 {CONTACT_PIPELINE_STAGES.map((pipelineStage) => <option key={pipelineStage} value={pipelineStage}>{CONTACT_PIPELINE_LABELS[pipelineStage]}</option>)}
                                             </select>
+                                            <div className="mt-2"><LeadQualityBadge stage={contact.pipeline_stage}/></div>
                                             <div className="mt-2 text-[10px] text-gray-500">
                                                 <span className="font-bold uppercase">{contact.pipeline_stage_source}</span> · {formatDate(contact.pipeline_stage_updated_at)}
                                             </div>

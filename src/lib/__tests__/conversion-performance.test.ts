@@ -22,8 +22,9 @@ describe('original-inquiry cohort performance',()=>{
   const r=leadProbabilities(lead({source_cutoff_at:new Date(first+721*HOUR).toISOString(),snapshot:null}),'656646850875530',first+1000*HOUR);expect(r.probabilities['720']).toBe(0);
  });
  it('keeps qualification separate from confirmed payments and rejects duplicate input pages',()=>{
-  const acc=performanceAccumulator(pages);acc.add(lead({pipeline_stage:'not_qualified'}),now);expect(acc.result().ads[0].not_qualified).toBe(1);expect(()=>acc.add(lead(),now)).toThrow('Duplicate');expect(()=>acc.add(lead({id:'other',page_id:'forbidden'}),now)).toThrow('authorized');
+  const acc=performanceAccumulator(pages);acc.add(lead({pipeline_stage:'not_qualified'}),now);expect(acc.result().ads[0].not_qualified).toBe(1);expect(acc.result().ads[0].lead_quality).toMatchObject({poor:1,good:0,poor_rate:1});expect(()=>acc.add(lead(),now)).toThrow('Duplicate');expect(()=>acc.add(lead({id:'other',page_id:'forbidden'}),now)).toThrow('authorized');
  });
+ it('keeps a documented payer counted when a person also marks their lead quality poor',()=>{const acc=performanceAccumulator(pages);acc.add(lead({pipeline_stage:'not_qualified',payment_at:new Date(first+HOUR).toISOString(),payment_evidence_id:'proof'}),now);const r=acc.result().ads[0];expect(r.lead_quality.poor).toBe(1);expect(r.confirmed).toBe(1);expect(r.current_rate).toBe(1);});
  it('reports the probability-weighted expected outcome without requiring a target or rounding buyers into successes',()=>{
   const acc=performanceAccumulator(pages);for(let i=0;i<26;i++)acc.add(lead({id:'c'+i}),now);const r=acc.result().ads[0];expect(r).not.toHaveProperty('target');expect(r.forecast['720'].expected).toBeGreaterThan(0);expect(r.forecast['720'].expected).toBeLessThan(1);expect(r.confirmed).toBe(0);expect(r.outlook.expected_payers).toBe(r.forecast['720'].expected);expect(r.outlook.expected_additional_payers).toBe(r.outlook.expected_payers);expect(r.outlook.expected_rate).toBeCloseTo(r.outlook.expected_payers!/26,12);expect(r.outlook.horizon_end_dates_pht).toEqual(['2026-11-19','2026-11-19']);
  });

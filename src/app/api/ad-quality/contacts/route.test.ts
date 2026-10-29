@@ -17,4 +17,9 @@ describe('ad contact drilldown', () => {
     it('rejects invalid stage, ad ID and pagination', async () => {
         for (const q of ['stage=made_up', 'adId=1.2', 'offset=-1']) expect((await GET(new NextRequest('https://example.com/api/ad-quality/contacts?pageId=p&range=all&' + q))).status).toBe(400);
     });
+    it('automatically labels a Messenger Not Qualified stage as poor lead quality',async()=>{
+        m.rpc.mockResolvedValue({data:{total:1,contacts:[{id:'c',pipeline_stage:'not_qualified',pipeline_stage_source:'messenger'}]},error:null});
+        const response=await GET(new NextRequest('https://example.com/api/ad-quality/contacts?pageId=p&range=all&stage=not_qualified'));
+        expect((await response.json()).contacts[0].lead_quality).toMatchObject({status:'poor',basis:'current_pipeline_stage'});
+    });
 });

@@ -12,6 +12,7 @@ import {
 import { getChatbotContactState, saveChatbotContactState } from '@/lib/chatbot-control';
 import { cancelPendingChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 import { getChatbotDetailProgress } from '@/lib/chatbot-form-progress';
+import {leadQualityForStage} from '@/lib/lead-quality';
 
 export const dynamic = 'force-dynamic';
 
@@ -106,6 +107,7 @@ export async function GET(
         return NextResponse.json({
             contacts: contacts.map((contact) => ({
                 ...contact,
+                lead_quality:leadQualityForStage(contact.pipeline_stage),
                 chatbot_state: stateByContactId.get(contact.id) || null,
                 detail_progress: getChatbotDetailProgress(configResult.data, stateByContactId.get(contact.id)?.collected_details)
             })),
@@ -165,7 +167,7 @@ export async function PATCH(
             source: 'manual',
             force: true
         });
-        return NextResponse.json({ success: true, stage: body.stage });
+        return NextResponse.json({ success: true, stage: body.stage,lead_quality:leadQualityForStage(body.stage) });
     } catch (error) {
         console.error('[PIPELINE_PATCH]', error);
         return NextResponse.json(

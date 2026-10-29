@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import Pagination from '@/components/Pagination';
 import ContactBotProjection from '@/components/ContactBotProjection';
+import LeadQualityBadge from '@/components/LeadQualityBadge';
 import Modal from '@/components/Modal';
 import { Contact, Tag as TagType, Page, PaginatedResponse } from '@/types';
 import {
@@ -2484,6 +2485,7 @@ export default function ContactsPage() {
                                                 <p className="font-mono text-xs text-gray-500">
                                                     ID: {contact.psid.slice(0, 8)}...
                                                 </p>
+                                                <div className="mt-2"><LeadQualityBadge stage={contact.pipeline_stage}/></div>
                                             </div>
                                         </div>
                                     </td>

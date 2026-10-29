@@ -12,6 +12,23 @@ NQ/all = current Not Qualified contacts / all inquiry contacts in the selected
 cohort. Pending, opted out, qualified, orders, and CRM converted remain separate.
 A CRM converted label is not independently verified payment.
 
+Lead quality is derived automatically from the current pipeline stage: Not
+Qualified is **Poor lead quality**; Qualified, Order Created and Converted are
+**Good lead quality**. Other stages, including Opted Out, remain unassessed.
+Contacts, Pipeline and ad-contact drilldowns show the same badge. Pipeline edits
+update it immediately and the Pipeline view checks recorded changes every 15
+seconds while visible. Correcting a stage updates quality without a separate
+quality toggle or backfill. Manual, Messenger and chatbot stage records use the
+same rule.
+
+Ad rows show the poor-lead count and share in their original inquiry cohort.
+A single poor lead is not used to label the entire creative bad. Source-unknown
+leads stay in the unknown group. This rule records a qualification assessment;
+it does not erase confirmed payments, set purchase probability to zero, or
+retrain the forecast model. Quality is computed from the stage, avoiding two
+stored fields that could fall out of sync. Existing stage audit events retain
+the change history.
+
 Only a signed incoming message or customer button inquiry with a source ad referral
 can verify original acquisition. Thread-open events are retained as touches but
 are not inquiries. Later clicks never overwrite first-inquiry attribution. An

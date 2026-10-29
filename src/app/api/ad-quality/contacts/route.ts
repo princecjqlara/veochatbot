@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { adQualityRange } from '@/lib/ad-quality-range';
 import { CONTACT_PIPELINE_STAGES } from '@/lib/contact-pipeline';
 import { contactControls } from '@/lib/contact-controls';
+import {leadQualityForStage} from '@/lib/lead-quality';
 
 export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
@@ -28,5 +29,6 @@ export async function GET(request: NextRequest) {
     });
     if (error) return NextResponse.json({ error: 'Could not load ad contacts' }, { status: 503 });
     if(data.contacts?.length){try{const controls=await contactControls(db,pageId,data.contacts.map((c:any)=>c.id));for(const c of data.contacts)Object.assign(c,controls.get(c.id)||{});}catch{/* Switch still loads its authorized status on demand. */}}
-    return NextResponse.json({ ...data, range, offset, limit: 25 }, { headers: { 'Cache-Control': 'no-store' } });
+    const contacts=(data.contacts||[]).map((c:any)=>({...c,lead_quality:leadQualityForStage(c.pipeline_stage)}));
+    return NextResponse.json({ ...data,contacts, range, offset, limit: 25 }, { headers: { 'Cache-Control': 'no-store' } });
 }

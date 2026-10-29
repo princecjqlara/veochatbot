@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { PaginatedResponse, Contact } from '@/types';
 import { normalizeContactName } from '../../../../../lib/contact-names';
 import { contactControls } from '@/lib/contact-controls';
+import {leadQualityForStage} from '@/lib/lead-quality';
 
 type DateFilterMode = 'include' | 'exclude';
 type HumanAgentSort = 'expiring' | 'latest' | 'name_asc' | 'name_desc';
@@ -301,6 +302,7 @@ export async function GET(
         const transformedContacts = contacts?.map(contact => ({
             ...contact,
             name: normalizeContactName(contact.name),
+            lead_quality:leadQualityForStage(contact.pipeline_stage),
             tags: contact.contact_tags?.map((ct: {
                 created_by?: string | null;
                 tags: Record<string, unknown>;
