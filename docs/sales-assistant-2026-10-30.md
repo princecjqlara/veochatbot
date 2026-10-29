@@ -92,7 +92,7 @@ The local browser fixture checks the mobile/desktop form, six non-blocking field
 
 Verification commands:
 
-Final verification: **1,197 / 1,197 automated tests passed**, including all twelve scenarios and eight PostgreSQL migration/concurrency checks. TypeScript and the production build passed. Lint completed with zero errors and 18 existing warnings. Mobile/desktop browser fixtures passed with zero runtime exceptions.
+Final verification: **1,198 / 1,198 automated tests passed**, including all twelve scenarios, persisted admin settings with database field projection, and eight PostgreSQL migration/concurrency checks. TypeScript and the production build passed. Lint completed with zero errors and 18 existing warnings. Mobile/desktop browser fixtures passed with zero runtime exceptions.
 
 ```text
 npm test

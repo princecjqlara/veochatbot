@@ -134,6 +134,20 @@ describe('chatbot Page-member access', () => {
         expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
     });
 
+    it('returns persisted sales settings when the database honors the selected columns', async () => {
+        const stored = { ...savedConfig, commercial_video_intake_enabled: true,
+            sales_assistant_settings: { pricing_enabled: false, aggressiveness: 'direct' } };
+        const builder = selectBuilder({ data: stored, error: null });
+        let fields: string[] = [];
+        builder.select = vi.fn((columns: string) => { fields = columns.split(',').map(field => field.trim()); return builder; });
+        builder.maybeSingle = vi.fn(async () => ({ data: Object.fromEntries(Object.entries(stored).filter(([key]) => fields.includes(key))), error: null }));
+        mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
+        const response = await GET(new Request('http://localhost/api/pages/page_1/chatbot') as NextRequest,
+            { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        expect((await response.json()).config.sales_assistant_settings).toEqual(stored.sales_assistant_settings);
+    });
+
     it('previews an AI intake review without sending or changing any contact', async () => {
         const builder = selectBuilder({ data: savedConfig, error: null });
         const from = vi.fn(() => builder);
