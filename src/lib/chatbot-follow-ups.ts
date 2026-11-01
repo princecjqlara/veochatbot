@@ -10,6 +10,7 @@ import { getBestTimeFollowUpDueAt, normalizeBestTimeFollowUpDays } from '@/lib/c
 export { getBestTimeFollowUpDueAt, normalizeBestTimeFollowUpDays } from '@/lib/chatbot-follow-up-timing';
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
 import { generateChatbotFollowUp, getChatbotKnowledgePageId, type ChatbotConfig } from '@/lib/chatbot';
 import { getChatbotHandoffOptions, isChatbotContactAllowed, saveChatbotContactState, type ChatbotContactState } from '@/lib/chatbot-control';
 import { evaluateCommercialVideoIntake, isCommercialVideoIntake, resolveCommercialVideoRequest } from '@/lib/chatbot-policy';
@@ -379,7 +380,9 @@ export async function processDueChatbotFollowUps(input: {
                     supabase, pageId: job.page_id, contactId: job.contact_id,
                     reason: `Messenger lead stage: ${liveStopReason}`, now
                 });
-                await updateContactPipelineStage(supabase, {
+                const stageSync = await syncMessengerStageHistory(supabase, { pageId: job.page_id, contactId: job.contact_id,
+                    facebookPageId: page.fb_page_id, messages: stageHistory, options: getChatbotHandoffOptions(state, job.anchor_inbound_at) });
+                if (!stageSync.events) await updateContactPipelineStage(supabase, {
                     pageId: job.page_id,
                     contactId: job.contact_id,
                     stage: pipelineStageForMessengerSignal(liveStopReason),

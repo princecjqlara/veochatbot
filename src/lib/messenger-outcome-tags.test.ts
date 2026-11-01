@@ -13,8 +13,8 @@ describe('preserved stage outcome tags', () => {
                 in: () => chain, order: () => chain, limit: () => chain,
                 upsert: async (rows: unknown) => { assignments.push(rows); return { error: null }; },
                 then: (resolve: any) => Promise.resolve({ data: defaults ? [{ id: 'paid', name: 'Paid / Availed Service' }] : [
-                    { id: 'qualified-tag', system_key: 'qualified' }, { id: 'converted-tag', system_key: 'converted' },
-                    { id: 'order-tag', system_key: 'order_created' }, { id: 'not-qualified-tag', system_key: 'not_qualified' }
+                    { id: 'qualified-tag', system_key: 'stage_history:qualified' }, { id: 'converted-tag', system_key: 'stage_history:converted' },
+                    { id: 'order-tag', system_key: 'stage_history:order_created' }, { id: 'not-qualified-tag', system_key: 'stage_history:not_qualified' }
                 ], error: null }).then(resolve)
             };
             if (table === 'contact_tags') return chain;

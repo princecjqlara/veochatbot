@@ -87,6 +87,8 @@ For adaptive first-day chatbot timing, follow [the migration and rollout instruc
 
 For GPT-6 Luna, apply `supabase/migrations/202611020001_chatbot_gpt6_luna.sql` and set the host's `OPENROUTER_MODEL` to `openai/gpt-6-luna`. The migration updates Page configurations using the previous DeepSeek default and preserves other model selections.
 
+For Meta lead-stage mirroring and additive smart history tags, apply `supabase/migrations/202611020002_messenger_stage_history.sql` before deployment. See [Messenger stage history and sync](docs/messenger-stage-history.md) for stage ordering, Page coverage and connection requirements.
+
 ### Telegram group media bridge
 
 VeoBot can automatically import supported photos and videos from approved Telegram groups into a Page's chatbot media library and RAG knowledge.

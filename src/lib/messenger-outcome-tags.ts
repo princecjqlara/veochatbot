@@ -2,20 +2,20 @@ import type { MessengerSystemSignal } from '@/lib/messaging-auto-tag';
 
 type SupabaseLike = { from: (table: string) => any };
 type PageTag = { id: string; name: string; created_at?: string | null };
-type OutcomeTag = { id: string; system_key: MessengerSystemSignal };
+type OutcomeTag = { id: string; system_key: string };
 
 export const MESSENGER_OUTCOME_TAGS: Record<Exclude<MessengerSystemSignal, 'manual'>, { name: string; color: string }> = {
-    qualified: { name: 'Qualified', color: '#2563eb' },
-    not_qualified: { name: 'Not Qualified', color: '#dc2626' },
-    converted: { name: 'Converted', color: '#7c3aed' },
-    order_created: { name: 'Order Created', color: '#f59e0b' }
+    qualified: { name: 'History: Qualified', color: '#2563eb' },
+    not_qualified: { name: 'History: Not Qualified', color: '#dc2626' },
+    converted: { name: 'History: Converted', color: '#7c3aed' },
+    order_created: { name: 'History: Order Created', color: '#f59e0b' }
 };
 
 export function buildMessengerOutcomeTagRows(pageId: string) {
     return Object.entries(MESSENGER_OUTCOME_TAGS).map(([systemKey, tag]) => ({
         name: tag.name, color: tag.color, owner_type: 'page' as const,
         owner_id: pageId, page_id: pageId, is_default: false,
-        system_key: systemKey as Exclude<MessengerSystemSignal, 'manual'>
+        system_key: `stage_history:${systemKey}`
     }));
 }
 
@@ -24,7 +24,7 @@ export function choosePositiveOutcomeTag(tags: PageTag[]) {
 }
 
 export async function ensureMessengerOutcomeTags(db: SupabaseLike, pageId: string): Promise<OutcomeTag[]> {
-    const systemKeys = Object.keys(MESSENGER_OUTCOME_TAGS);
+    const systemKeys = Object.keys(MESSENGER_OUTCOME_TAGS).map(key => `stage_history:${key}`);
     const { data: existing, error } = await db.from('tags').select('id,system_key')
         .eq('owner_type', 'page').eq('owner_id', pageId).in('system_key', systemKeys);
     if (error) throw error;
@@ -44,21 +44,11 @@ export async function assignMessengerOutcomeTags(db: SupabaseLike, pageId: strin
     options: { includePositiveTag?: boolean } = {}) {
     if (!Object.prototype.hasOwnProperty.call(MESSENGER_OUTCOME_TAGS, stage)) return;
     const tags = await ensureMessengerOutcomeTags(db, pageId);
-    const outcome = tags.find(tag => tag.system_key === stage);
+    const outcome = tags.find(tag => tag.system_key === `stage_history:${stage}`);
     if (!outcome) throw new Error(`Messenger outcome tag is unavailable: ${stage}`);
     const result = await db.from('contact_tags').upsert([{ contact_id: contactId, tag_id: outcome.id }],
         { onConflict: 'contact_id,tag_id', ignoreDuplicates: true });
     if (result.error) throw result.error;
-    if (stage !== 'not_qualified' && options.includePositiveTag !== false) {
-        const defaults = await db.from('tags').select('id,name,created_at')
-            .eq('owner_type', 'page').eq('owner_id', pageId).eq('is_default', true)
-            .order('created_at', { ascending: true }).order('id', { ascending: true }).limit(25);
-        if (defaults.error) throw defaults.error;
-        const positive = choosePositiveOutcomeTag(defaults.data || []);
-        if (positive) {
-            const assigned = await db.from('contact_tags').upsert([{ contact_id: contactId, tag_id: positive.id }],
-                { onConflict: 'contact_id,tag_id', ignoreDuplicates: true });
-            if (assigned.error) throw assigned.error;
-        }
-    }
+    // Stage history is evidence of a stage, never proof of payment. Existing
+    // manual/default tags stay assigned; new stage events only add history tags.
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { verifyWebhookSignature, sendMessage, sendMessengerGenericCarousel, getConversationForPsid, getUserProfile } from '@/lib/facebook';
 import { isExpectedFacebookProfileLookupError } from '@/lib/facebook-errors';
@@ -375,7 +376,11 @@ export async function POST(request: NextRequest) {
                                             });
                                             await cancelPendingChatbotFollowUps({ supabase, pageId: page.id,
                                                 contactId: stageContact.id, reason: `Messenger handoff: ${stopReason}` });
-                                            await updateContactPipelineStage(supabase, { pageId: page.id,
+                                            const stageSync = await syncMessengerStageHistory(supabase, { pageId: page.id,
+                                                contactId: stageContact.id, facebookPageId: pageId,
+                                                messages: [{ id: echoMessageId, message: outboundMessageText, from: { id: pageId }, created_time: staffAt }],
+                                                options: getChatbotHandoffOptions(state) });
+                                            if (!stageSync.events) await updateContactPipelineStage(supabase, { pageId: page.id,
                                                 contactId: stageContact.id,
                                                 stage: stageSignal && stageSignal !== 'manual'
                                                     ? pipelineStageForMessengerSignal(stageSignal)
@@ -1000,7 +1005,10 @@ export async function POST(request: NextRequest) {
                                             });
                                             await cancelPendingChatbotFollowUps({ supabase, pageId: page.id,
                                                 contactId: contact.id, reason: `Messenger lead stage: ${liveStageStopReason}` });
-                                            await updateContactPipelineStage(supabase, {
+                                            const stageSync = await syncMessengerStageHistory(supabase, { pageId: page.id, contactId: contact.id,
+                                                facebookPageId: pageId, messages: conversationMessages,
+                                                options: getChatbotHandoffOptions(chatbotState, interactionAt) });
+                                            if (!stageSync.events) await updateContactPipelineStage(supabase, {
                                                 pageId: page.id,
                                                 contactId: contact.id,
                                                 stage: pipelineStageForMessengerSignal(liveStageStopReason),

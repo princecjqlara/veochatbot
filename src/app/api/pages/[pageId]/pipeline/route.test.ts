@@ -77,7 +77,7 @@ describe('pipeline Page-member access', () => {
             range:vi.fn(async()=>({data:[{id:'partial',pipeline_stage:'collecting_details'}],count:1,error:null})) };
         const states: any = { select:()=>states,eq:()=>states,in:async()=>({data:[{contact_id:'partial',status:'active',collected_details:{'Business Name':'Cafe'},missing_details:[]}],error:null}) };
         const config: any = {select:()=>config,eq:()=>config,maybeSingle:async()=>({data:{commercial_video_intake_enabled:true},error:null})};
-        mocks.getSupabaseAdmin.mockReturnValue({from:(table:string)=>table==='contacts'?contacts:table==='chatbot_configs'?config:states,
+        mocks.getSupabaseAdmin.mockReturnValue({from:(table:string)=>table==='contacts'?contacts:['chatbot_configs','pages'].includes(table)?config:states,
             rpc:async()=>({data:{new:100,collecting_details:20},error:null})});
         const response=await GET(new Request('http://localhost/api/pages/page_1/pipeline?details=with_details&pageSize=1') as NextRequest,{params:Promise.resolve({pageId:'page_1'})});
         expect(response.status).toBe(200);

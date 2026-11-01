@@ -31,6 +31,9 @@ type PipelineContact = {
     pipeline_stage: ContactPipelineStage;
     pipeline_stage_source: 'system' | 'chatbot' | 'messenger' | 'manual';
     pipeline_stage_updated_at: string;
+    messenger_stage_label?: string | null;
+    messenger_stage_event_at?: string | null;
+    stage_history_tags?: Array<{ id: string; name: string; color: string }>;
     chatbot_state: ChatbotState | null;
     detail_progress: { collected_details: Record<string, string>; saved_count: number; collected_count: number; required_count: number; missing_details: string[]; complete: boolean };
 };
@@ -41,6 +44,7 @@ type PipelineResponse = {
     pageSize: number;
     total: number;
     stageCounts: Record<ContactPipelineStage, number>;
+    stage_sync?: { messaging_auto_tag_enabled: boolean; messaging_auto_tag_checked_at: string; messaging_auto_tag_last_error: string | null } | null;
 };
 
 const STAGE_COLORS: Record<ContactPipelineStage, string> = {
@@ -130,6 +134,7 @@ export default function PipelinePage() {
     const [error, setError] = useState('');
     const [savingContactId, setSavingContactId] = useState('');
     const [expandedContactId, setExpandedContactId] = useState('');
+    const [stageSync, setStageSync] = useState<PipelineResponse['stage_sync']>(null);
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -179,6 +184,7 @@ export default function PipelinePage() {
             setContacts(pipeline.contacts);
             setCounts(pipeline.stageCounts);
             setTotal(pipeline.total);
+            setStageSync(pipeline.stage_sync);
         } catch (fetchError) {
             setError(fetchError instanceof Error ? fetchError.message : 'Could not load the pipeline');
         } finally {
@@ -347,6 +353,10 @@ export default function PipelinePage() {
             {detailsFilter === 'with_details' && <p className="text-sm text-gray-600">Partial forms are included and stay marked incomplete. Saved answers are retained as the conversation continues.</p>}
 
             {error && <div className="border border-red-600 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
+            {stageSync && <div className={`border p-3 text-sm ${stageSync.messaging_auto_tag_last_error ? 'border-amber-600 bg-amber-50 text-amber-900' : 'border-gray-300 bg-white text-gray-600'}`}>
+                <b>Meta stage sync:</b> {stageSync.messaging_auto_tag_enabled ? `Last completed ${formatDate(stageSync.messaging_auto_tag_checked_at)}` : 'Turned off for this Page'}
+                {stageSync.messaging_auto_tag_last_error && <p className="mt-1">{stageSync.messaging_auto_tag_last_error} <a className="font-bold underline" href="/dashboard/connect">Review Facebook connection</a></p>}
+            </div>}
 
             <div className="overflow-x-auto border-2 border-black bg-white">
                 <table className="w-full min-w-[1100px] border-collapse text-left text-sm">
@@ -394,6 +404,10 @@ export default function PipelinePage() {
                                                 {CONTACT_PIPELINE_STAGES.map((pipelineStage) => <option key={pipelineStage} value={pipelineStage}>{CONTACT_PIPELINE_LABELS[pipelineStage]}</option>)}
                                             </select>
                                             <div className="mt-2"><LeadQualityBadge stage={contact.pipeline_stage}/></div>
+                                            {contact.pipeline_stage_source === 'messenger' && contact.messenger_stage_label && <div className="mt-2 text-xs font-semibold">Last Meta stage: {contact.messenger_stage_label}<span className="block font-normal text-gray-500">{formatDate(contact.messenger_stage_event_at || null)}</span></div>}
+                                            {!!contact.stage_history_tags?.length && <div className="mt-2 flex max-w-64 flex-wrap gap-1" aria-label="Stage history">
+                                                {contact.stage_history_tags.map(tag => <span key={tag.id} className="rounded border bg-slate-50 px-1.5 py-0.5 text-[10px]" style={{ borderColor: tag.color }} title="Previously observed stage; retained when the current stage changes">{tag.name}</span>)}
+                                            </div>}
                                             <div className="mt-2 text-[10px] text-gray-500">
                                                 <span className="font-bold uppercase">{contact.pipeline_stage_source}</span> · {formatDate(contact.pipeline_stage_updated_at)}
                                             </div>

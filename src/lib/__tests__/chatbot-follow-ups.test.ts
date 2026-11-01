@@ -324,7 +324,10 @@ describe('follow-up lead-stage checks', () => {
         let stage = 'engaged';
         let source = 'chatbot';
         let jobStatus = 'processing';
-        const supabase = { from: vi.fn((table: string) => {
+        const supabase = { rpc: vi.fn(async (name: string, args: any) => {
+            if (name === 'apply_messenger_lead_stage') { stage = args.p_stage; source = 'messenger'; }
+            return { data: { applied: true }, error: null };
+        }), from: vi.fn((table: string) => {
             const filters: Record<string, unknown> = {};
             const chain: any = {
                 select: () => chain, eq: (key: string, value: unknown) => { filters[key] = value; return chain; },

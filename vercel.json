@@ -5,11 +5,18 @@
   "framework": "nextjs",
   "crons": [
     {
+      "path": "/api/cron/messaging-auto-tag",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/chatbot",
       "schedule": "* * * * *"
     }
   ],
   "functions": {
+    "src/app/api/cron/messaging-auto-tag/route.ts": {
+      "maxDuration": 300
+    },
     "src/app/api/cron/chatbot/route.ts": {
       "maxDuration": 300
     },

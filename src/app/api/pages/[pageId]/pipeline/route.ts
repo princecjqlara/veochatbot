@@ -59,8 +59,8 @@ export async function GET(
             .from('contacts')
             .select(
                 withDetails
-                    ? 'id,page_id,psid,name,profile_pic,last_interaction_at,last_inbound_at,created_at,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at,chatbot_contact_states!inner(contact_id)'
-                    : 'id,page_id,psid,name,profile_pic,last_interaction_at,last_inbound_at,created_at,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at',
+                    ? 'id,page_id,psid,name,profile_pic,last_interaction_at,last_inbound_at,created_at,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at,messenger_stage_label,messenger_stage_event_at,contact_tags(tags(id,name,color,system_key)),chatbot_contact_states!inner(contact_id)'
+                    : 'id,page_id,psid,name,profile_pic,last_interaction_at,last_inbound_at,created_at,pipeline_stage,pipeline_stage_source,pipeline_stage_updated_at,messenger_stage_label,messenger_stage_event_at,contact_tags(tags(id,name,color,system_key))',
                 search || withDetails ? { count: 'exact' } : {}
             )
             .eq('page_id', pageId)
@@ -70,14 +70,16 @@ export async function GET(
         if (withDetails) contactsQuery = contactsQuery.neq('chatbot_contact_states.collected_details', '{}');
         if (search) contactsQuery = contactsQuery.or(`name.ilike.*${search}*,psid.ilike.*${search}*`);
 
-        const [contactsResult, stageCountResult, configResult] = await Promise.all([
+        const [contactsResult, stageCountResult, configResult, syncResult] = await Promise.all([
             contactsQuery.range(from, to),
             db.rpc('get_contact_pipeline_counts', { p_page_id: pageId }),
-            db.from('chatbot_configs').select('*').eq('page_id', pageId).maybeSingle()
+            db.from('chatbot_configs').select('*').eq('page_id', pageId).maybeSingle(),
+            db.from('pages').select('messaging_auto_tag_enabled,messaging_auto_tag_checked_at,messaging_auto_tag_last_error').eq('id', pageId).maybeSingle()
         ]);
         if (contactsResult.error) throw contactsResult.error;
         if (stageCountResult.error) throw stageCountResult.error;
         if (configResult.error) throw configResult.error;
+        if (syncResult.error) throw syncResult.error;
 
         const contacts = (contactsResult.data || []) as unknown as Array<{ id: string; [key: string]: unknown }>;
         const contactIds = contacts.map((contact) => contact.id);
@@ -107,6 +109,9 @@ export async function GET(
         return NextResponse.json({
             contacts: contacts.map((contact) => ({
                 ...contact,
+                stage_history_tags: (Array.isArray(contact.contact_tags) ? contact.contact_tags : [])
+                    .map((assignment: any) => assignment.tags)
+                    .filter((tag: any) => typeof tag?.system_key === 'string' && tag.system_key.startsWith('stage_history:')),
                 lead_quality:leadQualityForStage(contact.pipeline_stage),
                 chatbot_state: stateByContactId.get(contact.id) || null,
                 detail_progress: getChatbotDetailProgress(configResult.data, stateByContactId.get(contact.id)?.collected_details)
@@ -115,6 +120,7 @@ export async function GET(
             pageSize,
             total: totalForView,
             stageCounts,
+            stage_sync: syncResult.data || null,
             stages: CONTACT_PIPELINE_STAGES.map((value) => ({ value, label: CONTACT_PIPELINE_LABELS[value] }))
         });
     } catch (error) {

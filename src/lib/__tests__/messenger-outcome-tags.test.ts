@@ -28,28 +28,28 @@ function fixture(options: { missing?: boolean; defaultError?: boolean } = {}) {
 }
 
 describe('immediate Messenger outcome tagging', () => {
-    it.each(['qualified', 'converted', 'order_created'])('assigns %s and the positive default to the observed contact', async stage => {
+    it.each(['qualified', 'converted', 'order_created'])('adds %s history without assigning an ordinary or paid tag', async stage => {
         const { db, assignments } = fixture();
         await assignMessengerOutcomeTags(db, 'page-1', 'contact-1', stage);
-        expect(assignments).toEqual([{ contact_id: 'contact-1', tag_id: stage }, { contact_id: 'contact-1', tag_id: 'paid' }]);
+        expect(assignments).toEqual([{ contact_id: 'contact-1', tag_id: `stage_history:${stage}` }]);
     });
 
     it('assigns a negative outcome without a paid tag', async () => {
         const { db, assignments } = fixture();
         await assignMessengerOutcomeTags(db, 'page-1', 'contact-1', 'not_qualified');
-        expect(assignments).toEqual([{ contact_id: 'contact-1', tag_id: 'not_qualified' }]);
+        expect(assignments).toEqual([{ contact_id: 'contact-1', tag_id: 'stage_history:not_qualified' }]);
     });
 
     it('creates missing system tags before assignment', async () => {
         const { db, assignments } = fixture({ missing: true });
         await assignMessengerOutcomeTags(db, 'page-1', 'contact-1', 'qualified');
-        expect(assignments).toContainEqual({ contact_id: 'contact-1', tag_id: 'qualified' });
+        expect(assignments).toContainEqual({ contact_id: 'contact-1', tag_id: 'stage_history:qualified' });
     });
 
-    it('keeps the outcome assignment when the optional default tag lookup fails', async () => {
+    it('does not depend on or change legacy default tags', async () => {
         const { db, assignments } = fixture({ defaultError: true });
-        await expect(assignMessengerOutcomeTags(db, 'page-1', 'contact-1', 'qualified')).rejects.toMatchObject({ message: 'Defaults unavailable' });
-        expect(assignments).toEqual([{ contact_id: 'contact-1', tag_id: 'qualified' }]);
+        await expect(assignMessengerOutcomeTags(db, 'page-1', 'contact-1', 'qualified')).resolves.toBeUndefined();
+        expect(assignments).toEqual([{ contact_id: 'contact-1', tag_id: 'stage_history:qualified' }]);
     });
 
     it('does not label a generic staff handoff as an outcome', async () => {

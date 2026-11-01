@@ -9,7 +9,7 @@ function fixture(stage = 'engaged', source = 'chatbot', options: { state?: Recor
     const contact = { pipeline_stage: stage, pipeline_stage_source: source, last_inbound_at: null as string | null };
     const config = { enabled: true, follow_up_enabled: true, commercial_video_intake_enabled: Boolean(options.state?.automation_resumed_at), policy_revision: 1 };
     const state = options.state || null;
-    const db = { from: (table: string) => {
+    const db = { rpc: vi.fn().mockResolvedValue({ data: { applied: true }, error: null }), from: (table: string) => {
         const chain: any = { select: () => chain, eq: () => chain, in: () => chain,
             maybeSingle: async () => ({ data: table === 'contacts' ? contact : table === 'chatbot_configs'
                 ? config : table === 'chatbot_contact_states' ? state : null, error: null }),

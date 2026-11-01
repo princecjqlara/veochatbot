@@ -49,7 +49,7 @@ describe('durable Messenger lead-stage stops', () => {
         'stops and cancels queued follow-ups despite %s for %s', async (failure, stage) => {
             vi.clearAllMocks();
             const mutations: Array<{ table: string; payload: any }> = [];
-            const db = { from: vi.fn((table: string) => {
+            const db = { rpc: vi.fn().mockResolvedValue({ data: { applied: true }, error: null }), from: vi.fn((table: string) => {
                 let payload: any;
                 const lookup = () => {
                     if (table === 'pages') return { data: { id: 'page-1', fb_page_id: 'fb-page', access_token: 'token', messaging_auto_tag_checked_at: '2026-10-01T00:00:00Z', messaging_auto_tag_cursor: null }, error: null };
@@ -103,12 +103,12 @@ describe('Messenger outcome tags', () => {
                 page_id: 'page-1',
                 owner_type: 'page',
                 is_default: false,
-                system_key: 'qualified',
-                name: 'Qualified'
+                system_key: 'stage_history:qualified',
+                name: 'History: Qualified'
             }),
-            expect.objectContaining({ system_key: 'not_qualified', name: 'Not Qualified' }),
-            expect.objectContaining({ system_key: 'converted', name: 'Converted' }),
-            expect.objectContaining({ system_key: 'order_created', name: 'Order Created' })
+            expect.objectContaining({ system_key: 'stage_history:not_qualified', name: 'History: Not Qualified' }),
+            expect.objectContaining({ system_key: 'stage_history:converted', name: 'History: Converted' }),
+            expect.objectContaining({ system_key: 'stage_history:order_created', name: 'History: Order Created' })
         ]));
         expect(buildMessengerOutcomeTagRows('page-1')).toHaveLength(4);
     });
@@ -126,7 +126,7 @@ describe('worker handoffs after an intake reset', () => {
     ])('%s respects the current intake boundary', async (label, text, sentAt, mobile, shouldStop) => {
         vi.clearAllMocks();
         const mutations: Array<{ table: string; payload: any }> = [];
-        const db = { from: vi.fn((table: string) => {
+        const db = { rpc: vi.fn().mockResolvedValue({ data: { applied: true }, error: null }), from: vi.fn((table: string) => {
             let payload: any;
             const lookup = () => {
                 if (table === 'pages') return { data: { id: 'page-1', fb_page_id: 'fb-page', access_token: 'token', messaging_auto_tag_checked_at: '2026-10-01T00:00:00Z', messaging_auto_tag_cursor: null }, error: null };

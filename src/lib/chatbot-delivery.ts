@@ -2,6 +2,7 @@ import { getConversationForPsid } from '@/lib/facebook';
 import { getChatbotContactState, getChatbotHandoffOptions, saveChatbotContactState, isChatbotContactAllowed } from '@/lib/chatbot-control';
 import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateContactPipelineStage } from '@/lib/contact-pipeline';
 import { findLatestMessengerSystemSignal, getMessengerHandoffMetadata, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
+import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
 
 export class ChatbotDeliveryStoppedError extends Error {}
 
@@ -76,7 +77,9 @@ export async function assertChatbotDeliveryAllowed(input: {
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), claimed_at: null })
         .eq('page_id', input.pageId).eq('contact_id', input.contactId).in('status', ['pending', 'processing', 'ready_manual', 'waiting_response']);
     if (error) throw new Error(error.message);
-    await updateContactPipelineStage(db, { pageId: input.pageId, contactId: input.contactId, stage: pipelineStageForMessengerSignal(signal), source: 'messenger' });
+    const stageSync = await syncMessengerStageHistory(db, { pageId: input.pageId, contactId: input.contactId,
+        facebookPageId: input.facebookPageId, messages: history, options: handoffOptions });
+    if (!stageSync.events) await updateContactPipelineStage(db, { pageId: input.pageId, contactId: input.contactId, stage: pipelineStageForMessengerSignal(signal), source: 'messenger' });
     throw new ChatbotDeliveryStoppedError(`Messenger lead stage: ${signal}; automatic delivery cancelled`);
 }
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { processOneMessagingAutoTagPage } from '@/lib/messaging-auto-tag-worker';
+import { processOneMessagingAutoTagPage, processMessagingStageSyncBatch } from '@/lib/messaging-auto-tag-worker';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -14,7 +14,11 @@ export async function GET(request: NextRequest) {
         const params = new URL(request.url).searchParams;
         const pageId = params.get('pageId') || undefined;
         const chatbotOnly = params.get('chatbotOnly') === 'true';
-        return NextResponse.json({ success: true, ...await processOneMessagingAutoTagPage({ pageId, chatbotOnly }) });
+        const result = pageId || chatbotOnly
+            ? await processOneMessagingAutoTagPage({ pageId, chatbotOnly })
+            : await processMessagingStageSyncBatch();
+        const success = !('failed' in result && result.failed);
+        return NextResponse.json({ success, ...result }, { status: success ? 200 : 503 });
     } catch (error) {
         console.error('[MESSAGING_AUTO_TAG] Failed:', error);
         return NextResponse.json({ error: 'Messaging auto-tag sync failed' }, { status: 500 });

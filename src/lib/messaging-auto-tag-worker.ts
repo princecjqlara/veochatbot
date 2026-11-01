@@ -20,6 +20,7 @@ import {
 import { recordChatbotInterruptionIfNeeded } from '@/lib/outbound-message-events';
 import { choosePositiveOutcomeTag, ensureMessengerOutcomeTags } from '@/lib/messenger-outcome-tags';
 import { ensureChatbotPageWebhook, repairSavedMessengerOutcomeTags } from '@/lib/chatbot-page-maintenance';
+import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
 export { MESSENGER_OUTCOME_TAGS, buildMessengerOutcomeTagRows, choosePositiveOutcomeTag } from '@/lib/messenger-outcome-tags';
 
 type Page = {
@@ -33,23 +34,18 @@ type Page = {
 
 type Message = MessengerHistoryMessage & { id: string; created_time: string };
 
-type DefaultPageTag = {
-    id: string;
-    name: string;
-    created_at?: string | null;
-};
-
 type MessengerOutcomeTag = {
     id: string;
-    system_key: MessengerSystemSignal;
+    system_key: string;
 };
 
-async function getMessagesSince(conversationId: string, token: string, since: string): Promise<Message[]> {
+async function getMessagesSince(conversationId: string, token: string, since: string, deadline: number): Promise<Message[]> {
     let next: string | null = `https://graph.facebook.com/v21.0/${encodeURIComponent(conversationId)}/messages?fields=id,message,from,created_time,tags&limit=100`;
     const messages: Message[] = [];
     const seen = new Set<string>();
 
     for (let page = 0; next && page < 10; page++) {
+        if (Date.now() >= deadline) throw new Error('Stage sync time budget exceeded; scan will retry');
         const url: URL = new URL(next);
         if (url.hostname !== 'graph.facebook.com' || seen.has(next)) throw new Error('Unexpected Messenger pagination URL');
         seen.add(next);
@@ -57,10 +53,11 @@ async function getMessagesSince(conversationId: string, token: string, since: st
         const response: Response = await fetch(url, {
             cache: 'no-store',
             headers: { Authorization: `Bearer ${token}` },
-            signal: AbortSignal.timeout(15_000)
+            signal: AbortSignal.timeout(Math.max(1, Math.min(15_000, deadline - Date.now())))
         });
         const body: { data?: Message[]; paging?: { next?: string }; error?: { message?: string } } = await response.json();
         if (!response.ok || body.error) throw new Error(body.error?.message || `Messenger history HTTP ${response.status}`);
+        if (!Array.isArray(body.data)) throw new Error('Messenger history is unavailable; scan will retry');
         const rows = body.data || [];
         messages.push(...rows.filter(message => new Date(message.created_time).getTime() >= new Date(since).getTime()));
         if (rows.some(message => new Date(message.created_time).getTime() < new Date(since).getTime())) return messages;
@@ -70,7 +67,7 @@ async function getMessagesSince(conversationId: string, token: string, since: st
     return messages;
 }
 
-export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: boolean; pageId?: string } = {}) {
+export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: boolean; pageId?: string; claimedPage?: Page } = {}) {
     const db = getSupabaseAdmin();
     const fields = input.chatbotOnly
         ? 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,messaging_auto_tag_scan_started_at,chatbot_configs!chatbot_configs_page_id_fkey!inner(enabled)'
@@ -80,13 +77,14 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
         .eq('messaging_auto_tag_enabled', true);
     if (input.chatbotOnly) pageQuery = pageQuery.eq('chatbot_configs.enabled', true);
     if (input.pageId) pageQuery = pageQuery.eq('id', input.pageId);
-    const { data: page, error: pageError } = await pageQuery
-        .order('messaging_auto_tag_attempted_at', { ascending: true })
-        .limit(1).maybeSingle();
+    const { data: page, error: pageError } = input.claimedPage
+        ? { data: input.claimedPage, error: null }
+        : await pageQuery.order('messaging_auto_tag_attempted_at', { ascending: true }).limit(1).maybeSingle();
     if (pageError) throw pageError;
     if (!page) return { pages: 0, conversations: 0, tagged: 0, pipelineMoved: 0 };
     const current = page as Page;
     const runStartedAt = new Date().toISOString();
+    const deadline = Date.now() + 90_000;
     // Existing cursors from before this migration conservatively repeat the old
     // interval once instead of skipping edits made during their unfinished scan.
     const scanStartedAt = current.messaging_auto_tag_scan_started_at ||
@@ -106,25 +104,6 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                 console.warn('Webhook subscription maintenance failed; lead-stage stops will still run', { pageId: current.id, message });
             }
         }
-        const { data: defaultTags, error: tagError } = await db.from('tags')
-            .select('id,name,created_at')
-            .eq('owner_type', 'page')
-            .eq('owner_id', current.id)
-            .eq('is_default', true)
-            .order('created_at', { ascending: true })
-            .order('id', { ascending: true })
-            .limit(25);
-        if (tagError) console.warn('Could not load default Page tags; lead-stage stops will still run', tagError.message);
-        const tag = choosePositiveOutcomeTag((defaultTags || []) as DefaultPageTag[]);
-        if (!tag) console.warn('Default Page tag is missing; lead-stage stops will still run', { pageId: current.id });
-        if ((defaultTags || []).length > 1) {
-            console.warn('Multiple default Page tags found; using the Paid / Availed Service tag', {
-                pageId: current.id,
-                count: defaultTags?.length,
-                selectedTagId: tag?.id
-            });
-        }
-
         let rawOutcomeTags: MessengerOutcomeTag[] = [];
         try {
             rawOutcomeTags = await ensureMessengerOutcomeTags(db, current.id);
@@ -139,7 +118,7 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
             ])
         );
 
-        if (input.chatbotOnly) {
+        {
             try { repairedOutcomeTags = await repairSavedMessengerOutcomeTags(db, current.id); }
             catch (error) {
                 maintenanceErrors.push(`Outcome tag recovery: ${error instanceof Error ? error.message : String(error)}`);
@@ -148,17 +127,22 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
         }
 
         const batch = await getPageConversationsBatch(current.fb_page_id, current.access_token, {
-            limit: 10,
+            limit: 5,
             after: current.messaging_auto_tag_cursor,
             sinceTimestamp: current.messaging_auto_tag_checked_at
         });
+        // Keep watching new edits while an older history scan is paginating.
+        const newest = current.messaging_auto_tag_cursor
+            ? await getPageConversationsBatch(current.fb_page_id, current.access_token, { limit: 3, sinceTimestamp: current.messaging_auto_tag_checked_at })
+            : null;
+        const conversations = [...new Map([...(newest?.conversations || []), ...batch.conversations].map(conversation => [conversation.id, conversation])).values()];
         let tagged = 0;
         let chatbotStopped = 0;
         let pipelineMoved = 0;
-        for (const conversation of batch.conversations) {
+        for (const conversation of conversations) {
             const participant = conversation.participants?.data?.find(p => p.id !== current.fb_page_id);
             if (!participant) continue;
-            const messages = await getMessagesSince(conversation.id, current.access_token, current.messaging_auto_tag_checked_at);
+            const messages = await getMessagesSince(conversation.id, current.access_token, current.messaging_auto_tag_checked_at, deadline);
             let signals = [...new Set(messages
                 .map(message => classifyMessengerHistoryMessage(message, current.fb_page_id))
                 .filter((signal): signal is MessengerSystemSignal => signal !== null))];
@@ -209,7 +193,12 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                     .eq('page_id', current.id).eq('contact_id', contact.id)
                     .in('status', ['pending', 'processing', 'ready_manual', 'waiting_response']);
                 if (cancelError) throw cancelError;
-                if (await updateContactPipelineStage(db, {
+                const stageSync = await syncMessengerStageHistory(db, {
+                    pageId: current.id, contactId: contact.id, facebookPageId: current.fb_page_id,
+                    messages, options: handoffOptions
+                });
+                pipelineMoved += stageSync.applied;
+                if (stageSync.events === 0 && await updateContactPipelineStage(db, {
                     pageId: current.id, contactId: contact.id,
                     stage: pipelineStageForMessengerSignal(stopSignal), source: 'messenger'
                 })) pipelineMoved++;
@@ -230,16 +219,8 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
                         stateBeforeStop: existingState
                     });
                 }
-                if (tag && signals.some(signal => signal !== 'not_qualified' && signal !== 'manual')) {
-                    const { error: assignError } = await db.from('contact_tags').upsert({
-                        contact_id: contact.id,
-                        tag_id: tag.id
-                    }, { onConflict: 'contact_id,tag_id', ignoreDuplicates: true });
-                    if (assignError) throw assignError;
-                    tagged++;
-                }
                 const outcomeAssignments = signals.flatMap(signal => {
-                    const tagId = outcomeTagIds.get(signal);
+                    const tagId = outcomeTagIds.get(`stage_history:${signal}`);
                     return tagId ? [{ contact_id: contact.id, tag_id: tagId }] : [];
                 });
                 if (outcomeAssignments.length > 0) {
@@ -288,5 +269,22 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
             messaging_auto_tag_last_error: error instanceof Error ? error.message.slice(0, 500) : 'Unknown error'
         }).eq('id', current.id);
         throw error;
+    } finally {
+        if (input.claimedPage) {
+            await db.from('pages').update({ messaging_auto_tag_lease_until: null }).eq('id', current.id);
+        }
     }
+}
+
+/** Independent of chatbot enablement; leases keep concurrent scans on distinct Pages. */
+export async function processMessagingStageSyncBatch(limit = 6) {
+    const db = getSupabaseAdmin();
+    const { data: pages, error } = await db.rpc('claim_messenger_stage_pages', { p_limit: limit });
+    if (error) throw new Error(error.message || 'Could not claim Page stage scans');
+    const results = await Promise.allSettled((pages || []).map((page: Page) => processOneMessagingAutoTagPage({ claimedPage: page })));
+    return {
+        pages: results.length,
+        completed: results.filter(result => result.status === 'fulfilled').length,
+        failed: results.filter(result => result.status === 'rejected').length
+    };
 }

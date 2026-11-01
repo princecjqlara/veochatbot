@@ -444,7 +444,7 @@ export default function TagsPage() {
                                                 ></span>
                                                 <span className="font-bold">{tag.name}</span>
                                                 {tag.is_default && <span className="badge-wireframe bg-gray-100">Default</span>}
-                                                {tag.system_key && <span className="badge-wireframe bg-blue-50">System</span>}
+                                                {tag.system_key && <span className="badge-wireframe bg-blue-50">{tag.system_key.startsWith('stage_history:') ? 'Smart history' : 'System'}</span>}
                                             </div>
                                         </td>
                                         <td>

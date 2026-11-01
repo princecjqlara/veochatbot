@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
     getSupabaseAdmin: vi.fn(),
+    syncMessengerStageHistory: vi.fn(),
     captureContactAdSource: vi.fn().mockResolvedValue(undefined),
     captureStandaloneAdReferral: vi.fn().mockResolvedValue(undefined),
     verifyWebhookSignature: vi.fn(),
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/supabase', () => ({
     getSupabaseAdmin: mocks.getSupabaseAdmin
 }));
+vi.mock('@/lib/messenger-stage-sync', () => ({ syncMessengerStageHistory: mocks.syncMessengerStageHistory }));
 vi.mock('@/lib/ad-attribution', () => ({ captureContactAdSource: mocks.captureContactAdSource, captureStandaloneAdReferral: mocks.captureStandaloneAdReferral }));
 
 vi.mock('@/lib/facebook', () => ({
@@ -678,6 +680,7 @@ function createSupabaseMockWithGenericUpsertFailure() {
 describe('POST /api/facebook/webhook', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.syncMessengerStageHistory.mockReset().mockResolvedValue({ events: 0, applied: 0 });
         vi.stubEnv('NODE_ENV', 'test');
         mocks.handleFollowUpWorkflowContactReply.mockResolvedValue({
             checked: 0,
@@ -1494,6 +1497,10 @@ describe('POST /api/facebook/webhook', () => {
         expect(supabase.contactStateUpsert).toHaveBeenCalledWith(expect.objectContaining({ status: 'stopped', stop_reason: reason }), expect.anything());
         expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();
         expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(mocks.syncMessengerStageHistory).toHaveBeenCalledWith(supabase, expect.objectContaining({
+            facebookPageId: 'fb_page_1',
+            messages: [expect.objectContaining({ id: 'stage-event', message: `Lead stage set to ${stage}`, from: { id: 'fb_page_1' } })]
+        }));
     });
 
     it.each(['Contacted', 'Intake', 'Custom Stage'])('stops for a %s event read from Messenger history', async stage => {
