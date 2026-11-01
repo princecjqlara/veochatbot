@@ -50,6 +50,16 @@ describe('bounded whole-conversation worker', () => {
         expect(JSON.parse(fetchMock.mock.calls[1][1].body).response_format.type).toBe('json_schema');
         expect(JSON.stringify(rpc.mock.calls)).not.toContain('page-token');
     });
+    it('checkpoints source messages and rejects malformed AI output without publishing a partial snapshot', async () => {
+        const rpc = fixture();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ messages: { data: source } }] }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: '{"summary_points":[],"facts":[],"answers":[]} trailing output' } }] }) }));
+        expect(await processContactProfiles({ limit: 1 })).toMatchObject({ ready: 0, failed: 1 });
+        const saved = rpc.mock.calls.find(call => call[0] === 'save_contact_profile_progress') as any;
+        expect(saved[1].p_messages).toHaveLength(2);
+        const completion = rpc.mock.calls.find(call => call[0] === 'finish_contact_profile_job') as any;
+        expect(completion[1].p_payload).toBeNull(); expect(completion[1].p_error).toBeTypeOf('string');
+    });
     it('keeps the prior snapshot when Meta history is unavailable or truncated', async () => {
         const rpc = fixture();
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: { code: 190 } }) }));

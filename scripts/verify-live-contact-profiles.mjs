@@ -16,10 +16,10 @@ try {
         WHERE p.messaging_auto_tag_last_error IS NULL AND ($1::uuid IS NULL OR j.contact_id=$1::uuid)
         ORDER BY (j.status='ready') DESC,(p.name='SAMA KANA MEDIA') DESC,j.requested_at DESC LIMIT 1`, [contactId])).rows[0];
     assert(selected, 'No authorized accessible profile job found');
-    const cookie = await encode({ token: { id: selected.user_id, name: 'Contact profile release verification' }, secret: process.env.NEXTAUTH_SECRET, maxAge: 600 });
-    const headers = { Cookie: (new URL(base).protocol === 'https:' ? '__Secure-next-auth.session-token=' : 'next-auth.session-token=') + cookie };
     const contactPath = `/api/pages/${selected.page_id}/contacts/${selected.contact_id}/profile`;
     const call = async (url, options = {}) => {
+        const cookie = await encode({ token: { id: selected.user_id, name: 'Contact profile release verification' }, secret: process.env.NEXTAUTH_SECRET, maxAge: 600 });
+        const headers = { Cookie: (new URL(base).protocol === 'https:' ? '__Secure-next-auth.session-token=' : 'next-auth.session-token=') + cookie };
         const response = await fetch(base + url, { ...options, headers: { ...headers, ...options.headers }, cache: 'no-store', signal: AbortSignal.timeout(100000) });
         return { status: response.status, body: await response.json() };
     };
