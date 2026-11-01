@@ -65,7 +65,7 @@ SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 
 # AI chatbot
 OPENROUTER_API_KEY=your-openrouter-api-key
-OPENROUTER_MODEL=~deepseek/deepseek-flash-latest
+OPENROUTER_MODEL=openai/gpt-6-luna
 OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 OPENROUTER_MULTIMODAL_MODEL=google/gemini-3.8-flash
 CHATBOT_RAG_MATCH_THRESHOLD=0.35
@@ -84,6 +84,8 @@ TELEGRAM_MEDIA_ROUTES={"-1001234567890":"00000000-0000-4000-8000-000000000000"}
 For balanced pricing tests, multiple package offers, promotional follow-up sequences, and conversion dashboards, see [Pricing packages and experiments](docs/pricing-experiments-2026-10-22.md). Apply its additive migration before using **Pricing Packages** in the dashboard.
 
 For adaptive first-day chatbot timing, follow [the migration and rollout instructions](docs/first-day-follow-up-timing-2026-10-22.md). Apply the additive migration before deployment, then activate the timing mode after the updated application is ready.
+
+For GPT-6 Luna, apply `supabase/migrations/202611020001_chatbot_gpt6_luna.sql` and set the host's `OPENROUTER_MODEL` to `openai/gpt-6-luna`. The migration updates Page configurations using the previous DeepSeek default and preserves other model selections.
 
 ### Telegram group media bridge
 

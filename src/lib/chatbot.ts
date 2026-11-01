@@ -41,7 +41,7 @@ import { containsGuidedSalesForm, guidedSalesPrompt, isNewSalesConversation, mer
 import { usesSalesAssistant, salesSettings, normalizeSalesDetails, mergeSalesChatDetails, salesAssistantPrompt, selectSalesSample, renderSalesMessages, chatbotPricingEnabled, approvedSalesRates, type SalesProgress } from '@/lib/chatbot-sales-assistant';
 import { loadAssignedSalesSamples } from '@/lib/chatbot-sales-store';
 
-export const DEFAULT_CHATBOT_MODEL = '~deepseek/deepseek-flash-latest';
+export const DEFAULT_CHATBOT_MODEL = 'openai/gpt-6-luna';
 export const DEFAULT_CHATBOT_INSTRUCTIONS =
     'You are a helpful customer support assistant for this Facebook Page. Be concise, friendly, accurate, naturally support English, Filipino, and Taglish, and never invent prices, policies, availability, or promises.';
 export const DEFAULT_CHATBOT_FALLBACK =
