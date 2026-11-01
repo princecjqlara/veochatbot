@@ -1,7 +1,7 @@
 # Contact profiles and payment records
 
-Open a contact name in Contacts or Pipeline to see Overview, Conversation,
-Payments, Timeline and Projection. The contact list keeps the core columns visible;
+Open a contact name in Contacts, Pipeline or an ad report to see Overview, Conversation,
+Sources, Payments, Timeline and Projection. The contact list keeps the core columns visible;
 extra timing columns and advanced filters can be expanded. Tags opens with manual
 tags, with separate views for automatic stage history and other system tags.
 Existing tags and assignments are preserved.
@@ -51,6 +51,25 @@ order's payment status is computed from net transactions, not the payment-kind
 label. Purchase counts include only orders with recorded verified receipts;
 unallocated receipts appear in totals but not purchase counts or order balances.
 These counts describe the ledger's coverage, not an inferred lifetime total.
+
+## Ads and referral sources
+
+Sources shows the originating ad only when stored first-inquiry evidence verifies
+it. Unknown and conflicting origins remain explicit. Later clicks and unconfirmed
+referrals have their own labels and never replace the origin.
+
+The view includes image/video creative previews, the original post, saved campaign,
+ad-set, creative and account identifiers/names, ad status and metadata freshness,
+plus Facebook event/recording times, source/type, tracking code and message evidence.
+Metadata missing from Facebook stays unavailable; full Ads Manager names may need
+ad-account read permission. The existing ad-preview resolver can refresh saved
+previews without changing attribution or historical referral snapshots.
+
+A creative captured with a referral is distinguished from the latest saved catalog
+creative. Catalog video/post details are never mixed into a historical image-only
+snapshot. The latest preview remains available separately when provided. Source
+events are paginated, and an ad event in Timeline opens that exact referral. No
+financial value or payment status is inferred from an ad or a referral.
 
 The journey includes the earliest verified/observed customer inquiry, actual stage
 events, orders, verified payments and refunds, chat evidence, attributed follow-ups,

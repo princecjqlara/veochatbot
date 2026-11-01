@@ -1,6 +1,7 @@
 import { getChatbotDetailProgress } from '@/lib/chatbot-form-progress';
 import { contactControls } from '@/lib/contact-controls';
 import { hoursBetween, purchaseMetrics, type PurchaseRecord, type VerifiedPayment } from '@/lib/contact-profile-evidence';
+import { profileAdFields } from '@/lib/contact-profile-sources';
 
 type Db = { from: (table: string) => any; rpc: (name: string, args: Record<string, unknown>) => any };
 const jobFields = 'status,reason,requested_version,working_version,scan_started,history_complete,message_count,analyzed_count,error_message,requested_at,updated_at';
@@ -47,7 +48,7 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
         priorPrediction = prior.data;
     }
     if (adResult.data?.origin_ad_id && adResult.data?.attribution_status === 'verified_inline') {
-        const result = await db.from('ad_source_catalog').select('ad_id,ad_name,ad_title,campaign_name,adset_name,photo_url').eq('page_id', pageId).eq('ad_id', adResult.data.origin_ad_id).maybeSingle();
+        const result = await db.from('ad_source_catalog').select(profileAdFields).eq('page_id', pageId).eq('ad_id', adResult.data.origin_ad_id).maybeSingle();
         if (result.error) throw new Error('Could not load verified ad attribution');
         ad = { ...result.data, ad_id: adResult.data.origin_ad_id, attribution_status: 'verified_inline', evidence_key: adResult.data.origin_evidence_key };
     }
@@ -63,7 +64,7 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     for (const evidence of conversation?.payment_evidence || []) events.push({ id: `evidence-${evidence.message_id}`, type: 'chat_payment', at: evidence.at, title: evidence.acknowledgment ? 'Payment acknowledged in chat' : 'Payment statement in chat', message_id: evidence.message_id, basis: 'Conversation evidence; separate from verified payments' });
     for (const invoice of conversation?.invoice_requests || []) events.push({ id: `invoice-${invoice.reference}`, type: 'invoice', at: invoice.at, title: `Invoice requested: ${invoice.reference}`, message_id: invoice.message_id, basis: 'Payment request, not proof of payment' });
     for (const followUp of followUps) events.push({ id: `followup-${followUp.message_id}`, type: 'follow_up', at: followUp.at, title: 'Follow-up sent', message_id: followUp.message_id, basis: followUp.source });
-    for (const touch of touchesResult.data || []) events.push({ id: `ad-${touch.event_key}`, type: 'ad', at: touch.event_at, title: touch.ad_id ? `Ad touch: ${touch.ad_id}` : 'Referral touch', basis: touch.event_kind });
+    for (const touch of touchesResult.data || []) events.push({ id: `ad-${touch.event_key}`, type: 'ad', at: touch.event_at, title: touch.ad_id ? `Ad touch: ${touch.ad_id}` : 'Referral touch', basis: touch.event_kind, source_event_key: touch.event_key });
     events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     const extracted = Object.fromEntries((snapshot?.payload?.extracted_answers || []).map((answer: any) => [answer.field, answer.value]));
     const saved = getChatbotDetailProgress(configResult.data, stateResult.data?.collected_details);

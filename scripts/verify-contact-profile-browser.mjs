@@ -48,6 +48,13 @@ const tagRows = {
     history: [{ id: 'history', name: 'History: Qualified', color: '#16a34a', system_key: 'stage_history:qualified', owner_type: 'page', owner_id: 'page' }],
     system: []
 };
+const sourceAd = { ad_id: '100', ad_name: 'Original campaign ad', ad_title: 'Original creative', video_url: 'https://example.com/original.mp4',
+    post_id: '10_20', creative_basis: 'referral_snapshot', campaign_name: 'October campaign', campaign_id: '300', adset_name: 'Local audience', adset_id: '400', creative_id: '500', metadata_status: 'available' };
+const sourceOrigin = { event_key: 'origin', at: inquiry, received_at: inquiry, event_kind: 'message', message_id: 'customer-1', role: 'origin', source: 'ADS', referral_type: 'OPEN_THREAD', referral_code: 'sample-code', ad: sourceAd };
+let sourceData = { attribution_status: 'verified_inline', first_inquiry_at: inquiry, inquiry_basis: 'live_message', origin: { ad: sourceAd, evidence: sourceOrigin },
+    touches: [{ ...sourceOrigin, event_key: 'later', role: 'later_touch', at: paidAt, ad: { ...sourceAd, ad_id: '200', ad_name: 'Later campaign ad' } }, sourceOrigin], total: 26, page: 1, page_size: 25,
+    coverage: 'A later click does not establish the originating ad.' };
+fixture.timeline.push({ id: 'ad-later', at: paidAt, type: 'ad', title: 'Ad touch: 200', basis: 'message', source_event_key: 'later' });
 const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', [
     '--headless=new', '--incognito', '--disable-gpu', '--disable-background-networking', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'
@@ -78,6 +85,11 @@ try {
             if (url.pathname === '/api/auth/session') body = { user: { id: 'user', name: 'Sample Staff' }, expires: '2099-01-01T00:00:00Z' };
             else if (url.pathname === '/api/pages') body = { pages: [{ id: 'page', name: 'Sample Page' }] };
             else if (url.pathname.endsWith('/profile/messages')) body = { items: [{ message_id: 'customer-1', sent_at: inquiry, sender: 'customer', text: 'For Facebook ads, landscape please.', attachment_count: 0 }], total: 1, generation: 1 };
+            else if (url.pathname.endsWith('/profile/sources')) {
+                const focused = url.searchParams.get('eventKey'), page = Number(url.searchParams.get('page') || 1);
+                body = { ...sourceData, page, touches: focused ? sourceData.touches.filter(touch => touch.event_key === focused) : page === 1 ? sourceData.touches : [sourceOrigin], total: focused ? 1 : sourceData.total };
+            }
+            else if (url.pathname === '/api/ad-quality/resolve') body = { results: [{ adId: '100', resolved: true }, { adId: '200', resolved: true }] };
             else if (url.pathname.endsWith('/profile')) body = fixture;
             else if (url.pathname.endsWith('/projection')) body = { conversion_projection: fixture.controls.conversion_projection, bot_control: { enabled: false, reason: 'contact_disabled' } };
             else if (url.pathname === '/api/tags') body = { items: tagRows[url.searchParams.get('kind') || 'manual'] || [], total: 1, page: 1, pageSize: 50, kind_counts: { manual: 1, history: 1, system: 0 } };
@@ -105,6 +117,24 @@ try {
     let shot = await cdp('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(output, 'profile-desktop.png'), Buffer.from(shot.data, 'base64'));
     await clickText('View source');
     await waitFor("document.body.innerText.includes('For Facebook ads, landscape please.')"); checks.push('Summary source opens the cited conversation message');
+    await clickText('Sources'); await waitFor("document.body.innerText.includes('Original campaign ad')");
+    await evaluate("[...document.querySelectorAll('summary')].find(item=>item.textContent==='Ad, campaign and ad-set details').click()");
+    assert(await evaluate("document.body.innerText.includes('October campaign')&&document.body.innerText.includes('Local audience')"));
+    await evaluate("document.querySelector('button[aria-label=\"Preview ad 100\"]').click()");
+    assert(await evaluate("!!document.querySelector('[role=dialog] video[controls]')"));
+    await evaluate("document.querySelector('button[aria-label=\"Close ad preview\"]').click()");
+    await clickText('Refresh ad previews'); await waitFor("document.body.innerText.includes('Original referral snapshots and attribution stay unchanged.')");
+    await clickText('Next sources'); await waitFor("document.body.innerText.includes('Page 2 of 2')");
+    checks.push('Origin creative video, campaign/ad-set details, preview refresh and paginated source history');
+    shot = await cdp('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(output, 'sources-desktop.png'), Buffer.from(shot.data, 'base64'));
+    await clickText('Timeline'); await clickText('Ads'); await clickText('View ad and referral evidence');
+    await waitFor("document.body.innerText.toLowerCase().includes('selected source event')");
+    assert(await evaluate("document.body.innerText.includes('Later campaign ad')&&document.body.innerText.includes('Later touch')"));
+    await clickText('Show all source events'); await waitFor("document.body.innerText.toLowerCase().includes('recorded ad and referral touches')");
+    sourceData = { ...sourceData, attribution_status: 'unknown', origin: null, touches: sourceData.touches.map(touch => touch.role === 'origin' ? { ...touch, role: 'unconfirmed_touch' } : touch) };
+    await clickText('Overview'); await clickText('Sources'); await waitFor("document.body.innerText.includes('The originating ad is not verified.')");
+    assert(await evaluate("document.body.innerText.includes('Later campaign ad')"));
+    checks.push('Timeline opens the exact referral and later ads never become an unknown origin');
     await clickText('Payments'); await waitFor("document.body.innerText.includes('Down payment')");
     assert(await evaluate("document.body.innerText.includes('₱700.00')"));
     await clickText('Record verified payment'); assert(await evaluate("!!document.querySelector('input[type=checkbox][required]')"));
@@ -117,6 +147,8 @@ try {
     await sleep(200); await noOverflow('Mobile profile'); await evaluate("document.querySelector('h1').scrollIntoView()");
     shot = await cdp('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(output, 'profile-mobile.png'), Buffer.from(shot.data, 'base64'));
     checks.push('Mobile profile without horizontal page overflow');
+    await clickText('Sources'); await waitFor("document.body.innerText.includes('The originating ad is not verified.')"); await noOverflow('Mobile source history'); checks.push('Mobile source view without page overflow');
+    await evaluate("document.querySelector('h2').scrollIntoView()"); shot = await cdp('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(output, 'sources-mobile.png'), Buffer.from(shot.data, 'base64'));
     await cdp('Page.navigate', { url: base + '/dashboard/tags' });
     await waitFor("document.querySelector('tbody')?.innerText.includes('Existing customer tag')");
     await clickText('Stage history (1)'); await waitFor("document.querySelector('tbody')?.innerText.includes('History: Qualified')");
