@@ -18,6 +18,9 @@ or source failure. The screen shows its source date and whether newer activity e
 
 Summaries use GPT-6 Luna through OpenRouter with strict structured output. Each
 displayed AI fact or answer must cite a real message and matching excerpt.
+Generation uses compact local references for opaque Facebook message IDs, then
+restores the exact IDs before checking and saving citations. This keeps long-history
+chapter merges small without weakening source validation.
 Customer needs and form answers require customer-authored evidence. Required
 answers extracted from the conversation appear alongside saved form answers;
 saved answers win when they disagree, and conflicts and answer history remain

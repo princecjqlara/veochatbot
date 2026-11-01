@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { DEFAULT_CHATBOT_MODEL } from '@/lib/chatbot';
-import { conversationEvidence, groundedAnalysis, mergeProfileFacts, type ProfileMessage } from '@/lib/contact-profile-evidence';
+import { conversationEvidence, groundedAnalysis, mergeProfileFacts, type ProfileMessage, type SummaryPoint } from '@/lib/contact-profile-evidence';
 import { projectionCacheFromMessages } from '@/lib/contact-projection-refresh';
 import { forecastPageName, scoreContactForecast } from '@/lib/contact-forecast';
 import { getChatbotDetailProgress } from '@/lib/chatbot-form-progress';
@@ -65,16 +65,22 @@ export async function loadProfileMessages(db: Db, pageId: string, contactId: str
     }
 }
 
-async function analyze(messages: ProfileMessage[], deadline: number, requestedFields: string[], digest?: unknown) {
+async function analyze(messages: ProfileMessage[], deadline: number, requestedFields: string[], digest?: SummaryPoint[][]) {
     if (!process.env.OPENROUTER_API_KEY) throw new Error('OpenRouter is not configured for conversation summaries');
+    // Meta message IDs can contain hundreds of opaque characters. Short local
+    // references keep model inputs/outputs small; persisted citations keep the exact IDs.
+    const referenceIds = new Map(messages.map((message, index) => [message.id, `m${index + 1}`]));
+    const sourceIds = new Map([...referenceIds].map(([source, reference]) => [reference, source]));
+    const chapters = digest?.map(chapter => chapter.map(point => ({ ...point,
+        evidence: point.evidence.map(proof => ({ ...proof, message_id: referenceIds.get(proof.message_id) || '' })) })));
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json',
             'HTTP-Referer': process.env.NEXTAUTH_URL || 'https://veochatbot.vercel.app', 'X-OpenRouter-Title': 'VeoBot contact profile' },
         body: JSON.stringify({ model: process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL, reasoning_effort: 'none', max_completion_tokens: 8500,
             response_format: { type: 'json_schema', json_schema: { name: 'contact_conversation_profile', strict: true, schema: analysisSchema } },
             messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: JSON.stringify(digest
-                ? { task: 'Combine these source-grounded chapter summaries into up to eight points covering the entire conversation. Return facts and answers as empty arrays; all chapter facts and answers are retained separately.', chapters: digest }
-                : { task: 'Extract a grounded summary and facts from this chronological conversation chapter. Also extract answers to requested_fields, using each exact field name and a value quoted verbatim from a customer message. Leave unknown answers out. Never invent a form answer or use Page sales copy as a customer answer.', requested_fields: requestedFields, messages: messages.map(({ id, at, sender, text, attachments }) => ({ id, at, sender, text, attachments })) }) }] }),
+                ? { task: 'Combine these source-grounded chapter summaries into up to eight points covering the entire conversation. Return facts and answers as empty arrays; all chapter facts and answers are retained separately.', chapters }
+                : { task: 'Extract a grounded summary and facts from this chronological conversation chapter. Also extract answers to requested_fields, using each exact field name and a value quoted verbatim from a customer message. Leave unknown answers out. Never invent a form answer or use Page sales copy as a customer answer.', requested_fields: requestedFields, messages: messages.map(({ id, at, sender, text, attachments }) => ({ id: referenceIds.get(id), at, sender, text, attachments })) }) }] }),
         signal: AbortSignal.timeout(Math.max(1000, Math.min(60000, deadline - Date.now() - 8000)))
     });
     const body = await response.json();
@@ -82,7 +88,12 @@ async function analyze(messages: ProfileMessage[], deadline: number, requestedFi
     if (body.choices?.[0]?.finish_reason === 'length') throw new Error('The AI chapter exceeded its output limit; no partial summary was published');
     const content = body.choices?.[0]?.message?.content;
     if (typeof content !== 'string') throw new Error('The AI returned no structured summary');
-    const result = groundedAnalysis(JSON.parse(content), messages, requestedFields);
+    const parsed = JSON.parse(content);
+    for (const key of ['summary_points', 'facts', 'answers']) if (Array.isArray(parsed?.[key])) {
+        for (const record of parsed[key]) if (Array.isArray(record?.evidence)) record.evidence = record.evidence.map((proof: any) =>
+            proof && typeof proof === 'object' ? { ...proof, message_id: sourceIds.get(proof.message_id) || '' } : proof);
+    }
+    const result = groundedAnalysis(parsed, messages, requestedFields);
     if (!result.summary_points.length && messages.some(message => message.text.trim().length > 10)) throw new Error('The generated summary could not be tied to source messages');
     return result;
 }
