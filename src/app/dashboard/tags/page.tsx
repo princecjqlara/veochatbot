@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, Edit2, Check, X, Tag as TagIcon, Search } from 'lucide-react';
 import Pagination from '@/components/Pagination';
 import Modal from '@/components/Modal';
@@ -24,6 +24,10 @@ export default function TagsPage() {
     const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
     const [tags, setTags] = useState<Tag[]>([]);
     const [loading, setLoading] = useState(true);
+    const [tagKind, setTagKind] = useState('manual');
+    const [tagSearch, setTagSearch] = useState('');
+    const [kindCounts, setKindCounts] = useState<Record<string, number>>({});
+    const tagRequest = useRef(0);
 
     // Pagination
     const [page, setPage] = useState(1);
@@ -60,7 +64,7 @@ export default function TagsPage() {
         if (selectedPageId || session?.user?.id) {
             fetchTags();
         }
-    }, [selectedPageId, page, pageSize, session]);
+    }, [selectedPageId, page, pageSize, session, tagKind, tagSearch]);
 
     useEffect(() => {
         if (selectedPageId) {
@@ -85,24 +89,30 @@ export default function TagsPage() {
     };
 
     const fetchTags = async () => {
+        const requestNumber = ++tagRequest.current;
         setLoading(true);
         try {
             const params = new URLSearchParams({
                 page: page.toString(),
                 pageSize: pageSize.toString(),
                 scope: 'all',
+                kind: tagKind,
+                search: tagSearch,
                 ...(selectedPageId && { pageId: selectedPageId })
             });
 
             const res = await fetch(`/api/tags?${params}`);
-            const data: PaginatedResponse<Tag> = await res.json();
+            const data: PaginatedResponse<Tag> & { kind_counts?: Record<string, number> } = await res.json();
+            if (!res.ok) throw new Error('Could not load tags');
+            if (requestNumber !== tagRequest.current) return;
 
             setTags(data.items || []);
             setTotal(data.total || 0);
+            setKindCounts(data.kind_counts || {});
         } catch (error) {
             console.error('Error fetching tags:', error);
         } finally {
-            setLoading(false);
+            if (requestNumber === tagRequest.current) setLoading(false);
         }
     };
 
@@ -133,7 +143,7 @@ export default function TagsPage() {
         try {
             const ownerId = tagOwnerType === 'page' ? selectedPageId : session?.user?.id;
 
-            await fetch('/api/tags', {
+            const response = await fetch('/api/tags', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -149,12 +159,14 @@ export default function TagsPage() {
                 })
             });
 
+            if (!response.ok) throw new Error('Could not create tag');
             setShowCreateModal(false);
             setTagName('');
             setTagColor(TAG_COLORS[0]);
             setTagIsShared(false);
             setSelectedShareUserIds(new Set());
-            await fetchTags();
+            if (tagKind === 'manual' && page === 1) await fetchTags();
+            else { setTagKind('manual'); setPage(1); }
         } catch (error) {
             console.error('Error creating tag:', error);
         } finally {
@@ -308,9 +320,9 @@ export default function TagsPage() {
             {/* Header */}
             <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
                 <div>
-                    <h1 className="text-3xl font-black uppercase mb-2">Tag Manager</h1>
+                    <h1 className="text-3xl font-bold tracking-tight mb-2">Tags</h1>
                     <p className="font-mono text-sm text-gray-500">
-                        Create and organize tags for your contacts
+                        Organize contacts and review their stage history
                     </p>
                 </div>
 
@@ -349,11 +361,16 @@ export default function TagsPage() {
                         className="btn-wireframe whitespace-nowrap"
                     >
                         <Plus className="w-4 h-4 mr-2" />
-                        Create Tag
+                        Create manual tag
                     </button>
                 </div>
             </div>
 
+            <div className="mb-6 space-y-4 rounded-xl border border-gray-200 bg-white p-4">
+                <div className="flex flex-wrap gap-2" aria-label="Tag categories">{[['manual', 'Manual tags'], ['history', 'Stage history'], ['system', 'Other system tags']].map(([value, label]) => <button key={value} onClick={() => { setTagKind(value); setPage(1); setSelectedIds(new Set()); }} className={`rounded-full border px-3 py-2 text-sm font-medium ${tagKind === value ? 'border-black bg-black text-white' : 'border-gray-200 text-gray-600'}`}>{label}{kindCounts[value] != null ? ` (${kindCounts[value]})` : ''}</button>)}</div>
+                <div className="relative max-w-md"><Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" /><input aria-label="Search tags" value={tagSearch} onChange={event => { setTagSearch(event.target.value); setPage(1); }} placeholder="Search tag names" className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm" /></div>
+                <p className="text-xs text-gray-500">{tagKind === 'history' ? 'Automatic history tags are retained when a stage changes. They describe past stages; the contact profile shows the current stage.' : tagKind === 'system' ? 'Protected Page defaults and older system tags are retained here.' : 'Tags your team adds to organize contacts. Stage history is kept in its own view.'}</p>
+            </div>
             {/* Bulk Actions */}
             {selectedIds.size > 0 && (
                 <div className="mb-6 p-4 border border-black bg-gray-50 flex items-center justify-between">
@@ -388,7 +405,7 @@ export default function TagsPage() {
                     <TagIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
                     <h3 className="text-xl font-bold uppercase mb-2">No tags found</h3>
                     <p className="text-gray-500 font-mono text-sm mb-6">
-                        Get started by creating your first tag.
+                        {tagSearch ? 'Try another search.' : tagKind === 'history' ? 'Stage history appears automatically after a Facebook lead-stage decision is detected.' : tagKind === 'system' ? 'No other system tags for this Page.' : 'Create a manual tag to organize your contacts.'}
                     </p>
                     <button
                         onClick={() => {
@@ -401,7 +418,7 @@ export default function TagsPage() {
                         }}
                         className="btn-wireframe"
                     >
-                        Create Tag
+                        Create manual tag
                     </button>
                 </div>
             ) : (

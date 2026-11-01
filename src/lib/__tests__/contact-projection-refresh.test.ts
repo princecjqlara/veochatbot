@@ -17,4 +17,15 @@ describe('timestamp-safe live conversation features',()=>{
  it('excludes events created after the source cutoff',()=>{
   const c=projectionCacheFromMessages([m('one',0,'buyer','Hello'),m('future',30,'page','Payment received')],input);expect(c.payment_at).toBeNull();
  });
+ it('revalidates prior payment evidence instead of retaining a removed acknowledgement',()=>{
+  const previous=projectionCacheFromMessages([m('one',0,'buyer','Hello'),m('ack',4,'page','Payment received')],input);
+  expect(previous.payment_at).not.toBeNull();
+  const fresh=projectionCacheFromMessages([m('one',0,'buyer','Hello'),m('claim',4,'buyer','Payment sent na po')],{...input,previous});
+  expect(fresh.payment_at).toBeNull();expect(fresh.payment_evidence_id).toBeNull();
+ });
+ it('does not call a later partial history complete when the earlier verified inquiry disappears',()=>{
+  const previous=projectionCacheFromMessages([m('one',0,'buyer','Hello')],input);
+  const fresh=projectionCacheFromMessages([m('later',10,'buyer','Following up')],{...input,previous});
+  expect(fresh.complete_history).toBe(false);
+ });
 });

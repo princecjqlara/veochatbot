@@ -389,7 +389,7 @@ export default function PipelinePage() {
                                                     <div className="flex h-10 w-10 items-center justify-center border border-black bg-gray-100"><Users className="h-4 w-4" /></div>
                                                 )}
                                                 <div className="min-w-0">
-                                                    <div className="max-w-52 truncate font-semibold text-black">{contact.name || 'Messenger Contact'}</div>
+                                                    <a href={`/dashboard/contacts/${contact.id}?pageId=${pageId}`} className="block max-w-52 truncate font-semibold text-blue-800 hover:underline">{contact.name || 'Messenger Contact'}</a>
                                                     <div className="max-w-52 truncate font-mono text-[10px] text-gray-500" title={contact.psid}>{contact.psid}</div>
                                                 </div>
                                             </div>

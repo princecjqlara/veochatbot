@@ -41,6 +41,10 @@ export async function GET(request: NextRequest) {
         const pageSize = parseInt(searchParams.get('pageSize') || '50');
         const scope = searchParams.get('scope') || 'all'; // user, page, business, all
         const pageId = searchParams.get('pageId') || '';
+        const kind = searchParams.get('kind') || 'all';
+        const tagSearch = (searchParams.get('search') || '').trim().slice(0, 100).toLowerCase();
+        if (!['all', 'manual', 'history', 'system'].includes(kind)) return NextResponse.json({ error: 'Invalid tag category' }, { status: 400 });
+        const category = (tag: Tag) => tag.system_key?.startsWith('stage_history:') ? 'history' : tag.is_default || tag.system_key ? 'system' : 'manual';
 
         const supabase = getSupabaseAdmin();
 
@@ -203,9 +207,11 @@ export async function GET(request: NextRequest) {
                 new Map(allTags.map((tag) => [tag.id, tag])).values()
             );
 
-            uniqueTags.sort((a, b) => a.name.localeCompare(b.name));
+            const kindCounts = Object.fromEntries(['manual', 'history', 'system'].map(value => [value, uniqueTags.filter(tag => category(tag) === value).length]));
+            const visibleTags = uniqueTags.filter(tag => (kind === 'all' || category(tag) === kind) && (!tagSearch || tag.name.toLowerCase().includes(tagSearch)));
+            visibleTags.sort((a, b) => a.name.localeCompare(b.name));
             const from = (page - 1) * pageSize;
-            let paginatedTags = uniqueTags.slice(from, from + pageSize);
+            let paginatedTags = visibleTags.slice(from, from + pageSize);
 
             const ownSharedTagIds = paginatedTags
                 .filter(
@@ -251,11 +257,16 @@ export async function GET(request: NextRequest) {
                 items: paginatedTags,
                 page,
                 pageSize,
-                total: uniqueTags.length,
+                total: visibleTags.length,
+                ...(kind !== 'all' || tagSearch ? { kind_counts: kindCounts } : {}),
                 tags: paginatedTags // For backwards compatibility
             } as PaginatedResponse<Tag>);
         }
 
+        if (kind === 'history') query = query.like('system_key', 'stage_history:%');
+        if (kind === 'manual') query = query.is('system_key', null).eq('is_default', false);
+        if (kind === 'system') query = query.or('is_default.eq.true,and(system_key.not.is.null,system_key.not.like.stage_history:%)');
+        if (tagSearch) query = query.ilike('name', `%${tagSearch.replace(/[\\%_]/g, '\\$&')}%`);
         // Apply pagination
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;

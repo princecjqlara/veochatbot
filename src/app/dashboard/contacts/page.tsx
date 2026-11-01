@@ -1,6 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
@@ -21,7 +22,6 @@ import {
     Image as ImageIcon
 } from 'lucide-react';
 import Pagination from '@/components/Pagination';
-import ContactBotProjection from '@/components/ContactBotProjection';
 import LeadQualityBadge from '@/components/LeadQualityBadge';
 import Modal from '@/components/Modal';
 import { Contact, Tag as TagType, Page, PaginatedResponse } from '@/types';
@@ -306,6 +306,7 @@ export default function ContactsPage() {
     const [pages, setPages] = useState<Page[]>([]);
     const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
     const [contacts, setContacts] = useState<Contact[]>([]);
+    const [showExtraColumns, setShowExtraColumns] = useState(false);
     const [tags, setTags] = useState<TagType[]>([]);
     const [loading, setLoading] = useState(true);
     const [syncing, setSyncing] = useState(false);
@@ -551,7 +552,8 @@ export default function ContactsPage() {
             const data = await res.json();
             setPages(data.pages || []);
             if (data.pages?.length > 0) {
-                setSelectedPageId(data.pages[0].id);
+                const requestedPage = new URLSearchParams(window.location.search).get('pageId');
+                setSelectedPageId(data.pages.some((item: Page) => item.id === requestedPage) ? requestedPage! : data.pages[0].id);
             }
         } catch (error) {
             console.error('Error fetching pages:', error);
@@ -2116,9 +2118,9 @@ export default function ContactsPage() {
             {/* Header */}
             <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
                 <div>
-                    <h1 className="text-3xl font-black uppercase mb-2">Contacts</h1>
+                    <h1 className="text-3xl font-bold tracking-tight mb-2">Contacts</h1>
                     <p className="font-mono text-sm text-gray-500 uppercase tracking-wide">
-                        Manage and organize your audience
+                        Open a contact for their conversation, answers, payments and timeline
                     </p>
                 </div>
 
@@ -2184,6 +2186,9 @@ export default function ContactsPage() {
                         />
                     </div>
 
+                    <details className="w-full rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <summary className="cursor-pointer text-sm font-semibold">More filters {(selectedTagFilters.size + excludedTagFilters.size > 0 || dateFrom || dateTo) && <span className="ml-2 rounded-full bg-black px-2 py-0.5 text-xs text-white">Active filters</span>}</summary>
+                    <div className="mt-4 flex flex-wrap items-center gap-4">
                     {/* Include Tags Filter */}
                     <div className="flex items-center gap-2 flex-wrap">
                         <Filter className="w-4 h-4 flex-shrink-0" />
@@ -2336,6 +2341,8 @@ export default function ContactsPage() {
                         )}
                     </div>
 
+                    </div>
+                    </details>
                     {/* Bulk Actions */}
                     {getSelectionCount() > 0 && (
                         <div className="flex items-center gap-2 pl-4 border-l-2 border-black ml-2">
@@ -2414,7 +2421,7 @@ export default function ContactsPage() {
 
             <div className="border border-black p-3 mb-4 flex flex-wrap gap-3 items-center">
                 <label className="text-sm">Contact bot switch <select aria-label="Contact bot filter" value={botFilter} onChange={e => { setBotFilter(e.target.value); setPage(1); clearSelection(); }} className="border border-black p-2 ml-2"><option value="all">All contacts</option><option value="on">Bot permission ON</option><option value="off">Bot permission OFF</option></select></label>
-                <span className="text-xs text-gray-600">ON permits replies; Page settings, handoffs and closed stages still apply. Projections are experimental.</span>
+                <label className="ml-auto flex items-center gap-2 text-xs text-gray-600"><input type="checkbox" checked={showExtraColumns} onChange={event => setShowExtraColumns(event.target.checked)} />Show contact timing columns</label>
             </div>
             {/* Table */}
             <div className="overflow-x-auto border border-black mb-4">
@@ -2431,22 +2438,22 @@ export default function ContactsPage() {
                             </th>
                             <th>Contact Name</th>
                             <th>Tags</th>
-                            <th>Best Time</th>
+                            {showExtraColumns && <th>Best Time</th>}
                             <th>Last Active</th>
-                            <th>First Message</th>
-                            <th>Bot permission / projection</th>
+                            {showExtraColumns && <th>First Message</th>}
+                            <th>Contact profile</th>
                         </tr>
                     </thead>
                     <tbody className="bg-white">
                         {loading ? (
                             <tr>
-                                <td colSpan={7} className="text-center py-12">
+                                <td colSpan={showExtraColumns ? 7 : 5} className="text-center py-12">
                                     <div className="animate-spin w-8 h-8 border-2 border-black border-t-transparent rounded-full mx-auto" />
                                 </td>
                             </tr>
                         ) : contacts.length === 0 ? (
                             <tr>
-                                <td colSpan={7} className="text-center py-20">
+                                <td colSpan={showExtraColumns ? 7 : 5} className="text-center py-20">
                                     <User className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                                     <p className="text-lg font-bold uppercase">No contacts found</p>
                                     <p className="font-mono text-xs text-gray-500 mt-2">
@@ -2479,13 +2486,14 @@ export default function ContactsPage() {
                                                 </div>
                                             )}
                                             <div>
-                                                <p className="font-bold uppercase text-sm">
+                                                <Link href={`/dashboard/contacts/${contact.id}?pageId=${selectedPageId || contact.page_id}`} className="font-semibold text-sm text-blue-800 hover:underline">
                                                     {contact.name || 'Unnamed Contact'}
-                                                </p>
+                                                </Link>
                                                 <p className="font-mono text-xs text-gray-500">
                                                     ID: {contact.psid.slice(0, 8)}...
                                                 </p>
                                                 <div className="mt-2"><LeadQualityBadge stage={contact.pipeline_stage}/></div>
+                                                <p className="mt-1 text-xs text-gray-500">{contact.pipeline_stage?.replaceAll('_', ' ')}</p>
                                             </div>
                                         </div>
                                     </td>
@@ -2518,7 +2526,7 @@ export default function ContactsPage() {
                                             )}
                                         </div>
                                     </td>
-                                    <td>
+                                    {showExtraColumns && <td>
                                         {contact.best_contact_hour !== null && contact.best_contact_hour !== undefined ? (
                                             <div className="flex flex-col gap-1">
                                                 <div className="flex items-center gap-2 flex-wrap">
@@ -2568,13 +2576,13 @@ export default function ContactsPage() {
                                         ) : (
                                             <span className="font-mono text-xs text-gray-400">—</span>
                                         )}
-                                    </td>
+                                    </td>}
                                     <td className="font-mono text-xs text-gray-500">
                                         {contact.last_interaction_at
                                             ? new Date(contact.last_interaction_at).toLocaleDateString()
                                             : 'NEVER'}
                                     </td>
-                                    <td className="font-mono text-xs text-gray-500">
+                                    {showExtraColumns && <td className="font-mono text-xs text-gray-500">
                                         <div className="flex items-center gap-1">
                                             <Calendar className="w-3 h-3 text-gray-400" />
                                             {contact.first_interaction_at
@@ -2583,8 +2591,8 @@ export default function ContactsPage() {
                                                     ? new Date(contact.created_at).toLocaleDateString()
                                                     : '—'}
                                         </div>
-                                    </td>
-                                    <td><ContactBotProjection pageId={selectedPageId || contact.page_id} contactId={contact.id} name={contact.name || contact.psid} enabled={contact.chatbot_enabled !== false} initialBot={contact.bot_control} initialProjection={contact.conversion_projection} onChanged={() => void fetchContacts()} /></td>
+                                    </td>}
+                                    <td><Link href={`/dashboard/contacts/${contact.id}?pageId=${selectedPageId || contact.page_id}`} className="inline-block rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold hover:bg-gray-50">View profile</Link><p className="mt-2 text-[11px] text-gray-500">Bot permission {contact.chatbot_enabled === false ? 'off' : 'on'}</p></td>
                                 </tr>
                             ))
                         )}

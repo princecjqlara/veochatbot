@@ -4,6 +4,7 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "crons": [
+    { "path": "/api/cron/contact-profiles", "schedule": "* * * * *" },
     {
       "path": "/api/cron/messaging-auto-tag",
       "schedule": "* * * * *"
@@ -14,6 +15,8 @@
     }
   ],
   "functions": {
+    "src/app/api/cron/contact-profiles/route.ts": { "maxDuration": 300 },
+    "src/app/api/pages/[pageId]/contacts/[contactId]/profile/route.ts": { "maxDuration": 120 },
     "src/app/api/cron/messaging-auto-tag/route.ts": {
       "maxDuration": 300
     },
