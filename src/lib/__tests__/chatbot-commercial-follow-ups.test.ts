@@ -58,6 +58,13 @@ beforeEach(() => {
 });
 
 describe('pricing package follow-up delivery', () => {
+    it('cancels queued pricing offers in the original flow when the shared switch is OFF', async () => {
+        const f = fixture(); f.job.purpose = 'pricing_promotion'; f.config.pricing_enabled = false;
+        f.db.rpc = vi.fn();
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now })).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.generate).not.toHaveBeenCalled(); expect(mocks.send).not.toHaveBeenCalled();
+        expect(f.db.rpc).not.toHaveBeenCalled();
+    });
     const offer = { delivery_id: 'pricing-delivery', experiment_id: 'run', assignment_id: 'assignment',
         package_id: 'package-b', package_name: 'Plus', price: 799, message: 'A main video with a poster for {business}.',
         duration_seconds: 24, kind: 'promotion' };

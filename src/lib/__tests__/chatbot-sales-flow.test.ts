@@ -9,6 +9,12 @@ const discovery = [turn('Anong business ang gusto mong gawan ng commercial video
 const sampled = [...discovery, turn('Ito ang existing sample namin na related sa bakery.', 'page', 2), turn('Ilang seconds ang gusto mo?', 'page', 3)];
 
 describe('history-based commercial-video sales flow', () => {
+    it('continues beyond the process without waiting for a blocked price list when pricing is OFF', () => {
+        const history = [...sampled, turn('24 seconds po', 'customer', 4), turn(renderCommercialVideoProcess('CJ', 'Bakery', false), 'page', 5)];
+        expect(resolve(history, { pricingEnabled: false }).step).toBe('decision');
+        expect(resolve(history, { pricingEnabled: false, hasClearRequest: true }).step).toBe('form');
+        expect(resolve(history).step).toBe('pricing_process');
+    });
     it('remembers a delivered sample when its bubble also ends with the early form question', () => {
         const combined = turn('Ito ang existing sample namin na related sa bakery.\n\n' + COMMERCIAL_VIDEO_EARLY_FORM_REASON + '\n\n' + renderCommercialVideoForm(), 'page', 2);
         const flow = resolve([...discovery, combined, turn('Ilang seconds ang gusto mo?', 'page', 3)], { inboundMessage: '24 seconds po', details: { 'Business Name': 'Preview Bakery', 'Preferred Video Length': '24 seconds' } });

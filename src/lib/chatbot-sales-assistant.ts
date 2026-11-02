@@ -4,6 +4,7 @@ import { normalizeCommercialVideoDetails, extractCommercialVideoFormDetails, com
 import { normalizeCollectedChatbotDetails } from '@/lib/chatbot-control';
 import { cleanCommercialVideoCopy, getCommercialVideoPriceList, isCommercialVideoPriceRequested, type CommercialVideoPricing } from '@/lib/chatbot-sales-flow';
 import { renderCommercialVideoPriceList, getCommercialVideoNextQuestion } from '@/lib/chatbot-message-renderer';
+import { withoutChatbotPricing } from '@/lib/chatbot-pricing-policy';
 
 export type SalesField = { label: string; question: string; required: boolean; enabled: boolean };
 export type SalesSample = { document_id: string; industry: string; product_category: string; style: string; description: string; active: boolean };
@@ -19,7 +20,7 @@ export type SalesProgress = {
     recommended_samples?: string[]; form_submitted_at?: string; assumptions?: Record<string, string>;
     field_sources?: Record<string, { source: string; observed_at: string; confirmed: boolean }>;
 };
-type SalesConfig = { commercial_video_intake_enabled?: boolean; sales_assistant_settings?: unknown };
+type SalesConfig = { commercial_video_intake_enabled?: boolean; sales_assistant_settings?: unknown; pricing_enabled?: boolean };
 export const DEFAULT_SALES_FIELDS: SalesField[] = [
     { label: 'Business Name', question: 'Ano ang pangalan ng business mo?', required: true, enabled: true },
     { label: 'Business Industry', question: 'Anong business o industry ang meron ka?', required: true, enabled: true },
@@ -50,7 +51,11 @@ export function salesSettings(value: unknown): SalesSettings {
         samples: raw.samples || [], industry_mappings: raw.industry_mappings || DEFAULT_SALES_SETTINGS.industry_mappings };
 }
 export function chatbotPricingEnabled(config: SalesConfig): boolean {
-    return !usesSalesAssistant(config) || salesSettings(config.sales_assistant_settings).pricing_enabled;
+    return config.pricing_enabled !== false && (!usesSalesAssistant(config) || salesSettings(config.sales_assistant_settings).pricing_enabled);
+}
+
+export function effectiveSalesSettings(config: SalesConfig): SalesSettings {
+    return { ...salesSettings(config.sales_assistant_settings), pricing_enabled: chatbotPricingEnabled(config) };
 }
 export function approvedSalesRates(knowledge: ChatbotKnowledgeMatch[]): CommercialVideoPricing[] {
     return getCommercialVideoPriceList(knowledge.filter(source => source.contact_pricing_catalog || /current owner-approved promo catalog|owner-approved promo price list/i.test(source.content)))
@@ -235,7 +240,7 @@ export function renderSalesMessages(input: {
         : settings.fields.find(field => field.label === unanswered)!.question);
     if (input.handoff) messages.push('Ipapasa sa team ang request mo' + (freeRequest ? ' para sa ' + freeRequest : '') + '. Available na sa kanila ang mga details na na-share mo.');
     else messages.push(question);
-    return { messages: settings.pricing_enabled ? messages : messages.filter(message => !MONEY.test(message)), progress: { stage: input.handoff ? 'existing_human_handoff' : input.buyingIntent ? 'sales_ready' : input.followUp ? 'follow_up' : input.sampleId ? 'sample_recommendation' : !missing.length ? 'offer_presentation' : 'information_gathering',
+    return { messages: settings.pricing_enabled ? messages : withoutChatbotPricing(messages), progress: { stage: input.handoff ? 'existing_human_handoff' : input.buyingIntent ? 'sales_ready' : input.followUp ? 'follow_up' : input.sampleId ? 'sample_recommendation' : !missing.length ? 'offer_presentation' : 'information_gathering',
         temperature: input.buyingIntent && !freeRequest ? 'hot' : input.followUp ? 'cold' : 'warm', last_question: question,
         pricing_inquiry: progress.pricing_inquiry === true || priceAsked,
         ...(!introduced && !input.followUp && !input.buyingIntent ? { introduced_at: new Date().toISOString() } : {}),

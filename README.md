@@ -87,6 +87,8 @@ For adaptive first-day chatbot timing, follow [the migration and rollout instruc
 
 For GPT-6 Luna, apply `supabase/migrations/202611020001_chatbot_gpt6_luna.sql` and set the host's `OPENROUTER_MODEL` to `openai/gpt-6-luna`. The migration updates Page configurations using the previous DeepSeek default and preserves other model selections.
 
+Apply `supabase/migrations/202611030001_chatbot_pricing_control.sql` before deploying the shared **Pricing ON/OFF** control. It applies to every conversation flow without changing the selected flow or model. OFF blocks catalog prices, deposits, balances and revision amounts in replies and follow-ups, and cancels queued pricing promotions when processed. Existing optional-assistant pricing OFF settings remain effective. The migration preserves existing pricing behavior; change the shared switch in **AI Chatbot** to disable pricing for a Page.
+
 For Meta lead-stage mirroring and additive smart history tags, apply `supabase/migrations/202611020002_messenger_stage_history.sql` before deployment. See [Messenger stage history and sync](docs/messenger-stage-history.md) for stage ordering, Page coverage and connection requirements.
 
 ### Telegram group media bridge

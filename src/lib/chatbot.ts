@@ -38,7 +38,8 @@ import { getCommercialVideoMessageControls, type ChatbotMessageControls } from '
 import { ChatbotFollowUpRepeatedError, hasRepeatedChatbotCopy, splitConversationalCopy } from '@/lib/chatbot-message-copy';
 import { withContactPricingKnowledge, type PricingCatalog } from '@/lib/chatbot-pricing-catalogs';
 import { containsGuidedSalesForm, guidedSalesPrompt, isNewSalesConversation, mergeGuidedSalesDetails, normalizeGuidedSalesDetails, normalizeSalesFormFields } from '@/lib/chatbot-guided-sales';
-import { usesSalesAssistant, salesSettings, normalizeSalesDetails, mergeSalesChatDetails, salesAssistantPrompt, selectSalesSample, renderSalesMessages, chatbotPricingEnabled, approvedSalesRates, type SalesProgress } from '@/lib/chatbot-sales-assistant';
+import { usesSalesAssistant, salesSettings, effectiveSalesSettings, normalizeSalesDetails, mergeSalesChatDetails, salesAssistantPrompt, selectSalesSample, renderSalesMessages, chatbotPricingEnabled, approvedSalesRates, type SalesProgress } from '@/lib/chatbot-sales-assistant';
+import { CHATBOT_PRICING_OFF_PROMPT, withoutChatbotPricing } from '@/lib/chatbot-pricing-policy';
 import { loadAssignedSalesSamples } from '@/lib/chatbot-sales-store';
 
 export const DEFAULT_CHATBOT_MODEL = 'openai/gpt-6-luna';
@@ -54,6 +55,7 @@ const FOLLOW_UP_MAX_PARTS = 2;
 
 export type ChatbotConfig = {
     sales_assistant_settings?: unknown;
+    pricing_enabled?: boolean;
     page_id: string;
     knowledge_source_page_id?: string | null;
     enabled: boolean;
@@ -508,7 +510,7 @@ function parseChatbotPlan(
     const request = commercialIntake && intakeContext ? resolveCommercialVideoRequest({ ...intakeContext.requestInput, requestCandidate: parsed }) : undefined;
     const policy = commercialIntake ? evaluateCommercialVideoIntake(collectedDetails, request?.has_clear_request === true) : null;
     const salesFlow = commercialIntake && intakeContext ? resolveCommercialVideoSalesFlow({
-        ...intakeContext.requestInput, details: collectedDetails, businessType: parsed?.business_type,
+        ...intakeContext.requestInput, details: collectedDetails, businessType: parsed?.business_type, pricingEnabled: chatbotPricingEnabled(config),
         hasClearRequest: request?.has_clear_request, requestType: request?.request_type
     }) : undefined;
     const pricing = getCommercialVideoPricing(knowledge, salesFlow?.durationSeconds || null);
@@ -557,15 +559,15 @@ function parseChatbotPlan(
     const hasSample = hasVerifiedCommercialVideoSample(parsed || {}, knowledge);
     const allowMedia = usesSalesAssistant(config) || !commercialIntake || salesFlow?.step !== 'complete' || isCommercialVideoSampleRequested(intakeContext?.requestInput.inboundMessage || '');
     const enhanced = usesSalesAssistant(config) && !detectedStopReason && intakeContext ? renderSalesMessages({
-        parts: rawMessages.length ? rawMessages : [messageContent], details: collectedDetails, settings: salesSettings(config.sales_assistant_settings),
+        parts: rawMessages.length ? rawMessages : [messageContent], details: collectedDetails, settings: effectiveSalesSettings(config),
         progress: intakeContext.requestInput.salesProgress, history: intakeContext.requestInput.history, pageId: intakeContext.requestInput.pageId,
         customerMessage: intakeContext.requestInput.inboundMessage || '', contactName: intakeContext.contactName, formUrl: intakeContext.requestInput.formUrl,
         rates: priceList, sampleReason: salesSample?.reason, sampleId: salesSample?.match.document_id, buyingIntent: request?.has_clear_request, handoff: intakeAction === 'handoff', requestType: request?.request_type
     }) : undefined;
-    const messages = enhanced ? enhanced.messages : commercialIntake && !detectedStopReason ? renderCommercialVideoMessages({
+    let messages = enhanced ? enhanced.messages : commercialIntake && !detectedStopReason ? renderCommercialVideoMessages({
         parts: rawMessages.length > 0 ? rawMessages : [messageContent], details: collectedDetails,
         contactName: intakeContext?.contactName, salesFlow, hasSample,
-        pricing, priceList,
+        pricing, priceList, pricingEnabled: chatbotPricingEnabled(config),
         action: intakeAction || 'none', customerMessage: intakeContext?.requestInput.inboundMessage, requestType: request?.request_type, formPreviouslySent: intakeContext?.formPreviouslySent,
         answerRequested: /\?|\b(?:magkano|price|presyo|bayad|how|what|where|when|why|which|can|does|pwede|puwede|paano|gaano|ilang|meron|kasama)\b/i.test(intakeContext?.requestInput.inboundMessage || ''),
         summaryRequested: /\b(?:summary|summari[sz]e|recap|buod)\b/i.test(intakeContext?.requestInput.inboundMessage || '') ||
@@ -577,6 +579,7 @@ function parseChatbotPlan(
         guidedSales: config.guided_sales_enabled, salesFormFields: config.sales_form_fields,
         introduceProcess: config.guided_sales_enabled && intakeContext ? isNewSalesConversation(intakeContext.requestInput) : false
     }) : formatChatbotReplyMessages(rawMessages.length > 0 ? rawMessages : [messageContent], config);
+    if (!chatbotPricingEnabled(config)) messages = withoutChatbotPricing(messages);
     const freeOfferCheckMessages = messages.filter(message => !/PRICING PARA SA /i.test(message));
     if (canonicalPricing && (hasForbiddenFreeVideoOffer(freeOfferCheckMessages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')))) {
         throw new Error('Invalid rendered commercial pricing');
@@ -868,7 +871,7 @@ export async function generateChatbotResponse(input: {
     if (usesSalesAssistant(input.config) && !input.salesProgress?.introduced_at && !Object.keys(input.collectedDetails || {}).length &&
         !(input.history || []).some(message => message.from?.id === input.pageId) &&
         /^(?:hi|hello|good (?:morning|afternoon|evening)|interested|inquire)(?:\s+po)?[!.\s]*$/i.test(input.inboundMessage)) {
-        const rendered = renderSalesMessages({ parts: [], details: {}, settings: salesSettings(input.config.sales_assistant_settings),
+        const rendered = renderSalesMessages({ parts: [], details: {}, settings: effectiveSalesSettings(input.config),
             progress: input.salesProgress, history: input.history, pageId: input.pageId, customerMessage: input.inboundMessage, formUrl: input.formUrl });
         return { reply: rendered.messages.join('\n\n'), messages: rendered.messages, collected_details: {}, missing_details: [...COMMERCIAL_VIDEO_REQUIRED_DETAILS],
             details_complete: false, knowledge: [], sales_progress: rendered.progress, has_clear_request: false, request_type: null, intake_action: 'none' };
@@ -918,8 +921,8 @@ export async function generateChatbotResponse(input: {
     knowledge = withContactPricingKnowledge(knowledge, input.pricingCatalog);
     const model = input.config.model || process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL;
     const messages = buildChatbotMessages({
-        salesAssistantSettings: usesSalesAssistant(input.config) ? input.config.sales_assistant_settings : undefined, salesProgress: input.salesProgress,
-        instructions: input.config.instructions + (input.pricingCatalog ? '\nFor this customer use CONTACT-CATALOG exclusively for package prices, freebies and duration choices. Other catalog rates are not their current offer. Keep the existing production process and PHP150 deposit.' : ''),
+        salesAssistantSettings: usesSalesAssistant(input.config) ? effectiveSalesSettings(input.config) : undefined, salesProgress: input.salesProgress,
+        instructions: input.config.instructions + (input.pricingCatalog && chatbotPricingEnabled(input.config) ? '\nFor this customer use CONTACT-CATALOG exclusively for package prices, freebies and duration choices. Other catalog rates are not their current offer. Keep the existing production process and PHP150 deposit.' : ''),
         contactName: input.contactName,
         pageName: input.pageName,
         pageId: input.pageId,
@@ -939,6 +942,7 @@ export async function generateChatbotResponse(input: {
         hasClearRequest: intakeContext?.request.has_clear_request,
         requestType: intakeContext?.request.request_type
     });
+    if (!chatbotPricingEnabled(input.config)) messages[0].content += CHATBOT_PRICING_OFF_PROMPT;
     let body = await requestOpenRouterCompletion({
         apiKey,
         title: 'VeoBot Chatbot',
@@ -967,7 +971,8 @@ export async function generateChatbotResponse(input: {
                 {
                     role: 'system',
                     content: 'Return the required JSON now. Include at least one non-empty, user-visible message and do not output reasoning.' +
-                        (commercialIntake ? ' Keep ordinary answers brief and the complete price list intact after two distinct customer details including business. Follow the current business/sample/duration/pricing/process/form stage. Send all durations and prices from the assigned catalog together, only after two distinct customer details including business. Never substitute a single selected price for the whole verified catalog. Free concept and free script have no fee. Never seek a quote or charge for either; paid-video pricing is separate. Never promise a free personalized video or video sample.' : '')
+                        (commercialIntake ? ' Keep ordinary answers brief and the complete price list intact after two distinct customer details including business. Follow the current business/sample/duration/pricing/process/form stage. Send all durations and prices from the assigned catalog together, only after two distinct customer details including business. Never substitute a single selected price for the whole verified catalog. Free concept and free script have no fee. Never seek a quote or charge for either; paid-video pricing is separate. Never promise a free personalized video or video sample.' : '') +
+                        (!chatbotPricingEnabled(input.config) ? CHATBOT_PRICING_OFF_PROMPT : '')
                 }
             ]
         });
@@ -1256,7 +1261,7 @@ export async function generateChatbotFollowUp(input: {
             'Keep the follow-up personalized to one unresolved topic. Do not use intake_action=send_form to repeat an already delivered form. Do not replay an earlier price or process question as a fresh customer request. Vary question construction, not just politeness.' : '');
     const user = 'Create the personalized follow-up now using only the verified conversation, collected details, Page instructions, and Page knowledge above.';
     const model = input.config.model || process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL;
-    const messages = [{ role: 'system' as const, content: system + (usesSalesAssistant(input.config) ? salesAssistantPrompt(salesSettings(input.config.sales_assistant_settings), input.salesProgress) : '') }, ...history, { role: 'user' as const, content: user }];
+    const messages = [{ role: 'system' as const, content: system + (usesSalesAssistant(input.config) ? salesAssistantPrompt(effectiveSalesSettings(input.config), input.salesProgress) : '') + (!chatbotPricingEnabled(input.config) ? CHATBOT_PRICING_OFF_PROMPT : '') }, ...history, { role: 'user' as const, content: user }];
     let tokenUsage: ChatbotTokenUsage | undefined;
     let invalidReason = 'empty';
 
@@ -1290,7 +1295,7 @@ export async function generateChatbotFollowUp(input: {
                 : typeof parsed.message === 'string'
                     ? [parsed.message]
                     : []);
-            const followUpFlow = commercialIntake ? resolveCommercialVideoSalesFlow({ history: input.history, pageId: input.pageId,
+            const followUpFlow = commercialIntake ? resolveCommercialVideoSalesFlow({ history: input.history, pageId: input.pageId, pricingEnabled: chatbotPricingEnabled(input.config),
                 details: collectedDetails, hasClearRequest: intakeRequest?.has_clear_request, requestType: intakeRequest?.request_type }) : undefined;
             const pricing = getCommercialVideoPricing(knowledge, followUpFlow?.durationSeconds || null);
             const priceList = usesSalesAssistant(input.config) ? approvedSalesRates(knowledge) : getCommercialVideoPriceList(knowledge);
@@ -1306,12 +1311,12 @@ export async function generateChatbotFollowUp(input: {
             if (usesSalesAssistant(input.config)) salesSample = selectSalesSample(parsed, knowledge, collectedDetails, salesSettings(input.config.sales_assistant_settings), input.salesProgress?.samples_sent);
             else if (followUpFlow?.step === 'sample') ensureCommercialVideoSampleSelection(parsed, knowledge, followUpFlow.business);
             const enhanced = usesSalesAssistant(input.config) ? renderSalesMessages({ parts: rawMessages, details: collectedDetails,
-                settings: salesSettings(input.config.sales_assistant_settings), progress: input.salesProgress, history: input.history,
+                settings: effectiveSalesSettings(input.config), progress: input.salesProgress, history: input.history,
                 pageId: input.pageId, customerMessage: '', followUp: !input.formSubmission, rates: priceList, contactName: input.contactName,
                 sampleReason: salesSample?.reason, sampleId: salesSample?.match.document_id, requestType: intakeRequest?.request_type, buyingIntent: intakeRequest?.has_clear_request }) : undefined;
-            const messages = enhanced ? enhanced.messages : commercialIntake ? renderCommercialVideoMessages({
+            let messages = enhanced ? enhanced.messages : commercialIntake ? renderCommercialVideoMessages({
                 contactName: input.contactName, customerMessage: latestCustomerMessage, followUp: true, answerRequested: false,
-                pricing, priceList,
+                pricing, priceList, pricingEnabled: chatbotPricingEnabled(input.config),
                 salesFlow: followUpFlow,
                 hasSample: hasVerifiedCommercialVideoSample(parsed, knowledge),
                 parts: rawMessages, details: collectedDetails, action: formPreviouslySent && intakePolicy?.nextAction === 'send_form' ? 'ask_missing_field' : intakePolicy?.nextAction || 'none', requestType: intakeRequest?.request_type, formPreviouslySent,
@@ -1324,6 +1329,7 @@ export async function generateChatbotFollowUp(input: {
                     : splitChatbotMessageBubbles(cappedRawMessages.join('\n\n'), false),
                 followUpMaxMessageParts
             ), FOLLOW_UP_MAX_CHARS);
+            if (!chatbotPricingEnabled(input.config)) messages = withoutChatbotPricing(messages);
             const freeOfferCheckMessages = messages.filter(message => !/PRICING PARA SA /i.test(message));
             if (canonicalPricing && (hasForbiddenFreeVideoOffer(freeOfferCheckMessages.join('\n')) || hasForbiddenFreePreproductionCharge(messages.join('\n')))) {
                 throw new Error('Invalid rendered commercial pricing');

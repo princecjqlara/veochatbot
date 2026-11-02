@@ -1,4 +1,5 @@
 'use client';
+import { chatbotPricingEnabled, usesSalesAssistant } from '@/lib/chatbot-sales-assistant';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
@@ -33,7 +34,6 @@ import { getSupabaseClient } from '@/lib/supabase';
 import { COMMERCIAL_VIDEO_FIELDS, COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
 import { buildChatbotTestMessages, getChatbotTestHistory, type TestChatMessage, type TestMedia, type TestSource } from '@/lib/chatbot-test-preview';
 import { COMMERCIAL_FORM_CHOICE, resolveChatbotAction, type ChatbotChoice } from '@/lib/chatbot-interactions';
-import { usesSalesAssistant } from '@/lib/chatbot-sales-assistant';
 import ChatbotSalesSettings from '@/components/ChatbotSalesSettings';
 import { DEFAULT_SALES_FORM_FIELDS } from '@/lib/chatbot-guided-sales';
 
@@ -44,6 +44,7 @@ type PageSummary = {
 
 type ChatbotConfig = {
     sales_assistant_settings?: unknown;
+    pricing_enabled?: boolean;
     guided_sales_enabled?: boolean;
     sales_form_fields?: string[];
     page_id: string;
@@ -1826,7 +1827,13 @@ export default function ChatbotPage() {
                             className="input-wireframe min-h-[210px] w-full resize-y px-4 py-3 text-sm leading-6"
                             placeholder={'Full name\nMobile number\nService needed\nPreferred schedule\nBudget'}
                         />
-                        {config.commercial_video_intake_enabled && <ChatbotSalesSettings value={config.sales_assistant_settings} onChange={settings => updateConfig({ sales_assistant_settings: settings })} onDisable={() => updateConfig({ sales_assistant_settings: {} })} />}
+                        <label className="mt-5 flex items-center gap-3 font-medium">
+                            <input type="checkbox" checked={chatbotPricingEnabled(config)} onChange={event => updateConfig({ pricing_enabled: event.target.checked,
+                                ...(usesSalesAssistant(config) ? { sales_assistant_settings: { ...(config.sales_assistant_settings as Record<string, unknown>), pricing_enabled: event.target.checked } } : {}) })} />
+                            Pricing {chatbotPricingEnabled(config) ? 'ON' : 'OFF'}
+                        </label>
+                        <p className="mt-2 text-xs text-gray-600">OFF keeps prices, deposits, balances and revision charges out of automatic replies and follow-ups. The conversation flow stays the same.</p>
+                        {config.commercial_video_intake_enabled && <ChatbotSalesSettings value={config.sales_assistant_settings} onChange={settings => updateConfig({ sales_assistant_settings: settings })} onDisable={() => updateConfig({ sales_assistant_settings: {}, pricing_enabled: chatbotPricingEnabled(config) })} />}
                         <p className="mt-2 text-xs text-gray-500 font-mono">
                             {config.commercial_video_intake_enabled
                                 ? 'The eight production details below retain the existing team-handoff criteria. The optional sales form above guides recommendations and never blocks customers from continuing in chat.'

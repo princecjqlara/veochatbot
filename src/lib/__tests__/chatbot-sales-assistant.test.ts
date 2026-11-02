@@ -25,6 +25,29 @@ beforeEach(() => { process.env.OPENROUTER_API_KEY = 'test'; plan(); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); delete process.env.OPENROUTER_API_KEY; delete process.env.CHATBOT_FORM_SECRET; });
 
 describe('required sales scenarios', () => {
+    it.each([{}, { pricing_enabled: true }])('shared pricing OFF overrides either flow without changing the selected flow (%j)', async sales_assistant_settings => {
+        const off = { ...config, pricing_enabled: false, sales_assistant_settings };
+        const result = await generateChatbotResponse({ ...input, config: off, history: [], inboundMessage: 'Magkano ang 24 seconds para sa Bakery?',
+            collectedDetails: { 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Preferred Video Length': '24 seconds' }, pricingCatalog: OWNER_PRICING_CATALOGS[0] });
+        expect(chatbotPricingEnabled(off)).toBe(false);
+        expect(usesSalesAssistant(off)).toBe(Object.keys(sales_assistant_settings).length > 0);
+        expect(result.reply).not.toMatch(/PHP\s*\d|pesos|BUONG PRICE LIST/);
+        expect(result.reply).toMatch(/exact pricing/);
+        expect(result.intake_action).not.toBe('handoff');
+        const request = JSON.parse((fetch as any).mock.calls[0][1].body);
+        expect(request.messages[0].content).toContain('PRICING IS OFF');
+        expect(getPricingQuoteContext({ config: off, pageId: 'page', inboundMessage: 'Magkano?' }).eligible).toBe(false);
+    });
+    it('shared pricing OFF covers original-flow follow-ups with old prices in history', async () => {
+        const result = await generateChatbotFollowUp({ config: { ...config, pricing_enabled: false, sales_assistant_settings: {} }, pageId: 'page',
+            history: [{ id: 'c', from: { id: 'customer', name: 'C' }, message: 'Magkano ang 24 seconds para sa Bakery?', created_time: '2026-10-30T01:01:00Z' },
+                { id: 'p', from: { id: 'page', name: 'Page' }, message: 'PHP899 ang package. PHP150 deposit.', created_time: '2026-10-30T01:00:00Z' }],
+            collectedDetails: { 'Business Name': 'CJ Bakery', 'Business Location': 'Manila', 'Preferred Video Length': '24 seconds' },
+            sequenceNumber: 1, scheduleLabel: 'first 24 hours', pricingCatalog: OWNER_PRICING_CATALOGS[0] });
+        expect(result.message).not.toMatch(/PHP\s*\d|pesos|BUONG PRICE LIST/);
+        const request = JSON.parse((fetch as any).mock.calls[0][1].body);
+        expect(request.messages[0].content).toContain('PRICING IS OFF');
+    });
     it('keeps the legacy in-chat sales and pricing flow for empty migration settings', async () => {
         const legacy = { ...config, sales_assistant_settings: {} };
         expect(usesSalesAssistant(legacy)).toBe(false); expect(chatbotPricingEnabled(legacy)).toBe(true);

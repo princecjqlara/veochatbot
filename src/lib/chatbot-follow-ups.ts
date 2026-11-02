@@ -189,11 +189,11 @@ export async function scheduleChatbotFollowUps(input: {
             message_text: 'AI-generated from conversation at send time',
             status: 'pending'
         }));
-    const pricingSchedule = await schedulePricingPromotion(input.supabase, {
+    const pricingSchedule = chatbotPricingEnabled(input.config) ? await schedulePricingPromotion(input.supabase, {
         pageId: input.pageId, contactId: input.contact.id, anchorInboundAt: input.anchorInboundAt,
         days: normalizeBestTimeFollowUpDays(input.config.follow_up_best_time_days), bestHour: input.contact.best_contact_hour,
         automationEpoch: scopedState?.automation_epoch, policyRevision: input.config.policy_revision
-    });
+    }) : { managed: false, scheduled: 0 };
     const bestTimeJobs = (pricingSchedule.managed ? [] : normalizeBestTimeFollowUpDays(input.config.follow_up_best_time_days))
         .map((day, index) => ({
             page_id: input.pageId,
@@ -298,6 +298,10 @@ export async function processDueChatbotFollowUps(input: {
                 if (lookup.error) throw new Error(lookup.error.message || 'Could not verify follow-up eligibility');
             }
             const [{ data: page }, { data: contact }, { data: config }, { data: state }] = eligibility;
+            if (config && job.purpose === 'pricing_promotion' && !chatbotPricingEnabled(config)) {
+                await markJob(supabase, job.id, { status: 'cancelled', claimed_at: null, cancelled_at: now.toISOString(), error_message: 'Pricing is disabled' });
+                result.cancelled++; continue;
+            }
             let salesProgress: SalesProgress | undefined;
             const deliveredSampleIds: string[] = [];
             if (config && usesSalesAssistant(config) && job.purpose !== 'form_submission') {
@@ -593,7 +597,8 @@ export async function processDueChatbotFollowUps(input: {
                 const actual = normalizeSalesDetails(freshState?.collected_details, salesSettings(config.sales_assistant_settings));
                 if (Object.keys({ ...expected, ...actual }).some(key => expected[key] !== actual[key])) throw new Error('Customer details changed during follow-up generation; retry with current answers');
             }
-            if (!freshContact || freshContact.chatbot_enabled === false || !freshConfig?.enabled || (!freshConfig.follow_up_enabled && job.purpose !== 'form_submission') ||
+            if (!freshContact || freshContact.chatbot_enabled === false || !freshConfig?.enabled ||
+                chatbotPricingEnabled(freshConfig) !== chatbotPricingEnabled(config) || (!freshConfig.follow_up_enabled && job.purpose !== 'form_submission') ||
                 !isChatbotContactAllowed(freshConfig, job.contact_id) || freshState?.status === 'stopped' ||
                 isPipelineClosedForAutomation(freshContact.pipeline_stage, freshContact.pipeline_stage_source, freshConfig) ||
                 (isCommercialVideoIntake(freshConfig) && ((job.automation_epoch || 0) !== (freshState?.automation_epoch || 0) ||

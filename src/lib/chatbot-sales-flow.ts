@@ -182,7 +182,7 @@ function durationIn(text: string, first = false): number | null {
  * Preserve earlier answers, holds, and reminder schedules. */
 export function resolveCommercialVideoSalesFlow(input: {
     history?: FacebookMessage[]; pageId: string; inboundMessage?: string; details?: unknown;
-    businessType?: unknown; hasClearRequest?: boolean; requestType?: string | null;
+    businessType?: unknown; hasClearRequest?: boolean; requestType?: string | null; pricingEnabled?: boolean;
 }): CommercialVideoSalesFlow {
     const messages = [...(input.history || [])].filter(message => message.message?.trim());
     if (messages.every(message => Number.isFinite(Date.parse(message.created_time)))) {
@@ -254,7 +254,7 @@ export function resolveCommercialVideoSalesFlow(input: {
     const pricingSent = fullPriceListSent || (durationSeconds !== null && durationSeconds === pricedDurationSeconds);
     const step: CommercialVideoSalesStep = complete ? 'complete' : intakeFormSent || formRequested || freeRequest ? 'form'
         : !business ? 'business' : !sampleHandled ? 'sample' : !pricingReady ? 'duration'
-            : !processSent || !pricingSent ? 'pricing_process' : input.hasClearRequest ? 'form' : 'decision';
+            : !processSent || (input.pricingEnabled !== false && !pricingSent) ? 'pricing_process' : input.hasClearRequest ? 'form' : 'decision';
     return { step, business, durationSeconds, sampleSent, sampleHandled, processSent, pricingSent, formSent, formRequested, processRequested,
         earlyFormSent, intakeFormSent, informationCount, pricingReady };
 }

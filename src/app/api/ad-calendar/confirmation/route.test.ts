@@ -15,7 +15,7 @@ beforeEach(() => {
   return chain;
  } });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); });
 describe('calendar payment evidence', () => {
  it('requires authentication and Page membership before accessing source messages', async () => {
   m.session.mockResolvedValueOnce(null); expect((await GET(request())).status).toBe(401);

@@ -2,6 +2,7 @@ import { COMMERCIAL_VIDEO_EARLY_FORM_REASON, containsCommercialVideoForm, getMis
 import { isRepeatedChatbotCopy, splitConversationalCopy, uniqueChatbotCopy } from '@/lib/chatbot-message-copy';
 import { cleanCommercialVideoCopy, commercialVideoFirstName, isCommercialVideoPriceRequested, personalizeCommercialVideoMessages, type CommercialVideoSalesFlow, type CommercialVideoPricing } from '@/lib/chatbot-sales-flow';
 import { containsGuidedSalesForm, GUIDED_SALES_INTRO, normalizeGuidedSalesDetails, renderGuidedSalesForm } from '@/lib/chatbot-guided-sales';
+import { CHATBOT_PRICING_OFF_REPLY, withoutChatbotPricing } from '@/lib/chatbot-pricing-policy';
 
 type MessageSettings = { splitMessages?: boolean; maxMessageParts?: number };
 export const COMMERCIAL_VIDEO_FORM_REASON = 'Para maihanda ang free concept para sa business mo, pakisagutan ang kulang dito. Walang bayad at walang kailangang bilhin.';
@@ -16,13 +17,13 @@ export function renderCommercialVideoSummary(details: unknown): string {
 }
 
 /** Owner-approved production terms stay complete in one Messenger message. */
-export function renderCommercialVideoProcess(contactName?: string | null, business?: string | null): string {
+export function renderCommercialVideoProcess(contactName?: string | null, business?: string | null, pricingEnabled = true): string {
     const name = commercialVideoFirstName(contactName);
     const context = business?.replace(/[\r\n?!]/g, ' ').trim().slice(0, 120);
     return [
         (name ? name + ', ito' : 'Ito') + ' ang process' + (context ? ' para sa ' + context : ' para sa video mo') + '.',
         'STEP-BY-STEP PROCESS PO:',
-        '1. Small down payment muna, PHP150 will do.',
+        pricingEnabled ? '1. Small down payment muna, PHP150 will do.' : '1. Iko-confirm muna ng team ang package at production terms bago mag-proceed.',
         '2. Send ang business details, mga photos/videos for reference, logo, at contact info.',
         '3. Gagawa kami ng script at ipapacheck muna sa iyo.',
         '4. Once approved ang script, gagawin na ang AI commercial video.',
@@ -30,7 +31,7 @@ export function renderCommercialVideoProcess(contactName?: string | null, busine
         '6. Once approved ang video, proceed sa final payment.',
         '7. After full payment, isesend ang final video without watermark plus FREE poster ads.',
         '',
-        'Note: PHP100 ang bawat revision. Applies lang ito kapag tapos na ang video at may ipapadagdag kang wala sa approved script.'
+        pricingEnabled ? 'Note: PHP100 ang bawat revision. Applies lang ito kapag tapos na ang video at may ipapadagdag kang wala sa approved script.' : 'Note: Iko-confirm muna ng team ang terms ng revisions bago mag-proceed.'
     ].join('\n');
 }
 
@@ -166,6 +167,7 @@ export function renderCommercialVideoMessages(input: {
     answerRequested?: boolean; formPreviouslySent?: boolean; recentMessages?: string[]; summaryRequested?: boolean;
     contactName?: string | null; salesFlow?: CommercialVideoSalesFlow; hasSample?: boolean;
     pricing?: CommercialVideoPricing | null; priceList?: CommercialVideoPricing[]; followUp?: boolean;
+    pricingEnabled?: boolean;
     guidedSales?: boolean; salesFormFields?: string[]; introduceProcess?: boolean;
 } & MessageSettings): string[] {
     const missing = getMissingCommercialVideoDetails(input.details);
@@ -186,14 +188,15 @@ export function renderCommercialVideoMessages(input: {
     const messages: string[] = [];
     if (input.guidedSales && input.introduceProcess && !input.followUp) messages.push(GUIDED_SALES_INTRO);
     const priceRequested = isCommercialVideoPriceRequested(customerMessage) && (!input.followUp || !flow?.pricingSent);
-    if (answer && step !== 'pricing_process' && step !== 'sample') {
+    if (answer && (step !== 'pricing_process' || freeInquiry) && step !== 'sample') {
         messages.push(answer);
     }
-    const showPriceList = pricingReady && ((step === 'pricing_process' && !flow?.pricingSent) || priceRequested);
+    const showPriceList = !freeInquiry && input.pricingEnabled !== false && pricingReady && ((step === 'pricing_process' && !flow?.pricingSent) || priceRequested);
+    if (input.pricingEnabled === false && priceRequested) messages.push(CHATBOT_PRICING_OFF_REPLY);
     const paidProcessRequested = (!input.followUp || !flow?.processSent) && pricingReady && flow?.processRequested && (!input.requestType?.startsWith('free_') || /commercial|paid|production/i.test(customerMessage));
     if (showPriceList) messages.push(renderCommercialVideoPriceList(input.priceList || (input.pricing ? [input.pricing] : []), flow?.business || undefined));
-    if ((step === 'pricing_process' && pricingReady) || paidProcessRequested) {
-        if (!flow?.processSent || paidProcessRequested) messages.push(renderCommercialVideoProcess(input.contactName, flow?.business));
+    if (!freeInquiry && ((step === 'pricing_process' && pricingReady) || paidProcessRequested)) {
+        if (!flow?.processSent || paidProcessRequested) messages.push(renderCommercialVideoProcess(input.contactName, flow?.business, input.pricingEnabled !== false));
     }
     const business = flow?.business?.replace(/[?!\r\n]/g, ' ').slice(0, 100);
     const chooseQuestion = (variants: string[]) => variants.find(question => !recent.some(previous => isRepeatedChatbotCopy(question, previous))) || variants[0];
@@ -218,10 +221,10 @@ export function renderCommercialVideoMessages(input: {
             : 'Wala pa akong verified sample' + (business ? ' para sa ' + business : '') + ' sa available na library ngayon.');
         earlyForm();
         messages.push(flow?.durationSeconds
-            ? 'Gusto mo bang makita ang pricing at process para sa ' + flow.durationSeconds + '-second commercial video?'
+            ? 'Gusto mo bang makita ang ' + (input.pricingEnabled === false ? 'process' : 'pricing at process') + ' para sa ' + flow.durationSeconds + '-second commercial video?'
             : durationQuestion);
     } else if (step === 'duration') { earlyForm(); messages.push(durationQuestion); }
-    else if (step === 'pricing_process' || step === 'decision') messages.push(chooseQuestion(input.guidedSales ? [
+    else if (step === 'pricing_process' || step === 'decision') messages.push(freeInquiry ? FREE_OFFER : chooseQuestion(input.guidedSales ? [
         'Simulan na ba natin ang commercial video' + (business ? ' para sa ' + business : '') + '?',
         'Gusto mo bang mag-proceed sa commercial video at ihanda natin ang details?',
         'Ready ka na bang simulan natin ang commercial video?'
@@ -255,7 +258,7 @@ export function renderCommercialVideoMessages(input: {
             messages.push('May gusto ka pa bang idagdag o itanong tungkol sa request mo?');
         } else messages.push(FREE_OFFER);
     }
-    return deliverParts(messages, input.contactName, input.hasSample);
+    return deliverParts(input.pricingEnabled === false ? withoutChatbotPricing(messages) : messages, input.contactName, input.hasSample);
 }
 
 /** Formatting runs again in previews and delivery. Preserve rendered delivery

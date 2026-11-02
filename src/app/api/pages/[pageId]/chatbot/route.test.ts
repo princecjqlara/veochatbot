@@ -185,6 +185,19 @@ describe('chatbot Page-member access', () => {
         expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
     });
 
+    it('saves pricing OFF independently of the original flow', async () => {
+        const builder = updateBuilder(); mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
+        const response = await PUT(configRequest({ ...savedConfig, commercial_video_intake_enabled: true, sales_assistant_settings: {}, pricing_enabled: false }),
+            { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        const config = builder.upsert.mock.calls[0][0]; expect(config.pricing_enabled).toBe(false);
+        expect(config.sales_assistant_settings).toEqual({}); expect(usesSalesAssistant(config)).toBe(false);
+    });
+    it('leaves saved pricing unchanged when older settings requests omit it', async () => {
+        const builder = updateBuilder(); mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
+        expect((await PUT(configRequest(savedConfig), { params: Promise.resolve({ pageId: 'page_1' }) })).status).toBe(200);
+        expect(builder.upsert.mock.calls[0][0]).not.toHaveProperty('pricing_enabled');
+    });
     it('preserves the original flow when an unchanged empty sales object is saved', async () => {
         const builder = updateBuilder(); mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
         const response = await PUT(configRequest({ ...savedConfig, commercial_video_intake_enabled: true, sales_assistant_settings: {} }),

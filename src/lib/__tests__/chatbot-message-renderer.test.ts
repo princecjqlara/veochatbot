@@ -10,6 +10,26 @@ const verifiedRates = [{ packageName: 'Starter', durationSeconds: 16, pricePHP: 
 const render = (extra: Partial<Parameters<typeof renderCommercialVideoMessages>[0]> = {}) => renderCommercialVideoMessages({ parts: [], details: {}, action: 'none', contactName: 'CJ Lara', priceList: extra.pricing ? undefined : verifiedRates, ...extra });
 
 describe('natural commercial-video replies and intact structured messages', () => {
+    it.each([true, false])('answers a free-concept question directly at the pricing stage (pricing %s)', pricingEnabled => {
+        const messages = render({ pricingEnabled, customerMessage: 'Libre po ba ang concept?', salesFlow: flow('pricing_process', { pricingReady: true }) });
+        expect(messages.join('\n')).toMatch(/Walang bayad ang free concept/);
+        expect(messages.join('\n')).not.toMatch(/STEP-BY-STEP PROCESS|BUONG PRICE LIST|PHP\d/);
+        expect(messages.at(-1)).toContain('free concept');
+    });
+    it.each(['business', 'sample', 'duration', 'pricing_process', 'decision', 'form', 'complete'] as const)('honors pricing OFF at %s even with a verified catalog and requested prices', step => {
+        const messages = render({ pricingEnabled: false, parts: ['One hundred fifty pesos ang deposit. PHP899 ang package.'],
+            customerMessage: 'Magkano at paano ang process?', salesFlow: flow(step, { pricingReady: true, processRequested: true }),
+            details: step === 'complete' ? complete : {} });
+        expect(messages.join('\n')).not.toMatch(/PHP|pesos|150|899|BUONG PRICE LIST/i);
+        expect(messages.join('\n')).toContain('exact pricing');
+        expect(messages.join('\n')).toContain('STEP-BY-STEP PROCESS PO:');
+        expect(messages.at(-1)).toContain('?');
+    });
+    it('keeps requested forms inside chat while pricing is OFF', () => {
+        const messages = render({ pricingEnabled: false, salesFlow: flow('form', { formRequested: true }), customerMessage: 'Pakisend ang form' });
+        expect(messages.some(containsCommercialVideoForm)).toBe(true);
+        expect(messages.join('\n')).not.toMatch(/https?:|PHP\d/);
+    });
     it('removes empty price-list announcements and package headings during discovery', () => {
         const messages = render({ parts: ['Ito po ang buong promo price list namin.', 'STARTER PACK.', '16 seconds: PHP699.'],
             customerMessage: 'Presyo muna please', salesFlow: flow('duration', { durationSeconds: null, pricingReady: false, formSent: true }) });
