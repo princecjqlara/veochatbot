@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
+import { messengerTimestamp } from '@/lib/messenger-timestamp';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { verifyWebhookSignature, sendMessage, sendMessengerGenericCarousel, getConversationForPsid, getUserProfile } from '@/lib/facebook';
 import { isExpectedFacebookProfileLookupError } from '@/lib/facebook-errors';
@@ -359,8 +360,7 @@ export async function POST(request: NextRequest) {
                                         }
                                         if (stageContact) {
                                             const state = await getChatbotContactState(supabase, page.id, stageContact.id);
-                                            const staffAt = event.timestamp != null && Number.isFinite(Number(event.timestamp))
-                                                ? new Date(Number(event.timestamp)).toISOString() : new Date().toISOString();
+                                            const staffAt = new Date(messengerTimestamp(event.timestamp) ?? Date.now()).toISOString();
                                             if (state?.messenger_history_reset_at && event.timestamp != null &&
                                                 Date.parse(staffAt) < Date.parse(state.messenger_history_reset_at)) continue;
                                             // Delayed echoes from an acknowledged takeover must not stop a reviewed restart.
@@ -430,8 +430,8 @@ export async function POST(request: NextRequest) {
 
                                 // Preserve handoff/stop processing priority over analytics.
                                 if (eventType === 'message' && recipientId) {
-                                    const echoAt = Number(event.timestamp);
-                                    if (Number.isFinite(echoAt) && echoAt > 0) {
+                                    const echoAt = messengerTimestamp(event.timestamp);
+                                    if (echoAt != null) {
                                         try {
                                             const invalidated = await supabase.rpc('mark_conversion_source_dirty', {
                                                 p_page_id: page.id, p_psid: recipientId, p_at: new Date(echoAt).toISOString()
@@ -463,23 +463,8 @@ export async function POST(request: NextRequest) {
                         let interactionTime = new Date();
                         const rawTimestamp = event.timestamp;
                         if (rawTimestamp !== undefined && rawTimestamp !== null) {
-                            let parsedTime: Date | null = null;
-                            if (typeof rawTimestamp === 'number' || typeof rawTimestamp === 'string') {
-                                const numericTimestamp = Number(rawTimestamp);
-                                if (Number.isFinite(numericTimestamp)) {
-                                    const candidate = new Date(numericTimestamp);
-                                    if (!Number.isNaN(candidate.getTime())) {
-                                        parsedTime = candidate;
-                                    }
-                                }
-
-                                if (!parsedTime) {
-                                    const candidate = new Date(rawTimestamp);
-                                    if (!Number.isNaN(candidate.getTime())) {
-                                        parsedTime = candidate;
-                                    }
-                                }
-                            }
+                            const normalized = messengerTimestamp(rawTimestamp);
+                            const parsedTime = normalized == null ? null : new Date(normalized);
 
                             if (parsedTime) {
                                 interactionTime = parsedTime;
@@ -927,7 +912,7 @@ export async function POST(request: NextRequest) {
                                 ? event.message.mid.trim()
                                 : typeof event.postback?.mid === 'string' ? event.postback.mid.trim()
                                     : eventType === 'postback' && rawTimestamp != null
-                                        ? `postback:${pageId}:${senderId}:${rawTimestamp}:${event.postback?.payload || event.postback?.title || ''}`
+                                        ? `postback:${pageId}:${senderId}:${messengerTimestamp(rawTimestamp) ?? rawTimestamp}:${event.postback?.payload || event.postback?.title || ''}`
                                         : '';
 
                             if (

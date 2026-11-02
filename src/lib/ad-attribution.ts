@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { messengerTimestamp } from '@/lib/messenger-timestamp';
 
 type Db = { rpc: (name: string, args: Record<string, unknown>) => any };
 const id = (x: unknown): string | null => typeof x === 'string' && /^\d{1,100}$/.test(x) ? x : null;
@@ -10,8 +11,8 @@ export function safeAdMediaUrl(x: unknown): string | null {
 
 export function parseAdSourceEvent(event: any, pageFacebookId: string) {
     if (!event?.sender?.id || event.sender.id === pageFacebookId || event.message?.is_echo) return null;
-    const ms = Number(event.timestamp);
-    if (event.timestamp == null || !Number.isFinite(ms) || ms <= 0 || ms > Date.now() + 60_000) return null;
+    const ms = messengerTimestamp(event.timestamp);
+    if (ms == null) return null;
     const kind = event.message ? 'message' : event.postback ? 'postback' : event.referral ? 'referral' : null;
     if (!kind) return null;
     const isInquiry = kind === 'message'

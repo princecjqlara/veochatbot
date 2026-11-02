@@ -144,11 +144,28 @@ zero-filled or partially successful reports. Page filters load independently of
 the report and remain usable during an error. Empty ad-filter values mean All
 sources; new accounts with no Pages return a correctly shaped empty report.
 
-`verify-calendar-report-matrix.mjs` checks every recorded inquiry month for the
+`verify-calendar-report-matrix.mjs` checks every valid recorded inquiry month for the
 largest authorized account, empty/future months, blank/unknown/creative filters,
 the largest Page scopes, all six contact-status filters and Page options. It
 reconciles daily counts with each complete month's totals and writes no financial
 records or customer messages.
+Legacy timestamps outside the supported calendar years are listed separately
+and their requests must fail validation rather than create fictional dates.
+
+Messenger timestamps are normalized from Unix seconds, milliseconds or ISO at
+both the main webhook and shared partner gateway. The gateway preserves Page
+routing and signs each normalized payload for its existing destination. This
+also protects Pages handled by the existing application from seconds being
+stored as January 1970. Event fingerprints use the normalized time so retries
+with different units do not create duplicate referrals.
+
+`repair-webhook-seconds-dates.mjs --preflight` checks affected contact, source and
+referral dates against independently recorded creation or receipt times. After
+deploying the parser, `--apply` updates only records that satisfy this evidence
+check, in one transaction. Every old and corrected timestamp is retained in the
+private `app_private.webhook_date_repairs` journal. The repair aborts if any
+candidate lacks corroborating evidence or if tags, verified-payment records,
+ad-spend records or chatbot settings change. Unknown inquiry dates stay unknown.
 
 Profit after salary and ad spend remains selectable. Heat colors follow
 the selected value's sign: negative red, positive green, verified zero white,

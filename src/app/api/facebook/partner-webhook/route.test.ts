@@ -56,6 +56,21 @@ describe('Partner Page webhook routing', () => {
         expect(mocks.processWebhook).toHaveBeenCalledTimes(1);
         expect(fetch).not.toHaveBeenCalled();
     });
+    it('normalizes seconds for both handlers and standby events while preserving routing and valid signatures', async () => {
+        const ms = Date.parse('2026-11-02T03:44:48Z');
+        const response = await POST(request({ object: 'page', entry: [
+            { id: 'bot-page', messaging: [{ timestamp: ms / 1000, message: { mid: 'bot-message', text: 'hello' } }] },
+            { id: 'other-page', standby: [{ timestamp: String(ms / 1000), referral: { source: 'ADS', ad_id: '123' } }] }
+        ] }));
+        expect(response.status).toBe(200);
+        const local = mocks.processWebhook.mock.calls[0][0] as NextRequest, body = await local.text();
+        expect(JSON.parse(body).entry[0].messaging[0].timestamp).toBe(ms);
+        expect(local.headers.get('x-hub-signature-256')).toBe('sha256=' + createHmac('sha256', 'primary-secret').update(body).digest('hex'));
+        const options = vi.mocked(fetch).mock.calls[0][1]!;
+        expect(JSON.parse(options.body as string).entry[0].standby[0].timestamp).toBe(ms);
+        expect((options.headers as Record<string, string>)['X-Hub-Signature-256']).toBe('sha256=' + createHmac('sha256', 'partner-secret').update(options.body as string).digest('hex'));
+        expect(fetch).toHaveBeenCalledTimes(1); expect(mocks.processWebhook).toHaveBeenCalledTimes(1);
+    });
     it('preserves the legacy handler for unselected Pages', async () => {
         expect((await POST(request({ object: 'page', entry: [{ id: 'other-page' }] }))).status).toBe(200);
         expect(mocks.processWebhook).not.toHaveBeenCalled();

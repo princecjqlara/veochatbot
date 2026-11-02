@@ -19,9 +19,14 @@ try{
   }
   return body;
  };
- for(const month of [...new Set([...months.map(row=>row.month),'2000-01','2099-12'])])await call(new URLSearchParams({month}),month+' / all Pages');
+ const validMonths=months.filter(row=>/^20\d{2}-(0[1-9]|1[0-2])$/.test(row.month));
+ receipt.invalid_date_months=months.filter(row=>!validMonths.includes(row));
+ for(const row of receipt.invalid_date_months){
+  const response=await fetch(base+'/api/ad-calendar?'+new URLSearchParams({month:row.month}),{headers});assert.equal(response.status,400,'Invalid recorded dates must not become real calendar months');
+ }
+ for(const month of [...new Set([...validMonths.map(row=>row.month),'2000-01','2099-12'])])await call(new URLSearchParams({month}),month+' / all Pages');
  receipt.checks.push('Every recorded inquiry month loads and its daily totals reconcile, plus empty and future months');
- const month=months[0].month;
+ const month=validMonths[0].month;
  await call(new URLSearchParams({month,adId:''}),'empty ad selection');await call(new URLSearchParams({month,adId:' '}),'blank ad selection');await call(new URLSearchParams({month,adId:'unknown'}),'unknown sources');
  const pages=(await db.query('SELECT page_id,count(*) AS n FROM contacts WHERE page_id=ANY($1::uuid[]) GROUP BY 1 ORDER BY count(*) DESC LIMIT 3',[ids])).rows;
  for(const page of pages)await call(new URLSearchParams({month,pageId:page.page_id}),'single Page '+page.page_id);
@@ -34,6 +39,6 @@ try{
  }
  const options=await call(new URLSearchParams({view:'pages'}),'independent Page options');assert.equal(options.pages.length,ids.length);
  receipt.checks.push('Empty/unknown/creative filters, largest Page scopes, six contact filters and independent Page options work');
- receipt.recorded_months=months.length;receipt.passed=true;
+ receipt.recorded_months=validMonths.length;receipt.passed=true;
 }catch(e){receipt.passed=false;receipt.error=e.message;process.exitCode=1;}
 finally{await db.end();flush();console.log(JSON.stringify({passed:receipt.passed,recorded_months:receipt.recorded_months,cases:receipt.results.length,error:receipt.error,slowest:receipt.results.slice().sort((a,b)=>b.ms-a.ms).slice(0,5),checks:receipt.checks},null,2));}

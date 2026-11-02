@@ -1,6 +1,7 @@
 import { createHmac } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyWebhookSignature } from '@/lib/facebook';
+import { messengerTimestamp } from '@/lib/messenger-timestamp';
 import { GET as verifyWebhook, POST as processWebhook } from '../webhook/route';
 
 export const maxDuration = 300;
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
     if (!verifyWebhookSignature(body, request.headers.get('x-hub-signature-256') || '', partnerSecret)) {
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
-    let payload: { object?: string; entry?: Array<{ id?: string }> };
+    let payload: { object?: string; entry?: Array<{ id?: string; messaging?: unknown; standby?: unknown }> };
     try {
         payload = JSON.parse(body);
         if (!payload || payload.object !== 'page' || !Array.isArray(payload.entry)
@@ -39,8 +40,20 @@ export async function POST(request: NextRequest) {
     } catch {
         return NextResponse.json({ error: 'Invalid Page webhook payload' }, { status: 400 });
     }
-    const chatbotEntries = payload.entry.filter(entry => pageIds.has(entry.id!));
-    const legacyEntries = payload.entry.filter(entry => !pageIds.has(entry.id!));
+    // Normalize at the shared boundary so the existing handler also receives
+    // correct dates. Entry routing, message content and delivery ownership stay
+    // unchanged; each transformed body is signed below for its own destination.
+    const normalize = (events: unknown[]) => events.map(event => {
+        if (!event || typeof event !== 'object') return event;
+        const record = event as Record<string, unknown>, at = messengerTimestamp(record.timestamp);
+        return at == null ? event : { ...record, timestamp: at };
+    });
+    const entries = payload.entry.map(entry => ({ ...entry,
+        ...(Array.isArray(entry.messaging) ? { messaging: normalize(entry.messaging) } : {}),
+        ...(Array.isArray(entry.standby) ? { standby: normalize(entry.standby) } : {})
+    }));
+    const chatbotEntries = entries.filter(entry => pageIds.has(entry.id!));
+    const legacyEntries = entries.filter(entry => !pageIds.has(entry.id!));
     const operations: Array<Promise<{ destination: string; ok: boolean; status: number }>> = [];
     if (chatbotEntries.length) {
         const chatbotBody = JSON.stringify({ ...payload, entry: chatbotEntries });

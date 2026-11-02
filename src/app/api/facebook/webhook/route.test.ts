@@ -984,6 +984,16 @@ describe('POST /api/facebook/webhook', () => {
         const payload = supabase.contactsUpsert.mock.calls[0][0] as Record<string, unknown>;
         expect(payload.name).toBe('Maria Santos');
     });
+    it('stores an inbound seconds timestamp as its real inquiry date', async () => {
+        const supabase = createSupabaseMock(); mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        const seconds = Math.floor((Date.now() - 10000) / 1000);
+        const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+            sender: { id: 'contact_psid_1' }, recipient: { id: 'fb_page_1' }, timestamp: seconds,
+            message: { mid: 'seconds-inquiry', text: 'How much?' }
+        }] }] }));
+        expect(response.status).toBe(200);
+        expect(supabase.contactsUpsert.mock.calls[0][0].first_interaction_at).toBe(new Date(seconds * 1000).toISOString());
+    });
 
     it('retries contact upsert without first_interaction_at when schema is older', async () => {
         const supabase = createSupabaseMockWithFirstInteractionColumnFailure();
@@ -1469,6 +1479,19 @@ describe('POST /api/facebook/webhook', () => {
             expect(mocks.sendMessage).not.toHaveBeenCalled();
         });
 
+    it('honors a new human stage echo in seconds after a bot reset', async () => {
+        const supabase = createPhotoChatbotSupabaseMock({ activeState: true, historyResetAt: '2026-10-17T07:14:46Z' });
+        mocks.getSupabaseAdmin.mockReturnValue(supabase);
+        const at = '2026-10-17T07:15:00.000Z';
+        const response = await POST(createWebhookRequest({ object: 'page', entry: [{ id: 'fb_page_1', messaging: [{
+            sender: { id: 'fb_page_1' }, recipient: { id: 'contact_psid_1' }, timestamp: Date.parse(at) / 1000,
+            message: { mid: 'seconds-stage-echo', text: 'Lead stage set to Not qualified', is_echo: true }
+        }] }] }));
+        expect(response.status).toBe(200);
+        const saved = supabase.contactStateUpsert.mock.calls.find(call => call[0].stop_reason === 'not_qualified');
+        expect(saved?.[0].last_human_activity_at).toBe(at);
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
     it('cancels delivery if a saved stage changes while the last Messenger read is in flight', async () => {
         const options = { deliveryStage: 'engaged', pipelineSource: 'chatbot' };
         mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock(options));

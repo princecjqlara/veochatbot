@@ -3,6 +3,11 @@ import { captureContactAdSource, parseAdSourceEvent } from '../ad-attribution';
 const time = 1_790_000_000_000;
 const event = (extra: any = {}) => ({ sender: { id: 'customer' }, recipient: { id: 'page' }, timestamp: time, message: { mid: 'mid-1', text: 'Interested', referral: { source: 'ADS', ad_id: '120999999999999999' } }, ...extra });
 describe('ad source evidence', () => {
+    it('deduplicates a seconds timestamp and its millisecond representation without recording a 1970 inquiry', () => {
+        const milliseconds = event(), seconds = { ...milliseconds, timestamp: milliseconds.timestamp / 1000 };
+        expect(parseAdSourceEvent(seconds, 'page')).toEqual(parseAdSourceEvent(milliseconds, 'page'));
+        expect(parseAdSourceEvent(seconds, 'page')?.eventAt).not.toMatch(/^1970/);
+    });
     it('keeps exact ad ID strings, first-message evidence and context without unsafe media', () => {
         const e = event(); e.message.referral.ads_context_data = { ad_title: 'Restaurant video', photo_url: 'javascript:alert(1)', video_url: 'https://example.com/preview.mp4', access_token: 'do-not-save' };
         const p = parseAdSourceEvent(e, 'page')!;
