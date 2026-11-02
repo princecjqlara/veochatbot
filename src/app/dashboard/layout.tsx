@@ -92,6 +92,7 @@ export default function DashboardLayout({
         { href: '/dashboard/contacts', icon: Users, label: 'Contacts' },
         { href: '/dashboard/pipeline', icon: GitBranch, label: 'Pipeline' },
         { href: '/dashboard/ad-quality', icon: BarChart3, label: 'Ad Lead Quality' },
+        { href: '/dashboard/ad-calendar', icon: BarChart3, label: 'Ad Calendar & Profit' },
         { href: '/dashboard/7-day-contacts', icon: Clock3, label: '7-Day Window Contacts' },
         { href: '/dashboard/tags', icon: Tag, label: 'Tags' },
         { href: '/dashboard/campaigns', icon: MessageSquare, label: 'Campaigns' },

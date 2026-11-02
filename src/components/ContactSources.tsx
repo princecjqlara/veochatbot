@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import AdCreativePreview from '@/components/AdCreativePreview';
+import { phtDay } from '@/lib/ad-calendar';
 
 const when = (value?: string | null) => value && Number.isFinite(Date.parse(value))
     ? new Date(value).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : 'Not recorded';
 const roleLabel = (role: string) => role === 'origin' ? 'Verified origin evidence' : role === 'later_touch' ? 'Later touch' : 'Origin not established';
 
-function AdDetails({ ad }: { ad: any }) {
+function AdDetails({ ad, pageId, at }: { ad: any; pageId: string; at?: string | null }) {
     if (!ad) return <p className="text-sm text-slate-500">This referral did not include an ad ID.</p>;
     return <div className="min-w-0 space-y-3">
         <div><p className="break-words text-sm font-semibold">{ad.ad_name || ad.ad_title || `Ad ${ad.ad_id}`}</p>
@@ -28,6 +29,8 @@ function AdDetails({ ad }: { ad: any }) {
             <p className="mt-3 text-xs text-slate-500">Ads Manager names, IDs and status describe the saved catalog entry. Missing details can require ad-account read access.</p>
         </details>
         <a className="inline-block text-xs text-blue-700 underline" target="_blank" rel="noopener noreferrer" href={`https://www.facebook.com/adsmanager/manage/ads?selected_ad_ids=${encodeURIComponent(ad.ad_id)}`}>Open in Ads Manager</a>
+        <a className="block text-xs text-blue-700 underline" href={'/dashboard/ad-calendar?' + new URLSearchParams({ pageId, adId: ad.ad_id,
+            ...(at && Number.isFinite(Date.parse(at)) ? { month: phtDay(Date.parse(at)).slice(0, 7), day: phtDay(Date.parse(at)) } : {}) })}>Spend and results for this referral day</a>
     </div>;
 }
 
@@ -82,7 +85,7 @@ export default function ContactSources({ pageId, contactId, eventKey = '', onCle
         {error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{error}</p>}
         {notice && <p role="status" className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">{notice}</p>}
         <section className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="mb-4 font-semibold">Originating ad</h3>
-            {data.origin ? <div className="grid min-w-0 gap-6 lg:grid-cols-2"><div><p className="mb-3 inline-block rounded-full bg-green-50 px-2 py-1 text-xs text-green-800">Verified at first inquiry</p><AdDetails ad={data.origin.ad} /></div>
+            {data.origin ? <div className="grid min-w-0 gap-6 lg:grid-cols-2"><div><p className="mb-3 inline-block rounded-full bg-green-50 px-2 py-1 text-xs text-green-800">Verified at first inquiry</p><AdDetails ad={data.origin.ad} pageId={pageId} at={data.origin.evidence?.at || data.first_inquiry_at} /></div>
                 <div><h4 className="mb-3 text-sm font-medium">Attribution evidence</h4>{data.origin.evidence ? <ReferralEvidence touch={data.origin.evidence} onMessage={onMessage} /> : <p className="text-sm text-slate-500">The verified origin record remains saved, but its original referral event is unavailable.</p>}
                     <p className="mt-4 text-xs text-slate-500">Recorded inquiry: {when(data.first_inquiry_at)} · Basis: {data.inquiry_basis.replaceAll('_', ' ')}</p></div></div>
                 : <p className="text-sm text-slate-600">{data.attribution_status === 'conflicting_sources' ? 'Facebook source evidence conflicts. No single originating ad can be verified.' : 'The originating ad is not verified. A later ad click or a missing referral does not establish the original source.'}</p>}
@@ -92,7 +95,7 @@ export default function ContactSources({ pageId, contactId, eventKey = '', onCle
             <p className="mb-4 text-xs text-slate-500">Newest first. Each event retains its own source and creative evidence.</p>
             <div className="space-y-3">{data.touches.map((touch: any, index: number) => <details key={touch.event_key} open={Boolean(eventKey) || index === 0} className="rounded-lg border border-slate-200 p-4">
                 <summary className="cursor-pointer break-words text-sm font-medium">{when(touch.at)} · {touch.ad?.ad_name || touch.ad?.ad_title || (touch.ad ? `Ad ${touch.ad.ad_id}` : touch.source || 'Referral event')} <span className="ml-2 inline-block rounded bg-slate-100 px-2 py-1 text-xs font-normal">{roleLabel(touch.role)}</span></summary>
-                <div className="mt-5 grid min-w-0 gap-6 lg:grid-cols-2"><AdDetails ad={touch.ad} /><ReferralEvidence touch={touch} onMessage={onMessage} /></div>
+                <div className="mt-5 grid min-w-0 gap-6 lg:grid-cols-2"><AdDetails ad={touch.ad} pageId={pageId} at={touch.at} /><ReferralEvidence touch={touch} onMessage={onMessage} /></div>
             </details>)}{!data.touches.length && <p className="text-sm text-slate-500">{eventKey ? 'This source event is unavailable.' : 'No recorded referrals for this contact. The source remains unknown.'}</p>}</div>
             {!eventKey && data.total > data.page_size && <div className="mt-5 flex items-center justify-between gap-3"><button disabled={page === 1 || loading} onClick={() => setPage(value => value - 1)} className="rounded border px-3 py-2 text-sm disabled:opacity-40">Previous sources</button><span className="text-xs text-slate-500">Page {data.page} of {Math.ceil(data.total / data.page_size)}</span><button disabled={data.page * data.page_size >= data.total || loading} onClick={() => setPage(value => value + 1)} className="rounded border px-3 py-2 text-sm disabled:opacity-40">Next sources</button></div>}
         </section>

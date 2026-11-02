@@ -1,4 +1,21 @@
 const dayMs=86_400_000;
+export const DAILY_INSIGHT_FIELDS = 'ad_id,account_id,account_currency,date_start,date_stop,spend,impressions,clicks,reach,inline_link_clicks,actions,video_play_actions,video_thruplay_watched_actions,video_p100_watched_actions';
+export function actionAmount(values: unknown, kind: string): number | null {
+ if(values==null)return null;
+ if(!Array.isArray(values))throw Error('Facebook returned invalid action metrics');
+ const found=values.filter(row=>row?.action_type===kind);
+ if(found.length>1)throw Error('Facebook returned ambiguous action breakdowns');
+ if(!found.length)return 0;
+ const value=String(found[0].value);
+ if(!/^\d+(?:\.\d{1,6})?$/.test(value)||!Number.isFinite(Number(value))||Number(value)>Number.MAX_SAFE_INTEGER)throw Error('Facebook returned invalid action counts');
+ return Number(value);
+}
+export function dailyDeliveryMetrics(row:any){
+ const count=(value:any)=>value==null?null:/^\d+$/.test(String(value))&&Number.isSafeInteger(Number(value))?Number(value):null;
+ return{reach:count(row.reach),link_clicks:count(row.inline_link_clicks),messaging_started:actionAmount(row.actions,'onsite_conversion.messaging_conversation_started_7d'),
+  video_plays:actionAmount(row.video_play_actions,'video_view'),video_thruplays:actionAmount(row.video_thruplay_watched_actions,'video_view'),video_complete:actionAmount(row.video_p100_watched_actions,'video_view'),
+  action_report_time:'conversion',attribution_setting:'adset_unified'};
+}
 export function alignedWithPht(day:string,zone:string){
  try{
   const format=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});

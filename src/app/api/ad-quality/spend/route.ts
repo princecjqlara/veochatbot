@@ -5,7 +5,7 @@ import{getSupabaseAdmin}from'@/lib/supabase';
 import{adQualityRange}from'@/lib/ad-quality-range';
 import{phtDate}from'@/lib/conversion-performance';
 import{readMetaAds,MetaAdAccessError}from'@/lib/facebook-ad-catalog';
-import{normalizeDailySpend}from'@/lib/ad-daily-spend';
+import{normalizeDailySpend,dailyDeliveryMetrics,DAILY_INSIGHT_FIELDS}from'@/lib/ad-daily-spend';
 export const dynamic='force-dynamic';export const maxDuration=60;
 export async function POST(request:NextRequest){
  const session=await getSessionFromRequest(request);if(!session?.user?.id)return NextResponse.json({error:'Unauthorized'},{status:401});
@@ -24,8 +24,8 @@ export async function POST(request:NextRequest){
   if(!allowed.size)return NextResponse.json({error:'Import Facebook ads first so ad IDs can be verified against your Pages.',errorCode:'NO_VERIFIED_PAGE_ADS'},{status:409});
   const account=await readMetaAds(body.accountId,session.accessToken,{fields:'id,currency,timezone_name'});
   if(account.id!==body.accountId||typeof account.currency!=='string'||typeof account.timezone_name!=='string')throw Error('Ad-account currency or timezone could not be verified');
-  const result=await readMetaAds(body.accountId+'/insights',session.accessToken,{fields:'ad_id,account_id,account_currency,date_start,date_stop,spend,impressions,clicks',level:'ad',time_increment:'1',time_range:JSON.stringify({since:from,until:to}),limit:'100',...(body.after?{after:body.after}:{})});
-  const records=(result.data||[]).map((r:any)=>normalizeDailySpend(r,account,allowed,from,to)).filter(Boolean);
+  const result=await readMetaAds(body.accountId+'/insights',session.accessToken,{fields:DAILY_INSIGHT_FIELDS,level:'ad',time_increment:'1',action_report_time:'conversion',use_unified_attribution_setting:'true',time_range:JSON.stringify({since:from,until:to}),limit:'100',...(body.after?{after:body.after}:{})});
+  const records=(result.data||[]).flatMap((r:any)=>{const value=normalizeDailySpend(r,account,allowed,from,to);return value?[{...value,...dailyDeliveryMetrics(r),report_complete:false,reported_zero:false}]:[];});
   if(records.length){const saved=await db.from('ad_daily_spend').upsert(records,{onConflict:'page_id,ad_id,spend_date,account_id'});if(saved.error)throw Error('Could not save daily spend');}
   const after=result.paging?.next?result.paging?.cursors?.after||null:null;
   return NextResponse.json({read:(result.data||[]).length,saved:records.length,timezone:account.timezone_name,currency:account.currency,pht_aligned:records.every((r:any)=>r.pht_aligned),nextAfter:after,complete:!result.paging?.next,paginationUnavailable:!!result.paging?.next&&!after,missing_days_are_zero:false},{headers:{'Cache-Control':'no-store'}});
