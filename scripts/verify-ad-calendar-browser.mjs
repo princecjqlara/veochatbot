@@ -8,6 +8,7 @@ const groups=[{page_id:'p',ad_id:'11',day:'2020-01-01',inquiries:10,converted:3,
  {page_id:'p',ad_id:'11',day:'2020-01-03',inquiries:2,converted:1,converted_later:1,payers:1,payers_later:1,stage_lags:[0,1,0,0,0],paid_lags:[0,0,1,0,0],finance:[{currency:'PHP',received_minor:10000,refunded_minor:0,records:1,paid_orders:1}]},
  {page_id:'p',ad_id:'11',day:'2020-01-04',inquiries:1,converted:1,payers:1,finance:[{currency:'PHP',received_minor:5000,refunded_minor:0,records:1,paid_orders:1}]},
  {page_id:'p',ad_id:null,day:'2020-01-01',inquiries:7,converted:2,payers:0,finance:[]}];
+for(const group of groups){group.confirmed_payers=(group.payers||0)+(group.ad_id==null?2:0);group.chat_confirmed_payers=group.ad_id==null?2:0;group.confirmed_payers_later=group.payers_later||0;group.reviewed_conversations=group.inquiries;group.confirmed_paid_lags=group.paid_lags||[0,0,0,2,0];}
 const spend=ads.flatMap(ad=>calendarRange('2020-01').days.map(day=>({page_id:'p',ad_id:ad.ad_id,account_id:'22',spend_date:day,currency:'PHP',pht_aligned:true,
  amount:day==='2020-01-01'?(ad.ad_id==='11'?100:200):day==='2020-01-02'?(ad.ad_id==='11'?20:30):day==='2020-01-03'&&ad.ad_id==='11'?100:day==='2020-01-04'&&ad.ad_id==='11'?30:0,
  impressions:1000,clicks:40,link_clicks:20,messaging_started:10,video_plays:200,video_thruplays:50,video_complete:30,reach:800,action_report_time:'conversion',attribution_setting:'adset_unified'})));
@@ -22,12 +23,13 @@ try{let port;for(let i=0;i<100;i++){const file=path.join(profile,'DevToolsActive
   if(u.pathname==='/api/auth/session')body={user:{id:'user',name:'Calendar QA'},expires:'2099-01-01T00:00:00Z'};
   else if(u.pathname==='/api/pages')body={pages:[{id:'p',name:'Sample Page'}]};
   else if(u.pathname==='/api/ad-quality/connection')body={status:'ready',accounts:[{id:'act_22',name:'Sample account'}]};
+  else if(u.pathname==='/api/ad-calendar/confirmation')body={message_id:'ack',text:'Payment received PHP 450, thank you!',occurred_at:'2020-02-04T01:00:00Z',amount:450,currency:'PHP',verification:'conversation_documented',ledger_verified:false};
   else if(u.pathname==='/api/ad-quality/sync')body={saved:2,read:2,complete:true};
   else if(u.pathname==='/api/ad-calendar/sync'){const input=JSON.parse(request.postData);imports.push(input);body={saved:input.adIds.length*7,complete:true,pht_aligned:true};}
   else if(u.pathname==='/api/ad-calendar'){
    requests.push(u.search);
    if(u.searchParams.get('month')===delayMonth)await new Promise(resolve=>{releaseReport=resolve;});
-   if(u.searchParams.get('view')==='contacts')body={total:1,contacts:[{id:'customer',page_id:'p',name:'Sample paying customer',inquiry_at:'2020-01-01T01:00:00Z',stage:'converted',converted_at:'2020-02-03T01:00:00Z',paid_at:'2020-02-04T01:00:00Z'}]};
+   if(u.searchParams.get('view')==='contacts')body={total:1,contacts:[{id:'customer',page_id:'p',name:'Sample paying customer',inquiry_at:'2020-01-01T01:00:00Z',stage:'converted',converted_at:'2020-02-03T01:00:00Z',paid_at:null,confirmed_at:'2020-02-04T01:00:00Z',confirmation_basis:'conversation_documented',confirmation_evidence_id:'ack'}]};
    else{const month=u.searchParams.get('month')||'2020-01',range=calendarRange(month);body={...buildAdCalendar({month,groups:month==='2020-01'?groups:[],spend:month==='2020-01'?spend:[],inventory:ads,adId:u.searchParams.get('adId'),selectedDay:u.searchParams.get('day')||undefined}),pages:[{id:'p',name:'Sample Page'}],outcome_as_of:'2026-11-01T23:00:00Z'};}
    if(u.searchParams.get('month')===failMonth){responseCode=503;body={error:'Fixture report unavailable'};}
   }else unknown.push(u.pathname);
@@ -43,18 +45,20 @@ try{let port;for(let i=0;i<100;i++){const file=path.join(profile,'DevToolsActive
  assert(await evaluate("document.body.innerText.includes('₱390.00')&&document.body.innerText.includes('3.83× / 1.30×')"));checks.push('PHT month heat map and day-level gross, salary, profit and ROAS arithmetic');
  assert.equal(await evaluate("document.querySelector('select[aria-label=\"Calendar heat metric\"]').value"),'total_inquiries');
  assert.equal(await evaluate("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b').textContent"),'22');checks.push('Default calendar shows known and unknown-source inquiries before financial records exist');
+ await select('Calendar heat metric','confirmed');assert.equal(await evaluate("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b').textContent"),'5');assert(await evaluate("document.querySelector('[aria-label=\"Calendar data sources\"]').textContent.includes('2 documented in conversations')"));checks.push('All-source confirmed customers combine chat and ledger evidence without adding unknown customers to a creative');
  await select('Calendar heat metric','profit');
  const colors=await evaluate("['2020-01-01','2020-01-03','2020-01-04','2020-01-02'].map(day=>getComputedStyle(document.querySelector('[aria-label=\"Inquiry cohort '+day+'\"]')).backgroundColor)");
  const rgb=colors.map(color=>color.match(/\d+/g).map(Number));assert(rgb[0][1]>rgb[0][0]&&rgb[0][1]>rgb[0][2],'Positive profit must be green');assert(rgb[1][0]>rgb[1][1]&&rgb[1][0]>rgb[1][2],'Negative profit must be red');assert.deepEqual(rgb[2],[255,255,255]);assert.deepEqual(rgb[3],[241,245,249]);
  assert(await evaluate("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"]').textContent.includes('+390')&&document.querySelector('[aria-label=\"Inquiry cohort 2020-01-03\"]').textContent.includes('-40')&&!!document.querySelector('[aria-label=\"Heat map color legend\"]')"));checks.push('Profit gains green, losses red, zero white, missing ledger gray, signed labels and visible legend');
  await click('View cohort contacts');await wait("document.body.innerText.includes('Sample paying customer')");assert(await evaluate("document.body.innerText.includes('Feb 4, 2020')"));await select('Cohort contact status','paid');assert(requests.some(query=>{const q=new URLSearchParams(query);return q.get('view')==='contacts'&&q.get('day')==='2020-01-01'&&q.get('status')==='paid';}));checks.push('Cohort drilldown includes customers whose payment happened in a later month');
+ await click('Review confirmation');await wait("document.querySelector('[aria-label=\"Payment confirmation evidence\"]')?.textContent.includes('Payment received PHP 450')");assert(await evaluate("document.querySelector('[aria-label=\"Payment confirmation evidence\"]').textContent.includes('Conversation-documented confirmation')"));await click('Close evidence');checks.push('Documented payment opens its Page acknowledgement and remains separate from verified receipt amounts');
  await select('Creative metrics period','month');await evaluate("[...document.querySelectorAll('summary')].find(s=>s.textContent==='Delivery details').click()");assert(await evaluate("document.body.innerText.includes('ThruPlays')"));checks.push('Creative reporting includes messaging costs, CPA, CTR, CPC, CPM and video delivery details');
  await select('Calendar creative','11');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"]')?.textContent.includes('L 10')");checks.push('Creative filter recomputes the original cohort');
  await select('Calendar creative','');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"]')?.textContent.includes('L 15')");await click('Import actual spend and metrics');await wait("document.body.innerText.includes('Actual ad spend and delivery metrics updated.')");assert.equal(imports.length,5);assert(imports.every(input=>input.adIds.length<=20&&Date.parse(input.to)-Date.parse(input.from)<=6*86400000));checks.push('Read-only import uses complete bounded ad/week batches');
  delayMonth='2020-02';await click('Next →');
  await wait("document.querySelector('input[aria-label=\"Calendar month\"]').value==='2020-02'&&document.querySelectorAll('button[aria-label^=\"Inquiry cohort \"]').length===29");
  assert(await evaluate("document.querySelector('[aria-label=\"Advertising heat map calendar\"]').textContent.includes('Loading inquiries')"));assert(releaseReport);
- delayMonth=null;releaseReport();await wait("document.body.textContent.includes('Profit and ROAS need imported ad spend')");await click('Show inquiries');
+ delayMonth=null;releaseReport();await wait("document.body.textContent.includes('Profit and ROAS need imported ad spend')");await click('Show inquiries');await wait("[...document.querySelectorAll('button')].find(button=>button.textContent==='← Previous')?.disabled===false");assert(imports.some(input=>input.from==='2020-02-01'));checks.push('Connected ad access automatically imports missing report dates');
  checks.push('Leap-month grid stays visible during loading and missing profit explains how to see inquiry counts');
  await click('← Previous');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b')?.textContent==='22'");
  failMonth='2020-02';await click('Next →');await wait("document.body.textContent.includes('Fixture report unavailable')");
@@ -64,7 +68,7 @@ try{let port;for(let i=0;i<100;i++){const file=path.join(profile,'DevToolsActive
  checks.push('Report failure retains month dates and navigation; a new month selection recovers');
  await click('This month');
  await wait("document.querySelector('input[aria-label=\"Calendar month\"]').value===new Date(Date.now()+8*3600000).toISOString().slice(0,7)&&document.querySelector('[aria-label=\"Advertising heat map calendar\"]').getAttribute('aria-busy')==='false'");
- await click('Next →');await wait("document.body.textContent.includes('This month is in the future.')&&document.querySelector('[aria-label=\"Advertising heat map calendar\"]').getAttribute('aria-busy')==='false'");
+ await wait("[...document.querySelectorAll('button')].find(button=>button.textContent==='Next →')?.disabled===false");await click('Next →');await wait("document.body.textContent.includes('This month is in the future.')&&document.querySelector('[aria-label=\"Advertising heat map calendar\"]').getAttribute('aria-busy')==='false'");
  assert(await evaluate("[...document.querySelectorAll('button[aria-label^=\"Inquiry cohort \"]')].every(button=>button.disabled)"));
  assert(await evaluate("[...document.querySelectorAll('button')].find(button=>button.textContent==='Import actual spend and metrics').disabled"));
  checks.push('This month shortcut and future-month browsing work without importing or inventing future activity');

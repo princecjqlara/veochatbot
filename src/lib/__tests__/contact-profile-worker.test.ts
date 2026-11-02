@@ -15,7 +15,7 @@ function fixture(overrides: Record<string, unknown> = {}, storedSource = source,
         analyzed_count: 0, message_count: 0, partial_analysis: [], ...overrides }] : true, error: null }));
     const db = { rpc, from: (table: string) => {
         const chain: any = { select: () => chain, eq: () => chain, order: () => chain,
-            maybeSingle: async () => ({ data: table === 'pages' ? { fb_page_id: 'fb-page', access_token: 'page-token' } : table === 'chatbot_contact_states' ? { messenger_history_reset_at: resetAt } : { psid: 'buyer' }, error: null }),
+            maybeSingle: async () => ({ data: table === 'pages' ? { fb_page_id: 'fb-page', access_token: 'page-token' } : table === 'chatbot_contact_states' ? { messenger_history_reset_at: resetAt } : table === 'contact_conversion_cache' ? null : { psid: 'buyer' }, error: null }),
             range: async () => ({ data: table === 'contact_profile_messages' ? storedSource.map(message => ({ message_id: message.id, sent_at: message.created_time,
                 sender: message.from.id === 'buyer' ? 'customer' : 'page', text: message.message, attachment_count: 0, image_count: 0 })) : [], error: null }) };
         return chain;
@@ -24,6 +24,15 @@ function fixture(overrides: Record<string, unknown> = {}, storedSource = source,
 }
 
 describe('bounded whole-conversation worker', () => {
+    it('saves documented payment evidence for a Page without a forecasting model', async () => {
+        const messages = [...source, { id: 'payment-ack', created_time: '2026-10-01T02:00:00Z', from: { id: 'fb-page' }, message: 'Payment received PHP 500, thank you!' }];
+        const rpc = fixture({ history_complete: true, scan_started: true, analyzed_count: 3, message_count: 3, partial_analysis: [{ summary_points: [], facts: [], answers: [], excluded: 0 }] }, messages);
+        vi.stubGlobal('fetch', vi.fn());
+        expect(await processContactProfiles({ limit: 1 })).toMatchObject({ ready: 1, failed: 0 });
+        const saved = rpc.mock.calls.find(call => call[0] === 'save_contact_conversion_cache') as any;
+        expect(saved[1].p_payload).toMatchObject({ contact_id: 'c', page_id: 'p', complete_history: true, payment_evidence_id: 'payment-ack', payment_at: '2026-10-01T02:00:00.000Z' });
+        expect(fetch).not.toHaveBeenCalled();
+    });
     it.each([null, '2026-10-01T01:30:00Z'])('saves older stage history and order notices while respecting reset %s', async resetAt => {
         const notices = [
             { id: 'qualified', created_time: '2026-10-01T01:00:00Z', from: { id: 'fb-page' }, message: 'Lead stage set to Qualified' },

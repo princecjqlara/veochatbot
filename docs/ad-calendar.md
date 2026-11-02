@@ -29,7 +29,31 @@ acquisitions are not labeled better just because they are darker.
 
 ## Counts and attribution
 
-Stage conversions count the cohort's current `converted` stage. A documented
+The overall calendar includes all inquiries and outcomes, including unknown
+origins. It deducts the imported Page ad spend once from recorded overall cash.
+Creative rows keep their verified first-origin cohorts; unknown-origin receipts
+are never distributed to an ad. Overall CPA is therefore a blended cost, while
+creative CPA is specific to that ad's documented customers.
+
+Confirmed customers combine existing conversation-documented Page payment
+acknowledgements with ledger-verified payers, counting an overlap once. The first
+confirmation and later-day timing remain attached to the original inquiry day,
+including confirmations after month end. Conversation review coverage and newer
+activity are shown. A confirmation supplies a customer count and timestamp, not
+a verified monetary amount. The evidence button reopens the exact Page-authored
+message and checks its author, timestamp and payment meaning before showing it.
+
+An Order Created stage retains an earlier documented Converted stage. A direct
+order without that earlier conversion remains an order count. Negative or
+reversed stages are not silently treated as current Converted stages.
+
+Missing Meta report dates are imported automatically once the current user has
+connected ad-account read access. Only complete authorized ad/week reports can
+produce saved zero days; failed or inaccessible reports remain unavailable.
+No advertising budgets are changed.
+
+Stage conversions count the cohort's current `converted` stage, retaining it
+through a later Order Created notice when the earlier conversion is documented. A documented
 stage transition supplies timing; missing timestamps are not guessed into a
 same-day bucket. Stage reversals affect current counts. Stage conversions do
 not establish payment. Verified acquisitions count unique contacts with a
@@ -107,6 +131,15 @@ and a visible legend keep the meaning readable without relying only on color.
 Positive cost amounts remain expenses; color does not rank cost efficiency.
 
 Apply `202611020005_ad_calendar.sql` before deploying. New reporting functions
+also require `202611020006_calendar_outcome_sources.sql`. This migration reads
+existing confirmations and preserves tags, bot settings and financial records.
+Use `release-calendar-outcomes.mjs --preflight` and `--apply` to validate and
+install it. `backfill-profile-payment-sources.mjs` can checkpoint complete saved
+profile histories for every Page without generating receipt amounts; `--preflight`
+rolls back and `--apply` uses short transactions per contact so the active
+scanner can continue. Full profile reviews maintain these sources thereafter.
+
+New reporting functions
 are server-only; every HTTP read checks Page membership and writes also require
 same-origin requests. Migration preflight and application preserve tags, bot
 settings and all existing financial/spend records. No fictional receipts are

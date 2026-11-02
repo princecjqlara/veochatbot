@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   if (q.get('view') === 'contacts') {
    const day = q.get('day'); if (!day) return NextResponse.json({ error: 'Choose an inquiry day' }, { status: 400 });
    const status = q.get('status') || 'all', offset = Number(q.get('offset') || 0);
-   if (!['all', 'converted', 'paid', 'unconverted'].includes(status) || !Number.isInteger(offset) || offset < 0 || offset > 1000000) return NextResponse.json({ error: 'Invalid cohort filter' }, { status: 400 });
+   if (!['all', 'converted', 'paid', 'unconverted', 'confirmed', 'orders'].includes(status) || !Number.isInteger(offset) || offset < 0 || offset > 1000000) return NextResponse.json({ error: 'Invalid cohort filter' }, { status: 400 });
    const from = Date.parse(day + 'T00:00:00+08:00');
    const result = await db.rpc('get_ad_calendar_contacts', { p_page_ids: ids, p_from: new Date(from).toISOString(), p_to: new Date(from + 86400000).toISOString(), p_ad_id: adId, p_status: status, p_offset: offset });
    if (result.error) throw Error('Could not load this inquiry cohort');

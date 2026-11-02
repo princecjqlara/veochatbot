@@ -5,6 +5,7 @@ import { projectionCacheFromMessages } from '@/lib/contact-projection-refresh';
 import { forecastPageName, scoreContactForecast } from '@/lib/contact-forecast';
 import { getChatbotDetailProgress } from '@/lib/chatbot-form-progress';
 import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
+import { administrative } from '@/lib/conversion-runtime/evidence.js';
 
 type Db = { from: (table: string) => any; rpc: (name: string, args: Record<string, unknown>) => any };
 type ProfileJob = { contact_id: string; page_id: string; working_version: number; claim_token: string; source_cutoff_at: string;
@@ -183,7 +184,9 @@ async function processJob(db: Db, job: ProfileJob, budgetMs: number) {
             // window. Save their history tags without rolling back a newer stage.
             await syncMessengerStageHistory(db, { pageId: job.page_id, contactId: job.contact_id, facebookPageId: page.fb_page_id,
                 messages: raw, options: { historyResetAt: state.data?.messenger_history_reset_at } });
-            if (forecastPageName(page.fb_page_id)) {
+            // Payment evidence is useful for every Page, including Pages without
+            // a supported forecasting model.
+            if (messages.some(message => message.sender === 'customer' && !administrative(message.text))) {
                 const previous = await db.from('contact_conversion_cache').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle();
                 if (previous.error) throw new Error('Could not verify earlier forecast history');
                 const cache = projectionCacheFromMessages(raw, { contactId: job.contact_id, pageId: job.page_id, facebookPageId: page.fb_page_id,
@@ -191,11 +194,13 @@ async function processJob(db: Db, job: ProfileJob, budgetMs: number) {
                 if (cache.complete_history) {
                     const saved = await db.rpc('save_contact_conversion_cache', { p_page_id: job.page_id, p_contact_id: job.contact_id, p_payload: cache });
                     if (saved.error || !saved.data) throw new Error('Could not checkpoint the refreshed forecast source');
-                    const prediction = scoreContactForecast(saved.data as any, forecastPageName(page.fb_page_id));
-                    const issued = await db.from('contact_conversion_prediction_issues').upsert({ page_id: job.page_id, contact_id: job.contact_id,
-                        model_version: prediction.model_version, score_hour: new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString(),
-                        source_cutoff_at: cache.source_cutoff_at, prediction }, { onConflict: 'contact_id,model_version,score_hour', ignoreDuplicates: true });
-                    if (issued.error) throw new Error('Could not preserve the forecast comparison record');
+                    if (forecastPageName(page.fb_page_id)) {
+                        const prediction = scoreContactForecast(saved.data as any, forecastPageName(page.fb_page_id));
+                        const issued = await db.from('contact_conversion_prediction_issues').upsert({ page_id: job.page_id, contact_id: job.contact_id,
+                            model_version: prediction.model_version, score_hour: new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString(),
+                            source_cutoff_at: cache.source_cutoff_at, prediction }, { onConflict: 'contact_id,model_version,score_hour', ignoreDuplicates: true });
+                        if (issued.error) throw new Error('Could not preserve the forecast comparison record');
+                    }
                 }
             }
             while (job.analyzed_count < messages.length && Date.now() < deadline - 45000) {

@@ -9,6 +9,16 @@ const spend = { page_id: 'p', ad_id: '11', account_id: '22', spend_date: '2020-0
 const build = (patch: any = {}) => buildAdCalendar({ month: '2020-01', now, groups: [group], spend: [spend], inventory: [ad], ...patch });
 
 describe('acquisition-day ad economics', () => {
+ it('reports all-source cohort returns without assigning unknown customers to a creative or counting a payer twice', () => {
+  const unknown = { ...group, ad_id: null, inquiries: 5, confirmed_payers: 2, chat_confirmed_payers: 2, confirmed_payers_later: 2, finance: [{ currency: 'PHP', received_minor: 10000, refunded_minor: 0, records: 1, paid_orders: 1 }] };
+  const result = build({ groups: [{ ...group, confirmed_payers: 2 }, unknown] });
+  expect(result.overall.inquiries).toBe(15); expect(result.overall.confirmed_payers).toBe(4);
+  expect(result.days[0].overall.confirmed_cpa).toBe(25); expect(result.days[0].overall.confirmed_payers_later).toBe(2);
+  expect(result.overall.finance[0].gross).toBe(550); expect(result.days[0].overall.profit).toBe(230);
+  expect(result.ads[0].inquiries).toBe(10); expect(result.ads[0].confirmed_payers).toBe(2); expect(result.day_ads[0].profit).toBe(170);
+  const onlyUnknown = build({ adId: 'unknown', groups: [unknown] });
+  expect(onlyUnknown.overall.inquiries).toBe(5); expect(onlyUnknown.overall.spend.amount).toBeNull(); expect(onlyUnknown.overall.profit).toBeNull();
+ });
  it('keeps later outcomes in the original inquiry day and computes both conversion rates', () => {
   const day = build().days[0]; expect(day).toMatchObject({ inquiries: 10, converted: 3, converted_later: 2, conversion_rate: .3, payers: 2, payer_rate: .2 });
   expect(day.stage_lags).toEqual([1, 1, 1, 0, 0]); expect(build().days[1].inquiries).toBe(0);

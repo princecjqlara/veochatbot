@@ -17,11 +17,11 @@ const key = (page: string, ad: string | null) => JSON.stringify([page, ad]);
 const count = (value: any) => { const n = Number(value || 0); if (!Number.isSafeInteger(n) || n < 0) throw Error('Invalid or unsafe report counts'); return n; };
 const numeric = (value: any) => { const n = Number(value); if (!Number.isFinite(n) || n < 0 || n > Number.MAX_SAFE_INTEGER) throw Error('Invalid or unsafe delivery values'); return n; };
 const ratio = (a: number | null, b: number | null) => a != null && b != null && b > 0 ? a / b : null;
-const fields = ['inquiries', 'converted', 'converted_later', 'conversion_time_unknown', 'payers', 'payers_later', 'legacy_dates', 'pre_inquiry_payments'] as const;
+const fields = ['inquiries', 'converted', 'converted_later', 'conversion_time_unknown', 'orders', 'payers', 'payers_later', 'confirmed_payers', 'confirmed_payers_later', 'chat_confirmed_payers', 'reviewed_conversations', 'confirmation_stale', 'legacy_dates', 'pre_inquiry_payments'] as const;
 const delivery = ['impressions', 'clicks', 'link_clicks', 'messaging_started', 'video_plays', 'video_thruplays', 'video_complete'] as const;
 function bucket() {
- return { inquiries: 0, converted: 0, converted_later: 0, conversion_time_unknown: 0, payers: 0, payers_later: 0, legacy_dates: 0, pre_inquiry_payments: 0,
-  stage_lags: [0, 0, 0, 0, 0], paid_lags: [0, 0, 0, 0, 0], finance: new Map<string, any>(),
+ return { inquiries: 0, converted: 0, converted_later: 0, conversion_time_unknown: 0, orders: 0, payers: 0, payers_later: 0, confirmed_payers: 0, confirmed_payers_later: 0, chat_confirmed_payers: 0, reviewed_conversations: 0, confirmation_stale: 0, legacy_dates: 0, pre_inquiry_payments: 0,
+  stage_lags: [0, 0, 0, 0, 0], paid_lags: [0, 0, 0, 0, 0], confirmed_paid_lags: [0, 0, 0, 0, 0], finance: new Map<string, any>(),
   expected: 0, covered: 0, known: new Map<string, number>(), mismatched: 0, conflicting: 0, checked: [] as string[], timezones: new Set<string>(), reach: null as number | null,
   delivery: Object.fromEntries(delivery.map(field => [field, { known: 0, total: 0 }])) as Record<(typeof delivery)[number], { known: number; total: number }> };
 }
@@ -29,6 +29,7 @@ type Bucket = ReturnType<typeof bucket>;
 function addGroup(target: Bucket, group: any) {
  for (const field of fields) target[field] += count(group[field]);
  for (let index = 0; index < 5; index++) { target.stage_lags[index] += count(group.stage_lags?.[index]); target.paid_lags[index] += count(group.paid_lags?.[index]); }
+ for (let index = 0; index < 5; index++) target.confirmed_paid_lags[index] += count(group.confirmed_paid_lags?.[index]);
  for (const row of group.finance || []) {
   if (!/^[A-Z]{3}$/.test(row.currency)) throw Error('Invalid payment currency');
   const value = target.finance.get(row.currency) || { currency: row.currency, received_minor: 0, refunded_minor: 0, records: 0, paid_orders: 0, salary: 0 };
@@ -67,14 +68,14 @@ function finish(value: Bucket) {
  const comparable = finance.length === 1 && finance[0].currency === currency && spend != null ? finance[0] : null;
  const profit = comparable ? comparable.after_salary - spend! : null;
  const totals = Object.fromEntries(fields.map(field => [field, value[field]])) as Record<(typeof fields)[number], number>;
- return { ...totals, conversion_rate: ratio(value.converted, value.inquiries), payer_rate: ratio(value.payers, value.inquiries),
-  stage_lags: value.stage_lags, paid_lags: value.paid_lags, finance,
+ return { ...totals, conversion_rate: ratio(value.converted, value.inquiries), payer_rate: ratio(value.payers, value.inquiries), confirmed_payer_rate: ratio(value.confirmed_payers, value.inquiries),
+  stage_lags: value.stage_lags, paid_lags: value.paid_lags, confirmed_paid_lags: value.confirmed_paid_lags, finance,
   spend: { amount: spend, currency, complete, expected_ad_days: value.expected, covered_ad_days: value.covered, timezone_mismatch: value.mismatched, account_conflicts: value.conflicting, account_timezones: [...value.timezones],
    recorded: [...value.known].map(([currency, amount]) => ({ currency, amount })), oldest_check: value.checked.slice().sort()[0] || null, newest_check: value.checked.slice().sort().at(-1) || null },
   ...metrics, reach: value.expected === 1 ? value.reach : null,
   frequency: value.expected === 1 ? ratio(metrics.impressions, value.reach) : null,
   ctr: ratio(metrics.clicks, metrics.impressions), link_ctr: ratio(metrics.link_clicks, metrics.impressions), cpc: ratio(spend, metrics.clicks), cpm: metrics.impressions ? ratio(spend, metrics.impressions / 1000) : null,
-  cost_per_messaging: ratio(spend, metrics.messaging_started), cost_per_inquiry: ratio(spend, value.inquiries), cpa: ratio(spend, value.payers), cost_per_stage_conversion: ratio(spend, value.converted),
+  cost_per_messaging: ratio(spend, metrics.messaging_started), cost_per_inquiry: ratio(spend, value.inquiries), cpa: ratio(spend, value.payers), confirmed_cpa: ratio(spend, value.confirmed_payers), cost_per_stage_conversion: ratio(spend, value.converted),
   profit, gross_roas: comparable ? ratio(comparable.gross, spend) : null, after_salary_roas: comparable ? ratio(comparable.after_salary, spend) : null, net_roas: ratio(profit, spend),
   financial_currency_mismatch: finance.length > 0 && currency != null && (finance.length !== 1 || finance[0].currency !== currency), financial_verified: finance.length > 0 };
 }
@@ -86,9 +87,11 @@ export function buildAdCalendar(input: { month: string; now?: number; groups: an
  for (const row of [...input.groups, ...input.spend]) if (row.ad_id && !ads.has(key(row.page_id, row.ad_id))) ads.set(key(row.page_id, row.ad_id), { page_id: row.page_id, ad_id: row.ad_id, ad_account_id: row.account_id || null });
  const selected = [...ads.values()].filter(ad => !input.adId || ad.ad_id === input.adId);
  const daily = new Map(range.days.map(day => [day, bucket()])), total = bucket(), unknown = new Map(range.days.map(day => [day, bucket()])), unknownTotal = bucket();
+ const overallDays = new Map(range.days.map(day => [day, bucket()])), overall = bucket();
  const adTotals = new Map(selected.map(ad => [key(ad.page_id, ad.ad_id), bucket()])), adDays = new Map(selected.map(ad => [key(ad.page_id, ad.ad_id), bucket()]));
  for (const group of input.groups) {
   if (!daily.has(group.day)) continue;
+  if (!input.adId || input.adId === 'unknown' && !group.ad_id || input.adId === group.ad_id) { addGroup(overallDays.get(group.day)!, group); addGroup(overall, group); }
   if (!group.ad_id) { addGroup(unknown.get(group.day)!, group); addGroup(unknownTotal, group); if (input.adId !== 'unknown') continue; }
   if (input.adId && input.adId !== 'unknown' && group.ad_id !== input.adId) continue;
   addGroup(daily.get(group.day)!, group); addGroup(total, group);
@@ -98,14 +101,16 @@ export function buildAdCalendar(input: { month: string; now?: number; groups: an
  for (const row of input.spend) { const id = JSON.stringify([row.page_id, row.ad_id, row.spend_date]); if (!spendRows.has(id)) spendRows.set(id, []); spendRows.get(id)!.push(row); }
  for (const ad of selected) for (const day of range.days) if (day <= range.today) {
   const rows = spendRows.get(JSON.stringify([ad.page_id, ad.ad_id, day])) || [], id = key(ad.page_id, ad.ad_id);
-  addSpend(daily.get(day)!, rows, ad); addSpend(total, rows, ad); addSpend(adTotals.get(id)!, rows, ad); if (day === selectedDay) addSpend(adDays.get(id)!, rows, ad);
+  addSpend(daily.get(day)!, rows, ad); addSpend(total, rows, ad); addSpend(overallDays.get(day)!, rows, ad); addSpend(overall, rows, ad); addSpend(adTotals.get(id)!, rows, ad); if (day === selectedDay) addSpend(adDays.get(id)!, rows, ad);
  }
  return { range, selected_day: selectedDay, generated_at: new Date(now).toISOString(), salary_rate: .4,
-  summary: finish(total), unattributed: finish(unknownTotal), days: range.days.map(day => ({ day, future: day > range.today, partial: day === range.today, ...finish(daily.get(day)!), unattributed_inquiries: unknown.get(day)!.inquiries })),
+  summary: finish(total), overall: finish(overall), unattributed: finish(unknownTotal), days: range.days.map(day => ({ day, future: day > range.today, partial: day === range.today, ...finish(daily.get(day)!), overall: finish(overallDays.get(day)!), unattributed_inquiries: unknown.get(day)!.inquiries })),
   ads: selected.map(ad => ({ ...finish(adTotals.get(key(ad.page_id, ad.ad_id))!), ad })).sort((a, b) => b.inquiries - a.inquiries),
   day_ads: selected.map(ad => ({ ...finish(adDays.get(key(ad.page_id, ad.ad_id))!), ad })).sort((a, b) => b.inquiries - a.inquiries),
   inventory: [...ads.values()],
   definitions: { attribution: 'First verified originating ad and inquiry date. Later conversions, deposits, balances and refunds update that original cohort. Unknown sources receive no ad-spend allocation.',
+   overall: 'The overall calendar includes unknown-source customers and their recorded receipts, deducting total imported Page ad spend once. Creative-specific returns include only that verified originating ad; unknown-source receipts are never allocated to a creative.',
+   confirmations: 'Confirmed customers combine unique ledger payers and documented Page payment acknowledgements, counting an overlap once. Cached conversation evidence is dated at its source cutoff; newer activity is flagged. A chat acknowledgement does not create a verified cash amount or bank confirmation.',
    revenue: 'Verified receipts including deposits, minus refunds, from this cohort through the report time. Missing financial records are not assumed unpaid. Repeat receipts remain credited to the first origin.',
    salary: '40% of positive recorded revenue after refunds per acquisition-day/creative cohort, then added across cohorts. Refunds do not create negative payroll credits. This is a modeled allowance, not payroll verification; other expenses and taxes are excluded.',
    payers: 'Unique customers with a non-void verified receipt. Deposits and balances do not count as separate acquisitions. Refunds reduce revenue while retaining the acquisition history.',
