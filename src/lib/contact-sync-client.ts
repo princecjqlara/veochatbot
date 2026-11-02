@@ -1,3 +1,5 @@
+import { DatabaseReadTimeout, requestDeadline } from './request-deadline';
+
 export type ContactSyncResponse = {
     success?: boolean;
     partial?: boolean;
@@ -85,10 +87,12 @@ async function postSync(
         syncRunId: string;
     }
 ): Promise<ContactSyncResponse> {
+    try { return await requestDeadline(async signal => {
     const response = await fetch(`/api/pages/${pageId}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        signal,
         body: JSON.stringify({
             forceFullSync: true,
             paged: true,
@@ -100,6 +104,10 @@ async function postSync(
     });
 
     return parseSyncResponse(response);
+    }, 90000); } catch (error) {
+        if (error instanceof DatabaseReadTimeout) throw new ContactSyncRequestError('Contact sync timed out. Retry from Contacts to continue.', 504);
+        throw error;
+    }
 }
 
 export async function runContactSyncToCompletion(

@@ -37,6 +37,19 @@ describe('webhook reconnect protection', () => {
 });
 
 describe('getFacebookPages', () => {
+    it('does not return a partial Page list after a failed pagination request', async () => {
+        const fetcher = vi.fn().mockResolvedValueOnce(createJsonResponse(true, { data: [{ id: '100' }], paging: { next: 'https://graph.facebook.com/v21.0/me/accounts?after=next' } }))
+            .mockResolvedValueOnce(createJsonResponse(false, { error: { code: 190, message: 'Expired token' } }, 400));
+        vi.stubGlobal('fetch', fetcher);
+        await expect(getFacebookPages('token')).rejects.toMatchObject({ requiresReauth: true }); expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+    it('rejects repeated Page cursors and never follows a Page-token link to another host', async () => {
+        const next = 'https://graph.facebook.com/v21.0/me/accounts?after=repeat';
+        const fetcher = vi.fn().mockResolvedValue(createJsonResponse(true, { data: [], paging: { next } })); vi.stubGlobal('fetch', fetcher);
+        await expect(getFacebookPages('token')).rejects.toThrow('pagination'); expect(fetcher).toHaveBeenCalledTimes(2);
+        fetcher.mockClear().mockResolvedValue(createJsonResponse(true, { data: [], paging: { next: 'https://other.example/accounts' } }));
+        await expect(getFacebookPages('token')).rejects.toThrow('pagination'); expect(fetcher).toHaveBeenCalledTimes(1);
+    });
     it('classifies Facebook /me permission failures as reauthorization required', async () => {
         const fetchMock = vi.fn().mockResolvedValue(
             createJsonResponse(

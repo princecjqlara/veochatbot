@@ -27,6 +27,11 @@ function createRequest(): NextRequest {
 }
 
 describe('GET /api/facebook/pages', () => {
+    it('offers Facebook reauthorization instead of a misleading empty Page list when login lacks a Facebook token', async () => {
+        mocks.getServerSession.mockResolvedValue({ user: { id: 'owner' } });
+        const response = await GET(createRequest()); expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ requiresReauth: true, code: 'FACEBOOK_REAUTH_REQUIRED' }); expect(mocks.getFacebookPages).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         vi.clearAllMocks();
     });

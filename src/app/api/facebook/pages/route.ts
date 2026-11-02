@@ -5,6 +5,7 @@ import { getFacebookPages, isFacebookReauthRequired } from '@/lib/facebook';
 import { FACEBOOK_REAUTH_MESSAGE } from '@/lib/facebook-permissions';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 // GET /api/facebook/pages - Get user's Facebook pages
 export async function GET(request: NextRequest) {
@@ -22,12 +23,12 @@ export async function GET(request: NextRequest) {
         // With email/password login, this endpoint returns empty pages
         // Pages should be connected via the admin or API with stored tokens
         if (!session.accessToken) {
-            return NextResponse.json({ pages: [], message: 'No Facebook token available' });
+            return NextResponse.json({ error: 'Facebook authorization required', pages: [], code: 'FACEBOOK_REAUTH_REQUIRED', requiresReauth: true, message: 'Use Refresh Permissions to sign in with Facebook and grant access to your Pages.' }, { status: 409, headers: { 'Cache-Control': 'no-store' } });
         }
 
         const pages = await getFacebookPages(session.accessToken);
 
-        return NextResponse.json({ pages });
+        return NextResponse.json({ pages }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
         console.error('Error fetching Facebook pages:', error);
         if (isFacebookReauthRequired(error)) {

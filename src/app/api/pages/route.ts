@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { DatabaseReadTimeout, requestDeadline } from '@/lib/request-deadline';
+import { facebookWebhookConnectionStatus } from '@/lib/facebook-page-connection';
 
 export const dynamic = 'force-dynamic';
 
@@ -127,12 +128,13 @@ export async function GET(request: NextRequest) {
             ?.map((up) => Array.isArray(up.pages) ? up.pages[0] : up.pages)
             .filter(Boolean) || []) as PageRecord[];
 
-        const pageStatuses = await Promise.all(
-            pageRecords.map(async (page) => ({
-                page,
-                tokenStatus: await getPageTokenStatus(page)
-            }))
-        );
+        const connectionDetails = request.nextUrl?.searchParams.get('connectionDetails') === '1';
+        const pageStatuses = await Promise.all(pageRecords.map(async page => {
+            const tokenStatus = await getPageTokenStatus(page);
+            const webhookStatus = connectionDetails && tokenStatus !== 'invalid' && page.access_token
+                ? await facebookWebhookConnectionStatus(page.fb_page_id, page.access_token, process.env.FACEBOOK_CLIENT_ID) : 'unknown';
+            return { page, tokenStatus, webhookStatus };
+        }));
 
         const sortedPages = pageStatuses
             .sort((a, b) => {
@@ -149,13 +151,16 @@ export async function GET(request: NextRequest) {
             });
 
         const pages = sortedPages
-            .filter(({ tokenStatus }) => tokenStatus !== 'invalid')
-            .map(({ page }) => withoutAccessToken(page));
+            .filter(({ tokenStatus, webhookStatus }) => tokenStatus !== 'invalid' && webhookStatus !== 'incomplete')
+            .map(({ page, tokenStatus, webhookStatus }) => ({ ...withoutAccessToken(page),
+                ...(connectionDetails ? { connectionStatus: tokenStatus === 'valid' && webhookStatus === 'ready' ? 'ready' : 'unknown' } : {})
+            }));
         const reconnectRequiredPages = sortedPages
-            .filter(({ tokenStatus }) => tokenStatus === 'invalid')
-            .map(({ page }) => ({
+            .filter(({ tokenStatus, webhookStatus }) => tokenStatus === 'invalid' || webhookStatus === 'incomplete')
+            .map(({ page, webhookStatus }) => ({
                 ...withoutAccessToken(page),
-                requiresReconnect: true
+                requiresReconnect: true,
+                ...(webhookStatus === 'incomplete' ? { connectionSetupIncomplete: true } : {})
             }));
 
         return NextResponse.json({ pages, reconnectRequiredPages });

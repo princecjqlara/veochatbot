@@ -4,6 +4,12 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { subscribePageToAppWebhook, getPageTemplates, createUtilityTemplate } from '@/lib/facebook';
 import { UTILITY_TEMPLATES } from '@/lib/facebook-templates';
 import type { UtilityTemplate } from '@/lib/facebook';
+import { isFacebookReauthRequired } from '@/lib/facebook';
+import { DatabaseReadTimeout, requestDeadline } from '@/lib/request-deadline';
+import { FacebookPageConnectionError, verifyFacebookPageConnection } from '@/lib/facebook-page-connection';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 90;
 
 type WebhookRefreshWarning = {
     code: 'WEBHOOK_SUBSCRIPTION_FAILED';
@@ -13,7 +19,7 @@ type WebhookRefreshWarning = {
 // POST /api/facebook/connect - Connect a Facebook page
 export async function POST(request: NextRequest) {
     try {
-        const session = await getSessionFromRequest(request);
+        const session = await requestDeadline(() => getSessionFromRequest(request), 10000);
 
         if (!session) {
             console.error('🔴 No session found in /api/facebook/connect');
@@ -37,10 +43,12 @@ export async function POST(request: NextRequest) {
             userId 
         });
 
-        const body = await request.json();
-        const { fbPageId, name, accessToken } = body;
+        let body;
+        try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid request', message: 'Choose a Page and retry Connect.' }, { status: 400 }); }
+        const { fbPageId, name, accessToken } = body || {};
 
-        if (!fbPageId || !name || !accessToken) {
+        if (typeof fbPageId !== 'string' || !/^\d{1,100}$/.test(fbPageId) || typeof name !== 'string' || !name.trim() || name.length > 500 ||
+            typeof accessToken !== 'string' || !accessToken.trim() || accessToken.length > 8192) {
             return NextResponse.json(
                 { error: 'Bad Request', message: 'Missing required fields: fbPageId, name, accessToken' },
                 { status: 400 }
@@ -50,64 +58,74 @@ export async function POST(request: NextRequest) {
         const supabase = getSupabaseAdmin();
 
         // Check if page already exists
-        const { data: existingPage } = await supabase
+        const { data: existingPage, error: lookupError } = await requestDeadline(signal => supabase
             .from('pages')
             .select('id')
             .eq('fb_page_id', fbPageId)
-            .single();
+            .abortSignal(signal).maybeSingle(), 10000);
+        if (lookupError) throw lookupError;
+        const verified = await verifyFacebookPageConnection(fbPageId, accessToken);
 
         let pageId: string;
 
         if (existingPage) {
             // Update existing page with new access token
-            const { error: updateError } = await supabase
+            const { data: updatedPage, error: updateError } = await requestDeadline(signal => supabase
                 .from('pages')
                 .update({
                     access_token: accessToken,
-                    name,
+                    name: verified.name || name.trim(),
                     updated_at: new Date().toISOString()
                 })
-                .eq('id', existingPage.id);
+                .eq('id', existingPage.id).select('id').abortSignal(signal).single(), 10000);
 
             if (updateError) throw updateError;
-            pageId = existingPage.id;
+            if (!updatedPage?.id) throw new Error('Page token update did not return a saved Page');
+            pageId = updatedPage.id;
         } else {
             // Create new page
-            const { data: newPage, error: pageError } = await supabase
+            const { data: newPage, error: pageError } = await requestDeadline(signal => supabase
                 .from('pages')
-                .insert({
+                .upsert({
                     fb_page_id: fbPageId,
-                    name,
+                    name: verified.name || name.trim(),
                     access_token: accessToken
-                })
+                }, { onConflict: 'fb_page_id' })
                 .select('id')
-                .single();
+                .abortSignal(signal).single(), 10000);
 
             if (pageError) throw pageError;
+            if (!newPage?.id) throw new Error('Page connection did not return a saved Page');
             pageId = newPage.id;
         }
 
         // Link user to page
-        const { error: linkError } = await supabase
+        const { data: linkedPage, error: linkError } = await requestDeadline(signal => supabase
             .from('user_pages')
             .upsert({
                 user_id: userId,
                 page_id: pageId
             }, {
                 onConflict: 'user_id,page_id'
-            });
+            }).select('page_id').abortSignal(signal).single(), 10000);
 
         if (linkError) throw linkError;
+        if (linkedPage?.page_id !== pageId) throw new Error('Page membership could not be verified after saving');
 
         let warning: WebhookRefreshWarning | null = null;
         try {
-            await subscribePageToAppWebhook(fbPageId, accessToken, ['messages', 'messaging_postbacks', 'message_echoes']);
+            await requestDeadline(signal => subscribePageToAppWebhook(fbPageId, accessToken, ['messages', 'messaging_postbacks', 'message_echoes'], signal), 8000);
         } catch (subscriptionError) {
-            console.error('🔴 Failed to subscribe page to webhook events:', subscriptionError);
+            console.error('[PAGE_CONNECT] Webhook subscription unavailable', { pageId, requiresReauth: isFacebookReauthRequired(subscriptionError) });
             warning = {
                 code: 'WEBHOOK_SUBSCRIPTION_FAILED',
-                message: `Page token was refreshed, but webhook subscription could not be refreshed. ${(subscriptionError as Error).message}`
+                message: isFacebookReauthRequired(subscriptionError)
+                    ? 'Page access was saved, but Facebook requires renewed permissions to enable live message updates. Use Refresh Permissions, then Reconnect.'
+                    : 'Page access was saved, but live message updates could not be enabled. Retry Reconnect to finish setup.'
             };
+            return NextResponse.json({ success: false, saved: true, pageId, warning, code: warning.code,
+                requiresReauth: isFacebookReauthRequired(subscriptionError), retryable: !isFacebookReauthRequired(subscriptionError), message: warning.message },
+                { status: 409, headers: { 'Cache-Control': 'no-store' } });
         }
 
         // Fire-and-forget: auto-submit all UTILITY_TEMPLATES to the newly connected page
@@ -119,12 +137,16 @@ export async function POST(request: NextRequest) {
             success: true,
             pageId,
             warning,
-            message: warning?.message || 'Page connected successfully'
-        });
+            webhookSubscribed: true,
+            message: 'Page connected successfully'
+        }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
-        console.error('Error connecting Facebook page:', error);
+        if (error instanceof FacebookPageConnectionError) return NextResponse.json({ success: false, error: 'Page connection incomplete', message: error.message, code: error.code, requiresReauth: error.requiresReauth, retryable: error.retryable }, { status: error.status, headers: { 'Cache-Control': 'no-store' } });
+        if (error instanceof DatabaseReadTimeout || ['PGRST000', 'PGRST001', 'PGRST002', '57014'].includes(String((error as any)?.code)) || /fetch failed|network|timeout/i.test((error as any)?.message || ''))
+            return NextResponse.json({ success: false, error: 'Database unavailable', message: 'The database is not responding, so this Page connection could not be completed. Please retry shortly.', code: 'DATABASE_UNAVAILABLE', retryable: true }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+        console.error('[PAGE_CONNECT] Save failed', { code: (error as any)?.code || 'UNKNOWN' });
         return NextResponse.json(
-            { error: 'Failed to connect page', message: (error as Error).message },
+            { success: false, error: 'Failed to connect page', message: 'The Page connection could not be saved. Please retry.' },
             { status: 500 }
         );
     }

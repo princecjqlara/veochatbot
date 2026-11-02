@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest as RequestWithUrl } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
@@ -58,6 +59,7 @@ function createSupabaseMock() {
 }
 
 describe('GET /api/pages', () => {
+    afterEach(() => { vi.unstubAllEnvs(); });
     beforeEach(() => {
         vi.clearAllMocks();
         vi.unstubAllGlobals();
@@ -77,6 +79,22 @@ describe('GET /api/pages', () => {
                 }
             );
         }));
+    });
+
+    it('shows a saved Page as setup incomplete when this app is not subscribed', async () => {
+        vi.stubEnv('FACEBOOK_CLIENT_ID', 'app-id');
+        vi.stubGlobal('fetch', vi.fn(async (value: string | URL) => {
+            const url = new URL(value);
+            const missing = url.pathname.includes('697291860141214');
+            return new Response(JSON.stringify(url.pathname.endsWith('/subscribed_apps')
+                ? { data: missing ? [] : [{ id: 'app-id' }] } : { id: url.pathname.split('/').at(-1) }), { status: 200 });
+        }));
+        mocks.getSessionFromRequest.mockResolvedValue({ user: { id: 'user_1' } });
+        mocks.getSupabaseAdmin.mockReturnValue(createSupabaseMock());
+        const response = await GET(new RequestWithUrl('https://app.test/api/pages?connectionDetails=1')), body = await response.json();
+        expect(response.status).toBe(200); expect(body.pages).toHaveLength(1); expect(body.pages[0].connectionStatus).toBe('ready');
+        expect(body.reconnectRequiredPages[0]).toMatchObject({ fb_page_id: '697291860141214', connectionSetupIncomplete: true });
+        expect(JSON.stringify(body)).not.toContain('old_invalid_token'); expect(JSON.stringify(body)).not.toContain('fresh_valid_token');
     });
 
     it('returns the most recently refreshed page first', async () => {

@@ -3,6 +3,7 @@ import { FACEBOOK_REAUTH_MESSAGE } from './facebook-permissions';
 import { isFacebookReauthMessage } from './facebook-errors';
 import type { TemplateMediaType } from './facebook-templates';
 import { getUtilityTemplateParameterValidationError } from './send-errors';
+import { DatabaseReadTimeout, requestDeadline } from './request-deadline';
 
 // Re-export templates from dedicated file
 export { UTILITY_TEMPLATES } from './facebook-templates';
@@ -138,39 +139,27 @@ export async function getFacebookPages(userAccessToken: string): Promise<Faceboo
         pagesUrl.searchParams.set('limit', '100');
         pagesUrl.searchParams.set('access_token', userAccessToken);
 
-        // Fetch all pages - this includes regular pages and business pages the user manages
-        const response = await fetch(pagesUrl);
-
-        if (!response.ok) {
-            throw await readFacebookError(response, '/me/accounts');
-        }
-
-        const data = await response.json();
-        const pages = data.data || [];
-
-        // Handle pagination if there are more than 100 pages
-        let nextUrl = data.paging?.next;
-        while (nextUrl) {
-            try {
-                const nextResponse = await fetch(nextUrl);
-                if (nextResponse.ok) {
-                    const nextData = await nextResponse.json();
-                    if (nextData.data) {
-                        pages.push(...nextData.data);
-                    }
-                    nextUrl = nextData.paging?.next;
-                } else {
-                    break;
+        return await requestDeadline(async signal => {
+            const pages = new Map<string, FacebookPage>(), seen = new Set<string>();
+            let nextUrl: URL | null = pagesUrl;
+            while (nextUrl) {
+                if (nextUrl.protocol !== 'https:' || nextUrl.hostname !== 'graph.facebook.com' || seen.has(nextUrl.toString()) || seen.size >= 100)
+                    throw new Error('Facebook Page pagination did not complete. Please retry.');
+                seen.add(nextUrl.toString());
+                const response: Response = await fetch(nextUrl, { signal, cache: 'no-store' });
+                if (!response.ok) throw await readFacebookError(response, '/me/accounts');
+                const data: { data?: FacebookPage[]; paging?: { next?: string } } = await response.json();
+                if (!Array.isArray(data.data)) throw new Error('Facebook returned an incomplete Page list. Please retry.');
+                for (const page of data.data) {
+                    if (typeof page.id !== 'string' || !page.id) throw new Error('Facebook returned an invalid Page. Please retry.');
+                    pages.set(page.id, page);
                 }
-            } catch (paginationError) {
-                console.warn('Error fetching paginated pages:', paginationError);
-                break;
+                nextUrl = data.paging?.next ? new URL(data.paging.next) : null;
             }
-        }
-
-        console.log(`Fetched ${pages.length} Facebook pages (including business pages if available)`);
-        return pages;
+            return [...pages.values()];
+        }, 40000);
     } catch (error) {
+        if (error instanceof DatabaseReadTimeout) throw new FacebookGraphApiError('Facebook Page listing timed out. Please retry.', { status: 503 });
         console.error('Error fetching Facebook pages:', error);
         throw error;
     }
@@ -355,7 +344,8 @@ export async function getUserProfile(
 export async function subscribePageToAppWebhook(
     pageId: string,
     pageAccessToken: string,
-    subscribedFields: string[] = ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals']
+    subscribedFields: string[] = ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'],
+    signal?: AbortSignal
 ): Promise<void> {
     const formData = new URLSearchParams();
     formData.set('access_token', pageAccessToken);
@@ -371,19 +361,21 @@ export async function subscribePageToAppWebhook(
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
             },
-            body: formData.toString()
+            body: formData.toString(),
+            ...(signal ? { signal } : {})
         }
     );
 
     const result = await response
         .json()
-        .catch(() => ({} as { error?: { message?: string }; success?: boolean }));
+        .catch(() => ({} as { error?: { message?: string; code?: number }; success?: boolean }));
 
     if (!response.ok) {
         const errorMessage =
             result.error?.message ||
             `HTTP ${response.status}: ${response.statusText}`;
-        throw new Error(errorMessage);
+        throw new FacebookGraphApiError(errorMessage, { status: response.status, code: result.error?.code,
+            requiresReauth: [10, 190, 200].includes(Number(result.error?.code)) || /pages_manage_metadata|pages_messaging/i.test(errorMessage) || isFacebookReauthMessage(errorMessage) });
     }
 
     if (!result.success) {
