@@ -4,6 +4,54 @@ Historical lead repairs run directly against retained Messenger evidence and
 read-only Graph responses. They never call OpenRouter, generate customer replies,
 or turn a lead stage into a verified cash amount.
 
+## Connected-Page refetch and whole-system coverage
+
+The refresh worker probes current conversation access and bulk-reads only
+connected Pages with an app membership. Rejected connections are excluded;
+temporary failures remain unverified. Pages with zero stored contacts are
+included so their first conversations can be discovered.
+
+An explicit refresh request is recorded in ignored
+`.vercel/historical-leads/connected-refetch-request.json`. Its `requested_at`
+must be an ISO timestamp. Histories saved before that timestamp are fetched
+again. The same timestamp survives restarts, allowing newly completed reads to
+be reused. Inbox-head refreshes update existing conversation timestamps while
+retaining unfinished pagination. A matching old inbox ID is never enough to
+declare a cached history current.
+
+The supervisor enables `--discover-new-contacts` on inbox collection. This mode
+inserts verified, previously unknown Page/customer identities and journals them
+in `app_private.lead_contact_discovery_journal`. Repeated reads preserve existing
+names, tags, stages, dates and bot controls. First inquiry dates remain unknown
+until full-message evidence establishes them. Discovery aborts if it queues AI
+profile work. Running the collector without this flag remains read-only in the
+database.
+
+`refetch-connected-ad-data.mjs` refreshes connected-Page ad previews and, when
+the worker has a Facebook user token in `META_USER_ACCESS_TOKEN`, verified ad
+inventory and daily delivery/spend. The default reporting period is the previous
+month through today; explicit `--from` and `--to` dates may cover up to 94 days.
+Only creatives proving ownership by a connected Page can be imported. Missing
+Insight rows become reported zero only after a complete filtered account report.
+Failed reports retain unknown coverage. Budgets and payment records are unchanged.
+The worker records unavailable ad-account access separately from Page access;
+the signed-in calendar can use its own Facebook session for existing ad imports.
+
+`audit-retained-system-data.mjs` reads all recognized raw-history export folders,
+the retained repair manifest and the newer Graph archive. It verifies hashes,
+deduplicates Page/customer identities, rejects partial or undated evidence, and
+reports coverage against the last saved full database inventory. Older export
+contact IDs may represent unsynced discoveries; they are not proof a contact
+exists in the live database. Raw sources and the generated registry stay ignored.
+This offline audit never certifies current connections, current database totals,
+bank receipts or complete ad inventory. Its dated coverage counts must not be
+presented as a freshly measured live backlog.
+
+Source collection, new-contact discovery, ad inventory, daily spend, verified
+receipt amounts, full profile reviews and current database reconciliation are
+separate checks. Completing a 250-contact repair batch or checking a saved history
+does not complete the whole system.
+
 1. Run `audit-historical-leads.mjs`. The audit checks full archived histories,
    exact customer/Page identities, source cutoffs, first inquiry messages and
    administrative stage notices. Private manifests retain source paths and SHA256

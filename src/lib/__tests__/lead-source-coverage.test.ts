@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { backfillCoverageComplete, conversationIndex, databaseRetryDelay, retryableSourceError, sourceCoverageComplete } from '../../../scripts/lib/lead-source-coverage.mjs';
+import { backfillCoverageComplete, conversationIndex, databaseRetryDelay, mergeConversationRows, retryableSourceError, sourceCoversRefresh, sourceCoverageComplete } from '../../../scripts/lib/lead-source-coverage.mjs';
 const page = { id: 'p', fb_page_id: '100', name: 'Sample Page' };
 describe('full historical source coverage', () => {
+ it('refreshes newer activity and honors an explicit refetch even when the cached inbox identifier is unchanged', () => {
+  expect(sourceCoversRefresh('2026-11-01T12:00:00Z', '2026-11-02T00:00:00Z')).toBe(false);
+  expect(sourceCoversRefresh('2026-11-01T12:00:00Z', '2026-11-01T00:00:00Z', '2026-11-02T00:00:00Z')).toBe(false);
+  expect(sourceCoversRefresh('2026-11-02T12:00:00Z', '2026-11-02T01:00:00Z', '2026-11-02T00:00:00Z')).toBe(true);
+  expect(sourceCoversRefresh('2026-11-02T12:00:00Z', 'invalid')).toBe(false);
+ });
+ it('updates repeated conversations from the fresh inbox head without dropping saved pagination rows', () => {
+  const merged = mergeConversationRows([{ id: 'old', updated_time: '2026-11-01T00:00:00Z' }, { id: 'retained', updated_time: '2026-10-01T00:00:00Z' }], [{ id: 'old', updated_time: '2026-11-02T00:00:00Z' }, { id: 'new', updated_time: '2026-11-02T01:00:00Z' }]);
+  expect(merged).toHaveLength(3); expect(merged.find(row => row.id === 'old')?.updated_time).toBe('2026-11-02T00:00:00Z');
+  expect(mergeConversationRows(merged, [{ id: 'old', updated_time: '2026-10-01T00:00:00Z' }]).find(row => row.id === 'old')?.updated_time).toBe('2026-11-02T00:00:00Z');
+ });
  it('resumes an interrupted inbox at its saved cursor and preserves its source date', () => {
   const old = { page_id: 'p', fb_page_id: '100', started_at: '2026-11-01T00:00:00Z', complete: false, next: '100/conversations?after=saved', conversations: [{ id: 'thread' }], error: { code: 23 } };
   const resumed = conversationIndex(page, old);
@@ -24,6 +35,8 @@ describe('full historical source coverage', () => {
   expect(backfillCoverageComplete(receipt, { ...receipt, pages: [{ page_id: 'other', complete: true }] })).toBe(false);
   expect(backfillCoverageComplete(receipt, { ...receipt, errors: [{ code: 404 }] })).toBe(false);
   expect(backfillCoverageComplete(receipt, { ...receipt, completed_at: null })).toBe(false);
+  expect(backfillCoverageComplete(receipt, { ...receipt, scope_check_complete: false })).toBe(false);
+  expect(backfillCoverageComplete({ ...receipt, scope: 'connected_pages' }, { ...receipt, scope: 'all_pages' })).toBe(false);
   expect(backfillCoverageComplete(receipt, { ...receipt, completed_at: '2026-11-01T23:00:00Z' })).toBe(false);
   expect(backfillCoverageComplete(receipt, { ...receipt, pages: [{ ...receipt.pages[0], index_started_at: '2026-10-31T00:00:00Z' }] })).toBe(false);
  });
