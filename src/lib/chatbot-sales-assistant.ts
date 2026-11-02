@@ -37,10 +37,11 @@ export const DEFAULT_SALES_SETTINGS: SalesSettings = {
         retail: 'Retail', hardware: 'Retail', clinic: 'Healthcare', dental: 'Healthcare' }
 };
 
-/** The additive migration opts existing commercial Pages into the new guidance.
- * Unmigrated installations retain their previous behavior. */
+/** The migration's empty JSON default is not an opt-in. Keep the existing Page
+ * flow until the owner saves actual sales-assistant settings. */
 export function usesSalesAssistant(config: SalesConfig): boolean {
-    return config.commercial_video_intake_enabled === true && !!config.sales_assistant_settings && typeof config.sales_assistant_settings === 'object';
+    if (config.commercial_video_intake_enabled !== true || !config.sales_assistant_settings || typeof config.sales_assistant_settings !== 'object' || Array.isArray(config.sales_assistant_settings)) return false;
+    return Object.keys(DEFAULT_SALES_SETTINGS).some(key => Object.prototype.hasOwnProperty.call(config.sales_assistant_settings, key));
 }
 export function salesSettings(value: unknown): SalesSettings {
     const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<SalesSettings> : {};
@@ -213,9 +214,10 @@ export function renderSalesMessages(input: {
         if (included.length) messages.push('Sa approved ' + rate.packageName + ' (' + rate.durationSeconds + '-second) package, kasama ang ' + included.join(', ') + '.');
     }
     const formRequested = /(?:send|show|open|resend|pahingi|paki|reopen|ulit|fill|sagutan).{0,30}form|form.{0,15}(?:ulit|please|po)/i.test(input.customerMessage);
+    const webFormRequested = formRequested && /\b(?:link|online|website|web|browser)\b/i.test(input.customerMessage);
     if ((!formOffered && !input.followUp && !input.buyingIntent) || (formRequested && !input.followUp)) {
         messages.push('Optional quick form: puwede mong sagutan ito para mas mabilis, o tuloy lang tayo sa chat. Hindi kailangang kumpletuhin bago mag-proceed.' +
-            (input.formUrl ? '\n' + input.formUrl : '\n' + settings.fields.filter(field => field.enabled).map(field => field.label + ': ' + (details[field.label] || '')).join('\n')));
+            (input.formUrl && webFormRequested ? '\n' + input.formUrl : '\n' + settings.fields.filter(field => field.enabled).map(field => field.label + ': ' + (details[field.label] || '')).join('\n')));
     }
     const missing = salesDetailProgress(details, settings).missing_details;
     const unanswered = missing.find(label => settings.fields.find(field => field.label === label)?.question !== progress.last_question) || missing[0];

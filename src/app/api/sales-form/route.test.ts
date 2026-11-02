@@ -15,7 +15,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     mocks.upsert.mockResolvedValue({ error: null });
     mocks.from.mockImplementation((table: string) => {
-        const data = table === 'chatbot_configs' ? { commercial_video_intake_enabled: true, sales_assistant_settings: {}, enabled: true, follow_up_enabled: false } :
+        const data = table === 'chatbot_configs' ? { commercial_video_intake_enabled: true, sales_assistant_settings: { collection_enabled: true }, enabled: true, follow_up_enabled: false } :
             table === 'contacts' ? { id: contactId, last_inbound_at: new Date().toISOString(), pipeline_stage: 'engaged' } : state;
         const chain: any = { select: () => chain, eq: () => chain, maybeSingle: async () => ({ data, error: null }), upsert: mocks.upsert };
         return chain;

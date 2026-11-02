@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateChatbotResponse, generateChatbotFollowUp, type ChatbotConfig } from '@/lib/chatbot';
-import { DEFAULT_SALES_SETTINGS, mergeSalesChatDetails, salesSettings, salesDetailProgress, salesAssumptions, validateSalesSettings, type SalesProgress } from '@/lib/chatbot-sales-assistant';
+import { DEFAULT_SALES_SETTINGS, mergeSalesChatDetails, salesSettings, salesDetailProgress, salesAssumptions, validateSalesSettings, usesSalesAssistant, chatbotPricingEnabled, type SalesProgress } from '@/lib/chatbot-sales-assistant';
 import { createSalesFormToken, verifySalesFormToken, mergeSalesRecord } from '@/lib/chatbot-sales-store';
 import { getPricingQuoteContext } from '@/lib/chatbot-pricing';
 import { evaluateCommercialVideoIntake } from '@/lib/chatbot-policy';
@@ -8,7 +8,7 @@ import { OWNER_PRICING_CATALOGS } from '@/lib/chatbot-pricing-catalogs';
 import type { FacebookMessage } from '@/types';
 import { videoPreferences } from './fixtures/commercial-video';
 
-const config = { commercial_video_intake_enabled: true, sales_assistant_settings: {}, page_id: 'page', enabled: true,
+const config = { commercial_video_intake_enabled: true, sales_assistant_settings: { ...DEFAULT_SALES_SETTINGS }, page_id: 'page', enabled: true,
     model: 'test', instructions: 'Natural Taglish, no emojis.', rag_enabled: false, details_to_collect: [], details_completion_percent: 100,
     follow_up_ai_instructions: 'Read previous messages.', split_messages: true } as unknown as ChatbotConfig;
 const settings = salesSettings({});
@@ -25,10 +25,26 @@ beforeEach(() => { process.env.OPENROUTER_API_KEY = 'test'; plan(); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); delete process.env.OPENROUTER_API_KEY; delete process.env.CHATBOT_FORM_SECRET; });
 
 describe('required sales scenarios', () => {
+    it('keeps the legacy in-chat sales and pricing flow for empty migration settings', async () => {
+        const legacy = { ...config, sales_assistant_settings: {} };
+        expect(usesSalesAssistant(legacy)).toBe(false); expect(chatbotPricingEnabled(legacy)).toBe(true);
+        expect(usesSalesAssistant({ ...legacy, sales_assistant_settings: [] })).toBe(false);
+        expect(usesSalesAssistant({ ...legacy, sales_assistant_settings: { unrelated: true } })).toBe(false);
+        plan({}, ['Optional quick form: https://agency.test/sales-form?token=old']);
+        const result = await generateChatbotResponse({ ...input, config: legacy, history: [], salesProgress: undefined,
+            inboundMessage: 'Hello po', formUrl: 'https://agency.test/sales-form?token=signed' });
+        expect(result.reply).toMatch(/business|negosyo/i); expect(result.reply).not.toMatch(/https?:\/\/|Optional quick form|SALES PROCESS:/);
+        expect(result.sales_progress).toBeUndefined();
+    });
     it('1. New inquiry explains the process and offers the optional form immediately', async () => {
         const result = await generateChatbotResponse({ ...input, inboundMessage: 'Hello po', history: [], salesProgress: undefined, formUrl: 'https://agency.test/sales-form?token=signed' });
         expect(result.reply).toContain('STEP 1:'); expect(result.reply).toContain('Optional quick form'); expect(result.reply).toContain('o tuloy lang tayo sa chat');
         expect(fetch).not.toHaveBeenCalled(); expect(result.reply).not.toMatch(/PHP\d|\p{Extended_Pictographic}/u);
+        expect(result.reply).not.toContain('https://'); expect(result.reply).toContain('Business Name:');
+    });
+    it('sends the verified external form only when the customer explicitly asks for its online link', async () => {
+        const result = await generateChatbotResponse({ ...input, inboundMessage: 'Pakisend ang online form link please', formUrl: 'https://agency.test/sales-form?token=signed' });
+        expect(result.reply).toContain('https://agency.test/sales-form?token=signed');
     });
     it('2. Ignoring the form continues conversation and education with one question', async () => {
         plan({ 'Business Industry': 'Restaurant' });

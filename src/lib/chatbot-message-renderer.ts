@@ -127,6 +127,9 @@ function factualAnswer(parts: string[], contactName?: string | null): string {
     const result: string[] = [];
     let inProcess = false;
     for (const line of lines) {
+        // Old assistant history may contain the optional web form. It must not
+        // leak back into the established in-chat intake through model copy.
+        if (/optional quick form|https?:\/\/\S*\/sales-form(?:[?/#\s]|$)/i.test(line)) continue;
         if (/STEP-BY-STEP PROCESS|step.by.step process/i.test(line)) { inProcess = true; continue; }
         if (inProcess && /^\s*(?:\d+[.)]|note:|$)/i.test(line)) continue;
         inProcess = false;
