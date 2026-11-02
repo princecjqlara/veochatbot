@@ -45,6 +45,12 @@ Page errors and missing coverage. A lost connection stops safely and the retaine
 checkpoints can be resumed. Collection backs off or stops before consuming the
 Page/app capacity needed by live activity.
 
+`verify-historical-leads.mjs` independently compares all matched archived notices
+with the saved event ledger and smart-tag assignments. It also checks the repair
+receipts for zero AI calls and zero newly queued summary jobs. Calendar browser
+fixtures distinguish total leads, linked leads, current Converted stages and
+confirmed customers, so an unknown ad source cannot hide a confirmed customer.
+
 The report distinguishes first-inquiry customer cohorts, current pipeline stages,
 documented payment confirmations and Meta messaging-conversation metrics. A
 returning conversation is not automatically a new unique customer acquisition.

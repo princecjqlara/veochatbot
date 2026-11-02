@@ -184,11 +184,11 @@ export default function AdCalendar() {
       <b className="mt-2 block break-words text-[10px] md:text-lg">{formatCell(value)}</b>
       {row && !row.future && <>
       {metric !== 'spend' && <span className="mt-1 block text-[8px] md:text-[11px]"><span className="md:hidden">A{row.spend.amount == null ? '—' : `${mixedMoney ? row.spend.currency : ''}${new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(row.spend.amount)}`}</span><span className="hidden md:inline">A {row.spend.amount == null ? '—' : `${row.spend.currency} ${new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(row.spend.amount)}`}</span></span>}
-      <span className="mt-1 block text-[8px] md:text-[11px]"><span className="md:hidden">{row.inquiries}{adId === 'unknown' ? 'U' : 'L'} {row.converted}C</span><span className="hidden md:inline">{adId === 'unknown' ? 'U' : 'L'} {row.inquiries} · C {row.converted}</span></span>
+      <span className="mt-1 block text-[8px] md:text-[11px]"><span className="md:hidden">{row.inquiries}{adId === 'unknown' ? 'U' : 'L'} {(row.overall || row).confirmed_payers}C</span><span className="hidden md:inline">{adId === 'unknown' ? 'U' : 'L'} {row.inquiries} · C {(row.overall || row).confirmed_payers}</span></span>
       </>}
-      <span className="sr-only" id={`day-values-${date}`}>{heat.label}: {formatCell(value)}.{row && !row.future ? ` Ad spend: ${money(row.spend.amount, row.spend.currency)}. ${row.inquiries} ${adId === 'unknown' ? 'unattributed' : 'linked'} inquiries and ${row.converted} converted stages.` : ' Actual data is unavailable.'}</span>
+      <span className="sr-only" id={`day-values-${date}`}>{heat.label}: {formatCell(value)}.{row && !row.future ? ` Ad spend: ${money(row.spend.amount, row.spend.currency)}. ${(row.overall || row).inquiries} total inquiries, ${row.inquiries} ${adId === 'unknown' ? 'unattributed' : 'linked'} inquiries and ${(row.overall || row).confirmed_payers} confirmed customers from the selected sources.` : ' Actual data is unavailable.'}</span>
      </button>; })}
-    </div><p className="mt-3 text-xs text-slate-500">A = ad spend, {adId === 'unknown' ? 'U = unattributed inquiries' : 'L = linked ad inquiries'}, C = current Converted stages from those same leads. Today is provisional. A later conversion updates its original inquiry date.</p>
+    </div><p className="mt-3 text-xs text-slate-500">A = ad spend, {adId === 'unknown' ? 'U = unattributed inquiries' : 'L = linked ad inquiries'}, C = customers confirmed in chats or payment records from the selected sources. Later confirmations update the original inquiry date. Current pipeline stages are shown separately below. Today is provisional.</p>
    </section>
   {data && <>
    <section aria-label="Calendar data sources" className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">

@@ -23,7 +23,9 @@ month-input edit retains the current valid month.
 The heat map can show spend, inquiries, stage conversion rate, verified payers,
 payer rate, CPA, cost per Meta conversation, profit, gross ROAS and net ROAS.
 Profit uses diverging gain/loss colors. Unavailable data stays gray. Daily cells
-also show ad spend, inquiry count and current Converted stages. Future days are
+also show ad spend, linked inquiry count and confirmed customers across the
+selected sources, including unknown ad origins. Current pipeline stages remain
+separate from customer confirmations. Future days are
 disabled and today is provisional. Larger values have stronger colors; expensive
 acquisitions are not labeled better just because they are darker.
 

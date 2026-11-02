@@ -53,7 +53,11 @@ try{
    if(!projectionCache.complete_history)projectionCache=null;
    // Retain an independently reviewed receipt in the previous cache when its
    // exact source remains present. Text-only parsing must not erase that proof.
-   if(projectionCache&&c.payment_at&&c.payment_evidence_id){const old=seq.find(m=>m.id===c.payment_evidence_id&&m.ms===Date.parse(c.payment_at));if(!old)projectionCache=null;else if(!projectionCache.payment_at||Date.parse(c.payment_at)<Date.parse(projectionCache.payment_at)){projectionCache.payment_at=new Date(c.payment_at).toISOString();projectionCache.payment_evidence_id=c.payment_evidence_id;}}
+   if(projectionCache&&c.payment_at&&c.payment_evidence_id){const old=seq.find(m=>m.id===c.payment_evidence_id&&m.ms===Date.parse(c.payment_at)),signal=old?paymentSignal(old,seq):null;
+    // An OCR-reviewed receipt/bill must retain its original provenance. A plain
+    // Graph refresh cannot turn it into a newly verified Page acknowledgement.
+    if(!old||old.sender!=='page'||!signal?.confirmed||!['payment_ack','full_payment_ack'].includes(signal.kind))projectionCache=null;
+    else if(!projectionCache.payment_at||Date.parse(c.payment_at)<Date.parse(projectionCache.payment_at)){projectionCache.payment_at=new Date(c.payment_at).toISOString();projectionCache.payment_evidence_id=c.payment_evidence_id;}}
   }
   fs.writeSync(output,JSON.stringify({contact_id:c?.id||null,page_id:entry.page.id,fb_page_id:entry.page.fb_page_id,psid:entry.psid,complete,source_reviewed:live,source_cutoff_at:entry.cutoff,archive_path:path.relative(root,actualPath).replaceAll('\\','/'),archive_sha256:digest(text),first_inquiry_at:first?new Date(first.ms).toISOString():null,first_message_id:first?.id||null,latest_inbound_at:seq.findLast(m=>m.sender==='contact')?new Date(seq.findLast(m=>m.sender==='contact').ms).toISOString():null,stage_events:stages,page_acknowledgements:acks,projection_cache:projectionCache,first_date_mismatch:firstMismatch,source_date_mismatch:sourceMismatch,missing_stage_events:missing.length})+'\n');
  };
