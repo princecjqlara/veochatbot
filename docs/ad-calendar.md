@@ -54,6 +54,19 @@ and cannot leak through a transaction pooler. A supervisor lock prevents
 duplicate background scans. Existing audit freshness and evidence checks still
 apply; unsafe or expired checkpoints stop with their evidence retained.
 
+Full backfill completion requires a finished inbox inventory and finished
+histories for the same complete Page set, with no per-history errors. Missing
+inbox indexes, duplicate Page receipts and successful commands with partial
+reads cannot qualify. A timed-out inbox keeps its saved pagination cursor and
+downloaded conversations; index writes are atomic and repeated conversation
+identifiers are deduplicated. Facebook access failures remain explicit gaps.
+During a database outage, the supervisor checks the data API before opening a
+pooler connection and backs off to five-minute intervals. Pooler circuit-breaker
+responses receive at least a 150-second cooldown.
+Transient source failures receive up to three resume attempts; quota failures
+wait ten minutes to leave capacity for live messaging. Permission failures stay
+explicit and do not receive automatic repeated authentication attempts.
+
 The heat map can show spend, inquiries, stage conversion rate, verified payers,
 payer rate, CPA, cost per Meta conversation, profit, gross ROAS and net ROAS.
 Profit uses diverging gain/loss colors. Unavailable data stays gray. Daily cells
