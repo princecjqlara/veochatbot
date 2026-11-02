@@ -13,12 +13,12 @@ const spend=ads.flatMap(ad=>calendarRange('2020-01').days.map(day=>({page_id:'p'
  impressions:1000,clicks:40,link_clicks:20,messaging_started:10,video_plays:200,video_thruplays:50,video_complete:30,reach:800,action_report_time:'conversion',attribution_setting:'adset_unified'})));
 const output=path.resolve('.vercel'),profile=path.join(output,'calendar-browser-'+Date.now());fs.mkdirSync(profile,{recursive:true});const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const chrome=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--incognito','--disable-gpu','--disable-background-networking','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{windowsHide:true,stdio:'ignore'});
-let ws,cdp;const checks=[],errors=[],unknown=[],requests=[],imports=[];
+let ws,cdp,failMonth,delayMonth,releaseReport;const checks=[],errors=[],unknown=[],requests=[],imports=[];
 try{let port;for(let i=0;i<100;i++){const file=path.join(profile,'DevToolsActivePort');if(fs.existsSync(file)){port=Number(fs.readFileSync(file,'utf8').split('\n')[0]);try{await fetch(`http://127.0.0.1:${port}/json/version`);break;}catch{}}await sleep(100);}assert(port);
  const tabs=await(await fetch(`http://127.0.0.1:${port}/json/list`)).json();ws=new WebSocket(tabs.find(t=>t.type==='page').webSocketDebuggerUrl);await new Promise((yes,no)=>{ws.addEventListener('open',yes,{once:true});ws.addEventListener('error',no,{once:true});});let seq=0;const pending=new Map();
  cdp=(method,params={})=>new Promise((yes,no)=>{const id=++seq;pending.set(id,{yes,no});ws.send(JSON.stringify({id,method,params}));});
  ws.addEventListener('message',async event=>{const m=JSON.parse(event.data);if(m.id&&pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);m.error?p.no(Error(m.error.message)):p.yes(m.result);}if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails?.exception?.description||m.params.exceptionDetails?.text);
- if(m.method==='Fetch.requestPaused'){const{requestId,request}=m.params,u=new URL(request.url);let body={};
+ if(m.method==='Fetch.requestPaused'){const{requestId,request}=m.params,u=new URL(request.url);let body={},responseCode=200;
   if(u.pathname==='/api/auth/session')body={user:{id:'user',name:'Calendar QA'},expires:'2099-01-01T00:00:00Z'};
   else if(u.pathname==='/api/pages')body={pages:[{id:'p',name:'Sample Page'}]};
   else if(u.pathname==='/api/ad-quality/connection')body={status:'ready',accounts:[{id:'act_22',name:'Sample account'}]};
@@ -26,10 +26,12 @@ try{let port;for(let i=0;i<100;i++){const file=path.join(profile,'DevToolsActive
   else if(u.pathname==='/api/ad-calendar/sync'){const input=JSON.parse(request.postData);imports.push(input);body={saved:input.adIds.length*7,complete:true,pht_aligned:true};}
   else if(u.pathname==='/api/ad-calendar'){
    requests.push(u.search);
+   if(u.searchParams.get('month')===delayMonth)await new Promise(resolve=>{releaseReport=resolve;});
    if(u.searchParams.get('view')==='contacts')body={total:1,contacts:[{id:'customer',page_id:'p',name:'Sample paying customer',inquiry_at:'2020-01-01T01:00:00Z',stage:'converted',converted_at:'2020-02-03T01:00:00Z',paid_at:'2020-02-04T01:00:00Z'}]};
    else{const month=u.searchParams.get('month')||'2020-01',range=calendarRange(month);body={...buildAdCalendar({month,groups:month==='2020-01'?groups:[],spend:month==='2020-01'?spend:[],inventory:ads,adId:u.searchParams.get('adId'),selectedDay:u.searchParams.get('day')||undefined}),pages:[{id:'p',name:'Sample Page'}],outcome_as_of:'2026-11-01T23:00:00Z'};}
+   if(u.searchParams.get('month')===failMonth){responseCode=503;body={error:'Fixture report unavailable'};}
   }else unknown.push(u.pathname);
-  await cdp('Fetch.fulfillRequest',{requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'application/json'},{name:'Cache-Control',value:'no-store'}],body:Buffer.from(JSON.stringify(body)).toString('base64')}).catch(e=>{if(!e.message.includes('Invalid InterceptionId'))errors.push(e.message);});
+  await cdp('Fetch.fulfillRequest',{requestId,responseCode,responseHeaders:[{name:'Content-Type',value:'application/json'},{name:'Cache-Control',value:'no-store'}],body:Buffer.from(JSON.stringify(body)).toString('base64')}).catch(e=>{if(!e.message.includes('Invalid InterceptionId'))errors.push(e.message);});
  }});
  const evaluate=async expression=>{const r=await cdp('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||'Evaluation failed');return r.result.value;};
  const wait=async expression=>{for(let i=0;i<160;i++){if(await evaluate(expression))return;await sleep(200);}throw Error('Condition not ready: '+expression);};
@@ -39,14 +41,35 @@ try{let port;for(let i=0;i<100;i++){const file=path.join(profile,'DevToolsActive
  await cdp('Page.enable');await cdp('Runtime.enable');await cdp('Fetch.enable',{patterns:[{urlPattern:'*://*/api/*',requestStage:'Request'}]});await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:1100,deviceScaleFactor:1,mobile:false});
  await cdp('Page.navigate',{url:base+'/dashboard/ad-calendar?month=2020-01&day=2020-01-01&pageId=p'});await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"]')?.textContent.includes('L 15')");await noOverflow('Desktop calendar');
  assert(await evaluate("document.body.innerText.includes('₱390.00')&&document.body.innerText.includes('3.83× / 1.30×')"));checks.push('PHT month heat map and day-level gross, salary, profit and ROAS arithmetic');
- assert.equal(await evaluate("document.querySelector('select[aria-label=\"Calendar heat metric\"]').value"),'profit');
+ assert.equal(await evaluate("document.querySelector('select[aria-label=\"Calendar heat metric\"]').value"),'total_inquiries');
+ assert.equal(await evaluate("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b').textContent"),'22');checks.push('Default calendar shows known and unknown-source inquiries before financial records exist');
+ await select('Calendar heat metric','profit');
  const colors=await evaluate("['2020-01-01','2020-01-03','2020-01-04','2020-01-02'].map(day=>getComputedStyle(document.querySelector('[aria-label=\"Inquiry cohort '+day+'\"]')).backgroundColor)");
  const rgb=colors.map(color=>color.match(/\d+/g).map(Number));assert(rgb[0][1]>rgb[0][0]&&rgb[0][1]>rgb[0][2],'Positive profit must be green');assert(rgb[1][0]>rgb[1][1]&&rgb[1][0]>rgb[1][2],'Negative profit must be red');assert.deepEqual(rgb[2],[255,255,255]);assert.deepEqual(rgb[3],[241,245,249]);
- assert(await evaluate("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"]').textContent.includes('+390')&&document.querySelector('[aria-label=\"Inquiry cohort 2020-01-03\"]').textContent.includes('-40')&&!!document.querySelector('[aria-label=\"Heat map color legend\"]')"));checks.push('Profit selected by default; gains green, losses red, zero white, missing ledger gray, signed labels and visible legend');
+ assert(await evaluate("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"]').textContent.includes('+390')&&document.querySelector('[aria-label=\"Inquiry cohort 2020-01-03\"]').textContent.includes('-40')&&!!document.querySelector('[aria-label=\"Heat map color legend\"]')"));checks.push('Profit gains green, losses red, zero white, missing ledger gray, signed labels and visible legend');
  await click('View cohort contacts');await wait("document.body.innerText.includes('Sample paying customer')");assert(await evaluate("document.body.innerText.includes('Feb 4, 2020')"));await select('Cohort contact status','paid');assert(requests.some(query=>{const q=new URLSearchParams(query);return q.get('view')==='contacts'&&q.get('day')==='2020-01-01'&&q.get('status')==='paid';}));checks.push('Cohort drilldown includes customers whose payment happened in a later month');
  await select('Creative metrics period','month');await evaluate("[...document.querySelectorAll('summary')].find(s=>s.textContent==='Delivery details').click()");assert(await evaluate("document.body.innerText.includes('ThruPlays')"));checks.push('Creative reporting includes messaging costs, CPA, CTR, CPC, CPM and video delivery details');
  await select('Calendar creative','11');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"]')?.textContent.includes('L 10')");checks.push('Creative filter recomputes the original cohort');
  await select('Calendar creative','');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"]')?.textContent.includes('L 15')");await click('Import actual spend and metrics');await wait("document.body.innerText.includes('Actual ad spend and delivery metrics updated.')");assert.equal(imports.length,5);assert(imports.every(input=>input.adIds.length<=20&&Date.parse(input.to)-Date.parse(input.from)<=6*86400000));checks.push('Read-only import uses complete bounded ad/week batches');
+ delayMonth='2020-02';await click('Next →');
+ await wait("document.querySelector('input[aria-label=\"Calendar month\"]').value==='2020-02'&&document.querySelectorAll('button[aria-label^=\"Inquiry cohort \"]').length===29");
+ assert(await evaluate("document.querySelector('[aria-label=\"Advertising heat map calendar\"]').textContent.includes('Loading inquiries')"));assert(releaseReport);
+ delayMonth=null;releaseReport();await wait("document.body.textContent.includes('Profit and ROAS need imported ad spend')");await click('Show inquiries');
+ checks.push('Leap-month grid stays visible during loading and missing profit explains how to see inquiry counts');
+ await click('← Previous');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b')?.textContent==='22'");
+ failMonth='2020-02';await click('Next →');await wait("document.body.textContent.includes('Fixture report unavailable')");
+ assert.equal(await evaluate("document.querySelectorAll('button[aria-label^=\"Inquiry cohort \"]').length"),29);
+ assert(await evaluate("[...document.querySelectorAll('button[aria-label^=\"Inquiry cohort \"]')].every(button=>button.disabled&&button.querySelector('b').textContent==='—')"));
+ failMonth=null;await click('← Previous');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b')?.textContent==='22'");
+ checks.push('Report failure retains month dates and navigation; a new month selection recovers');
+ await click('This month');
+ await wait("document.querySelector('input[aria-label=\"Calendar month\"]').value===new Date(Date.now()+8*3600000).toISOString().slice(0,7)&&document.querySelector('[aria-label=\"Advertising heat map calendar\"]').getAttribute('aria-busy')==='false'");
+ await click('Next →');await wait("document.body.textContent.includes('This month is in the future.')&&document.querySelector('[aria-label=\"Advertising heat map calendar\"]').getAttribute('aria-busy')==='false'");
+ assert(await evaluate("[...document.querySelectorAll('button[aria-label^=\"Inquiry cohort \"]')].every(button=>button.disabled)"));
+ assert(await evaluate("[...document.querySelectorAll('button')].find(button=>button.textContent==='Import actual spend and metrics').disabled"));
+ checks.push('This month shortcut and future-month browsing work without importing or inventing future activity');
+ await cdp('Page.navigate',{url:base+'/dashboard/ad-calendar?month=2020-01&day=2020-01-01&pageId=p'});
+ await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b')?.textContent==='22'");await noOverflow('Desktop month navigation');
  await evaluate('window.scrollTo(0,0)');let shot=await cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(output,'calendar-desktop.png'),Buffer.from(shot.data,'base64'));
  await cdp('Emulation.setDeviceMetricsOverride',{width:390,height:1000,deviceScaleFactor:1,mobile:true});await sleep(300);await noOverflow('Mobile calendar');await evaluate("document.querySelector('[aria-label=\"Advertising heat map calendar\"]').scrollIntoView()");shot=await cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(output,'calendar-mobile.png'),Buffer.from(shot.data,'base64'));checks.push('Mobile calendar without horizontal page overflow');
  assert.deepEqual(errors,[]);assert.deepEqual(unknown,[]);const result={passed:true,checks,javascript_errors:errors,financial_records_created:0,synthetic_api_fixtures:true};fs.writeFileSync('.vercel/calendar-browser.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));

@@ -8,6 +8,18 @@ and originating ad. A selected day has timing buckets and paginated contact link
 Unknown sources have a separate view and receive no allocated advertising spend.
 The contact Sources view links each referral to the corresponding ad/calendar day.
 
+The calendar opens on total inquiries, including unknown-source inquiries when
+all creatives are selected. The total does not double-count the unknown-source
+filter. Financial attribution remains separate: unknown inquiries receive no
+guessed ad spend. The date grid appears above the financial cards and stays
+visible during loading or a report error. Missing profit has an explanation and
+a shortcut back to inquiry counts.
+
+Previous, Next, This month and the month picker browse months from 2000 through
+2099, including future months. Future dates show unavailable actual results and
+remain disabled; future-month ad-spend imports are disabled too. An incomplete
+month-input edit retains the current valid month.
+
 The heat map can show spend, inquiries, stage conversion rate, verified payers,
 payer rate, CPA, cost per Meta conversation, profit, gross ROAS and net ROAS.
 Profit uses diverging gain/loss colors. Unavailable data stays gray. Daily cells
@@ -88,7 +100,7 @@ Primary API reference: [Meta Insights fields and enums](https://github.com/faceb
 
 ## Release and checks
 
-The calendar defaults to profit after salary and ad spend. Heat colors follow
+Profit after salary and ad spend remains selectable. Heat colors follow
 the selected value's sign: negative red, positive green, verified zero white,
 unavailable gray. Intensity follows absolute magnitude. Signed profit/ROAS labels
 and a visible legend keep the meaning readable without relying only on color.

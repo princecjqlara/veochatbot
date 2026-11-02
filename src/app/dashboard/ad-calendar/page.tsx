@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { calendarHeat, phtDay } from '@/lib/ad-calendar';
+import { calendarHeat, calendarInquiryCount, calendarRange, phtDay, shiftCalendarMonth } from '@/lib/ad-calendar';
 import AdCreativePreview from '@/components/AdCreativePreview';
 import { signIn } from 'next-auth/react';
 import { FACEBOOK_PERMISSION_SCOPE } from '@/lib/facebook-permissions';
@@ -13,6 +13,7 @@ const roas = (value: number | null | undefined) => value == null ? 'N/A' : `${va
 const dateTime = (value: string | null) => value ? new Date(value).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : 'Not recorded';
 const fieldStyle = 'max-w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
 const heatMetrics: Record<string, { label: string; value: (row: any) => number | null; format: string }> = {
+ total_inquiries: { label: 'Total inquiries', value: row => row.inquiries, format: 'count' },
  profit: { label: 'Profit after salary and ads', value: row => row.profit, format: 'money' },
  spend: { label: 'Ad spend', value: row => row.spend.amount, format: 'money' },
  inquiries: { label: 'Linked inquiries', value: row => row.inquiries, format: 'count' },
@@ -33,7 +34,7 @@ function Revenue({ rows, field = 'gross' }: { rows: any[]; field?: string }) {
 
 export default function AdCalendar() {
  const today = phtDay(Date.now()), [month, setMonth] = useState(today.slice(0, 7)), [pageId, setPageId] = useState(''), [adId, setAdId] = useState(''), [day, setDay] = useState(today);
- const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('profit');
+ const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('total_inquiries');
  const [connection, setConnection] = useState<any>(null), [syncing, setSyncing] = useState(false), [notice, setNotice] = useState(''), [remaining, setRemaining] = useState(0), [importError, setImportError] = useState('');
  const [creativeMode, setCreativeMode] = useState('day'), [creativePage, setCreativePage] = useState(1);
  const [showPeople, setShowPeople] = useState(false), [peopleStatus, setPeopleStatus] = useState('all'), [peopleOffset, setPeopleOffset] = useState(0), [people, setPeople] = useState<any>(null);
@@ -41,7 +42,7 @@ export default function AdCalendar() {
  const tasks = useRef<{ scope: string; items: any[] }>({ scope: '', items: [] });
  useEffect(() => {
   const query = new URLSearchParams(window.location.search), requestedMonth = query.get('month'), requestedDay = query.get('day');
-  if (requestedMonth && /^20\d{2}-(0[1-9]|1[0-2])$/.test(requestedMonth) && requestedMonth <= today.slice(0, 7)) { setMonth(requestedMonth); setDay(requestedDay?.startsWith(requestedMonth + '-') ? requestedDay : requestedMonth + '-01'); }
+  if (requestedMonth && /^20\d{2}-(0[1-9]|1[0-2])$/.test(requestedMonth)) { setMonth(requestedMonth); setDay(calendarRange(requestedMonth).days.includes(requestedDay || '') ? requestedDay! : requestedMonth + '-01'); }
   if (query.get('pageId')) setPageId(query.get('pageId')!); if (query.get('adId')) setAdId(query.get('adId')!);
   void fetch('/api/ad-quality/connection', { cache: 'no-store' }).then(response => response.json()).then(setConnection).catch(() => setConnection({ status: 'temporarily_unavailable', accounts: [], message: 'Ad-account access could not be checked.' }));
  // Initial URL filters are read once; subsequent filters stay local to this report.
@@ -65,7 +66,7 @@ export default function AdCalendar() {
   void fetch('/api/ad-calendar?' + query, { signal: controller.signal, cache: 'no-store' }).then(async response => { const body = await response.json(); if (!response.ok) throw Error(body.error); if (!controller.signal.aborted) setPeople(body); }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
   return () => controller.abort();
  }, [showPeople, queryFor, peopleStatus, peopleOffset]);
- function changeMonth(value: string) { setMonth(value); setDay(value === today.slice(0, 7) ? today : value + '-01'); }
+ function changeMonth(value: string) { if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(value)) return; setMonth(value); setDay(value === today.slice(0, 7) ? today : value + '-01'); }
  async function sync() {
   if (syncing || !connection?.accounts?.length || !data || adId === 'unknown') return;
   const currentScope = scope; setSyncing(true); setImportError('');
@@ -107,7 +108,7 @@ export default function AdCalendar() {
  }
  const summary = data?.summary, selected = data?.days?.find((row: any) => row.day === day), heat = heatMetrics[metric];
  const currencies = new Set<string>((data?.days || []).flatMap((row: any) => row.spend.recorded.map((entry: any) => entry.currency))), mixedMoney = currencies.size > 1;
- const heatValue = (row: any) => mixedMoney && ['money', 'roas'].includes(heat.format) ? null : heat.value(row);
+ const heatValue = (row: any) => mixedMoney && ['money', 'roas'].includes(heat.format) ? null : metric === 'total_inquiries' ? calendarInquiryCount(row, adId) : heat.value(row);
  const scale = Math.max(1, ...(data?.days || []).filter((row: any) => !row.future).map((row: any) => Math.abs(heatValue(row) || 0)));
  const creativeRows = creativeMode === 'day' ? data?.day_ads || [] : data?.ads || [];
  const formatCell = (value: number | null) => {
@@ -115,37 +116,32 @@ export default function AdCalendar() {
   const formatted = heat.format === 'percent' ? pct(value) : heat.format === 'roas' ? roas(value) : new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
   return value > 0 && ['profit', 'gross_roas', 'net_roas'].includes(metric) ? '+' + formatted : formatted;
  };
- const blank = data ? (new Date(data.range.days[0] + 'T00:00:00Z').getUTCDay() + 6) % 7 : 0;
+ const range = calendarRange(month), futureMonth = month > today.slice(0, 7);
+ const blank = (new Date(range.days[0] + 'T00:00:00Z').getUTCDay() + 6) % 7;
+ const unavailableMetric = data && !futureMonth && data.days.filter((row: any) => !row.future).every((row: any) => heatValue(row) == null);
  return <div className="min-w-0 space-y-6 p-4 text-slate-800 md:p-8">
   <header><h1 className="text-2xl font-bold">Ad calendar and profit</h1><p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">Each day groups the leads who first inquired that day. Later conversions and payments keep updating that original cohort. Dates use Philippine Time.</p></header>
   <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 p-4">
-   <label className="text-xs font-medium">Inquiry month<input aria-label="Calendar month" type="month" min="2000-01" max={today.slice(0, 7)} disabled={syncing} value={month} onChange={e => changeMonth(e.target.value)} className={`${fieldStyle} mt-1 block`} /></label>
+   <label className="text-xs font-medium">Inquiry month<input aria-label="Calendar month" type="month" min="2000-01" max="2099-12" disabled={syncing} value={month} onChange={e => changeMonth(e.target.value)} className={`${fieldStyle} mt-1 block`} /></label>
+   <nav aria-label="Calendar month navigation" className="flex flex-wrap gap-2">
+    <button aria-label="Previous month" disabled={syncing || month === '2000-01'} onClick={() => changeMonth(shiftCalendarMonth(month, -1))} className={`${fieldStyle} disabled:opacity-40`}>← Previous</button>
+    <button disabled={syncing || month === today.slice(0, 7)} onClick={() => changeMonth(today.slice(0, 7))} className={`${fieldStyle} disabled:opacity-40`}>This month</button>
+    <button aria-label="Next month" disabled={syncing || month === '2099-12'} onClick={() => changeMonth(shiftCalendarMonth(month, 1))} className={`${fieldStyle} disabled:opacity-40`}>Next →</button>
+   </nav>
    <label className="text-xs font-medium">Page<select aria-label="Calendar Page" disabled={syncing} value={pageId} onChange={e => { setPageId(e.target.value); setAdId(''); }} className={`${fieldStyle} mt-1 block`}><option value="">All my Pages</option>{data?.pages.map((page: any) => <option key={page.id} value={page.id}>{page.name}</option>)}</select></label>
    <label className="max-w-full text-xs font-medium">Creative<select aria-label="Calendar creative" disabled={syncing} value={adId} onChange={e => setAdId(e.target.value)} className={`${fieldStyle} mt-1 block max-w-[280px]`}><option value="">All verified ad origins</option><option value="unknown">Unknown / unattributed inquiries</option>{data?.inventory.map((ad: any) => <option key={`${ad.page_id}:${ad.ad_id}`} value={ad.ad_id}>{ad.ad_name || ad.ad_title || ad.ad_id}</option>)}</select></label>
    <button disabled={loading || syncing} onClick={() => void refresh()} className={`${fieldStyle} disabled:opacity-40`}>Refresh results</button>
-   <button disabled={syncing || !connection?.accounts?.length || !data || adId === 'unknown'} onClick={() => void sync()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40">{syncing ? 'Importing actual spend…' : remaining ? `Continue spend import (${remaining})` : 'Import actual spend and metrics'}</button>
+   <button disabled={syncing || !connection?.accounts?.length || !data || adId === 'unknown' || futureMonth} onClick={() => void sync()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40">{syncing ? 'Importing actual spend…' : remaining ? `Continue spend import (${remaining})` : 'Import actual spend and metrics'}</button>
   </div>
   {(connection?.status !== 'ready' || !connection?.accounts?.length) && <div className="space-y-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p>{connection?.message || 'Checking Facebook ad-account access…'}</p><button className="rounded border border-amber-300 px-3 py-2 text-sm" onClick={() => void signIn('facebook', { callbackUrl: '/dashboard/ad-calendar?' + queryFor() }, { scope: FACEBOOK_PERMISSION_SCOPE + ',ads_read', auth_type: 'rerequest' })}>Connect read-only ad access</button> <a href="/dashboard/ad-quality" className="underline">Manage ad connection</a></div>}
   {(error || importError) && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error || importError}</p>}{notice && <p role="status" className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">{notice}</p>}
-  {!data ? <p role="status" className="text-sm text-slate-500">{loading ? 'Loading the inquiry cohorts and actual spend…' : 'No report available.'}</p> : <>
-   <p className="text-xs text-slate-500">Outcomes as of {dateTime(data.outcome_as_of)}. Amounts cover imported ads with verified Page ownership. Stage conversions are separate from verified payments. Revenue is credited to the first verified ad origin.</p>
-   {data.pages.some((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error) && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{data.pages.filter((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error).length} Page(s) have synchronization errors. Their recorded stage outcomes may be stale until access is restored. <a href="/dashboard/connect" className="underline">Review Page connections</a></p>}
-   {!!summary.legacy_dates && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">{summary.legacy_dates} inquiries use older CRM dates that have not been verified against the original conversation. These remain marked as legacy dates.</p>}
-   {mixedMoney && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Multiple ad currencies are recorded. Select one Page or creative to compare money metrics. Currencies are never converted or combined.</p>}
-   {!!summary.spend.timezone_mismatch && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Some ad-account days ({summary.spend.account_timezones.join(', ') || 'timezone unavailable'}) do not match Philippine day boundaries. Their spend is retained in its native reporting dates; PHT cost and profit ratios remain unavailable.</p>}
-   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-    <Card label="Actual ad spend" note={`${summary.spend.covered_ad_days} / ${summary.spend.expected_ad_days} ad-days covered. Unimported days are unknown.`}>{summary.spend.amount != null ? money(summary.spend.amount, summary.spend.currency) : 'Incomplete'}</Card>
-    <Card label={adId === 'unknown' ? 'Unattributed inquiries' : 'Linked ad inquiries'} note={`${data.unattributed.inquiries} other / unknown-source inquiries in this scope.`}>{number(summary.inquiries)}</Card>
-    <Card label="Converted lead stages" note={`${summary.converted_later} recorded on later days · ${pct(summary.conversion_rate)} of the original cohort`}>{number(summary.converted)}</Card>
-    <Card label="Verified paying customers" note={`${pct(summary.payer_rate)} payer rate · CPA ${money(summary.cpa, summary.spend.currency)}`}>{number(summary.payers)}</Card>
-    <Card label="Recorded revenue after refunds" note="Includes later deposits and balances from this cohort. Missing payment records remain unverified."><Revenue rows={summary.finance} /></Card>
-    <Card label="Salary allowance · 40%" note="40% of positive recorded revenue after refunds per acquisition-day/creative cohort. This is a calculated allowance."><Revenue rows={summary.finance} field="salary" /></Card>
-    <Card label="Profit after salary and ads" note="Other expenses and taxes are excluded. Partial payment records can understate returns.">{money(summary.profit, summary.spend.currency)}</Card>
-    <Card label="Gross / net ROAS" note="Gross = revenue ÷ ads. Net = profit after salary and ads ÷ ads.">{roas(summary.gross_roas)} / {roas(summary.net_roas)}</Card>
-   </div>
-   <section className="rounded-xl border border-slate-200 bg-white p-3 md:p-5" aria-label="Advertising heat map calendar">
+   <section className="rounded-xl border border-slate-200 bg-white p-3 md:p-5" aria-label="Advertising heat map calendar" aria-busy={loading}>
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{new Date(month + '-01T12:00:00Z').toLocaleDateString('en-PH', { month: 'long', year: 'numeric', timeZone: 'Asia/Manila' })}</h2><label className="text-xs">Color by <select aria-label="Calendar heat metric" className={fieldStyle} value={metric} onChange={e => setMetric(e.target.value)}>{Object.entries(heatMetrics).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label></div>
     <p className="mb-2 text-xs text-slate-500">{heat.label}{currencies.size === 1 ? ` · Ad spend currency: ${[...currencies][0]}` : ''}. Darker means a larger magnitude.{['spend', 'cpa', 'messaging'].includes(metric) && ' Costs are shown as positive expenses; green does not mean a lower cost.'}</p>
+    {!data && <p role="status" className="mb-3 text-sm text-slate-500">{loading ? 'Loading inquiries and recorded outcomes…' : 'Report unavailable. Choose another month or refresh to retry.'}</p>}
+    {futureMonth && <p role="status" className="mb-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">This month is in the future. Actual inquiries and spending will appear as the dates occur.</p>}
+    {metric === 'total_inquiries' && !adId && <p className="mb-3 text-xs text-slate-500">Includes linked ad inquiries and other / unknown-source inquiries.</p>}
+    {unavailableMetric && <div role="status" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p>{['profit', 'gross_roas', 'net_roas'].includes(metric) ? 'Profit and ROAS need imported ad spend and verified payment records. Inquiry counts are available while those records are missing.' : 'This metric is unavailable for this month. Costs need imported ad spend and the matching delivery or payment records.'}</p><button onClick={() => setMetric('total_inquiries')} className="mt-2 font-medium underline">Show inquiries</button></div>}
     <div aria-label="Heat map color legend" className="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-600">
      <span className="flex items-center gap-1.5"><i aria-hidden="true" className="h-3 w-3 rounded bg-red-600" />Negative</span>
      <span className="flex items-center gap-1.5"><i aria-hidden="true" className="h-3 w-3 rounded bg-green-600" />Positive</span>
@@ -154,16 +150,35 @@ export default function AdCalendar() {
     </div>
     <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-500 md:gap-2 md:text-xs">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(label => <span key={label} className="pb-2">{label}</span>)}
      {Array.from({ length: blank }, (_, index) => <div key={`blank-${index}`} />)}
-     {data.days.map((row: any) => <button key={row.day} aria-label={`Inquiry cohort ${row.day}`} aria-describedby={`day-values-${row.day}`} aria-pressed={day === row.day} disabled={row.future} onClick={() => { setDay(row.day); setPeopleOffset(0); }}
-      style={calendarHeat(row.future ? null : heatValue(row), scale)} className={`min-w-0 rounded-lg border px-1 py-2 text-left disabled:opacity-35 md:min-h-[105px] md:p-3 ${day === row.day ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}>
-      <span className="block text-xs font-semibold">{Number(row.day.slice(-2))}{row.partial && <span className="hidden text-[10px] font-normal md:inline"> · today</span>}</span>
-      <b className="mt-2 block break-words text-[10px] md:text-lg">{row.future ? '—' : formatCell(heatValue(row))}</b>
+     {range.days.map(date => { const row = data?.days.find((entry: any) => entry.day === date), value = row && !row.future ? heatValue(row) : null; return <button key={date} aria-label={`Inquiry cohort ${date}`} aria-describedby={`day-values-${date}`} aria-pressed={day === date} disabled={!row || row.future} onClick={() => { setDay(date); setPeopleOffset(0); }}
+      style={calendarHeat(value, scale)} className={`min-w-0 rounded-lg border px-1 py-2 text-left disabled:opacity-60 md:min-h-[105px] md:p-3 ${day === date ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}>
+      <span className="block text-xs font-semibold">{Number(date.slice(-2))}{row?.partial && <span className="hidden text-[10px] font-normal md:inline"> · today</span>}</span>
+      <b className="mt-2 block break-words text-[10px] md:text-lg">{formatCell(value)}</b>
+      {row && !row.future && <>
       {metric !== 'spend' && <span className="mt-1 block text-[8px] md:text-[11px]"><span className="md:hidden">A{row.spend.amount == null ? '—' : `${mixedMoney ? row.spend.currency : ''}${new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(row.spend.amount)}`}</span><span className="hidden md:inline">A {row.spend.amount == null ? '—' : `${row.spend.currency} ${new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(row.spend.amount)}`}</span></span>}
-      <span className="mt-1 block text-[8px] md:text-[11px]"><span className="md:hidden">{row.inquiries}L {row.converted}C</span><span className="hidden md:inline">L {row.inquiries} · C {row.converted}</span></span>
-      <span className="sr-only" id={`day-values-${row.day}`}>{heat.label}: {formatCell(heatValue(row))}. Ad spend: {money(row.spend.amount, row.spend.currency)}. {row.inquiries} linked inquiries and {row.converted} converted stages.</span>
-     </button>)}
-    </div><p className="mt-3 text-xs text-slate-500">A = ad spend, L = linked inquiries, C = current Converted stages from those same leads. Today is provisional. A later conversion updates its original inquiry date.</p>
+      <span className="mt-1 block text-[8px] md:text-[11px]"><span className="md:hidden">{row.inquiries}{adId === 'unknown' ? 'U' : 'L'} {row.converted}C</span><span className="hidden md:inline">{adId === 'unknown' ? 'U' : 'L'} {row.inquiries} · C {row.converted}</span></span>
+      </>}
+      <span className="sr-only" id={`day-values-${date}`}>{heat.label}: {formatCell(value)}.{row && !row.future ? ` Ad spend: ${money(row.spend.amount, row.spend.currency)}. ${row.inquiries} ${adId === 'unknown' ? 'unattributed' : 'linked'} inquiries and ${row.converted} converted stages.` : ' Actual data is unavailable.'}</span>
+     </button>; })}
+    </div><p className="mt-3 text-xs text-slate-500">A = ad spend, {adId === 'unknown' ? 'U = unattributed inquiries' : 'L = linked ad inquiries'}, C = current Converted stages from those same leads. Today is provisional. A later conversion updates its original inquiry date.</p>
    </section>
+  {data && <>
+   <p className="text-xs text-slate-500">Outcomes as of {dateTime(data.outcome_as_of)}. Amounts cover imported ads with verified Page ownership. Stage conversions are separate from verified payments. Revenue is credited to the first verified ad origin.</p>
+   {data.pages.some((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error) && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{data.pages.filter((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error).length} Page(s) have synchronization errors. Their recorded stage outcomes may be stale until access is restored. <a href="/dashboard/connect" className="underline">Review Page connections</a></p>}
+   {!!summary.legacy_dates && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">{summary.legacy_dates} inquiries use older CRM dates that have not been verified against the original conversation. These remain marked as legacy dates.</p>}
+   {mixedMoney && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Multiple ad currencies are recorded. Select one Page or creative to compare money metrics. Currencies are never converted or combined.</p>}
+   {!!summary.spend.timezone_mismatch && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Some ad-account days ({summary.spend.account_timezones.join(', ') || 'timezone unavailable'}) do not match Philippine day boundaries. Their spend is retained in its native reporting dates; PHT cost and profit ratios remain unavailable.</p>}
+   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <Card label="Actual ad spend" note={`${summary.spend.covered_ad_days} / ${summary.spend.expected_ad_days} ad-days covered. Unimported days are unknown.`}>{summary.spend.amount != null ? money(summary.spend.amount, summary.spend.currency) : 'Incomplete'}</Card>
+    <Card label={adId === 'unknown' ? 'Unattributed inquiries' : 'Total inquiries'} note={!adId ? `${summary.inquiries} linked to ads · ${data.unattributed.inquiries} other / unknown-source inquiries.` : 'Inquiries matching the selected source.'}>{number(calendarInquiryCount({ inquiries: summary.inquiries, unattributed_inquiries: data.unattributed.inquiries }, adId))}</Card>
+    <Card label="Converted lead stages" note={`${summary.converted_later} recorded on later days · ${pct(summary.conversion_rate)} of the original cohort`}>{number(summary.converted)}</Card>
+    <Card label="Verified paying customers" note={`${pct(summary.payer_rate)} payer rate · CPA ${money(summary.cpa, summary.spend.currency)}`}>{number(summary.payers)}</Card>
+    <Card label="Recorded revenue after refunds" note="Includes later deposits and balances from this cohort. Missing payment records remain unverified."><Revenue rows={summary.finance} /></Card>
+    <Card label="Salary allowance · 40%" note="40% of positive recorded revenue after refunds per acquisition-day/creative cohort. This is a calculated allowance."><Revenue rows={summary.finance} field="salary" /></Card>
+    <Card label="Profit after salary and ads" note="Other expenses and taxes are excluded. Partial payment records can understate returns.">{money(summary.profit, summary.spend.currency)}</Card>
+    <Card label="Gross / net ROAS" note="Gross = revenue ÷ ads. Net = profit after salary and ads ÷ ads.">{roas(summary.gross_roas)} / {roas(summary.net_roas)}</Card>
+   </div>
+
    {selected && <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 md:p-5" aria-label="Selected inquiry day">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Inquiry cohort · {day}</h2><p className="mt-1 text-xs text-slate-500">Includes outcomes after this day ended.</p></div><button className={fieldStyle} onClick={() => { setShowPeople(value => !value); setPeopleOffset(0); }}>View cohort contacts</button></div>
     {loading || data.selected_day !== day ? <p className="text-sm text-slate-500">Updating this day…</p> : <>

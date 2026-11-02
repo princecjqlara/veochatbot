@@ -1,10 +1,17 @@
 const DAY = 86400000;
 export const phtDay = (time: number) => new Date(time + 8 * 3600000).toISOString().slice(0, 10);
 export function calendarRange(month: string, now = Date.now()) {
- if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(month) || month > phtDay(now).slice(0, 7)) throw Error('Choose a current or past month');
+ if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(month)) throw Error('Choose a valid month between 2000 and 2099');
  const [year, number] = month.split('-').map(Number), from = Date.UTC(year, number - 1, 1) - 8 * 3600000, to = Date.UTC(year, number, 1) - 8 * 3600000;
  return { month, from: new Date(from).toISOString(), to: new Date(to).toISOString(), today: phtDay(now),
   days: Array.from({ length: Math.round((to - from) / DAY) }, (_, index) => phtDay(from + index * DAY)) };
+}
+export function shiftCalendarMonth(month: string, offset: -1 | 1) {
+ const [year, number] = month.split('-').map(Number);
+ return new Date(Date.UTC(year, number - 1 + offset, 1)).toISOString().slice(0, 7);
+}
+export function calendarInquiryCount(row: { inquiries: number; unattributed_inquiries: number }, adId = '') {
+ return row.inquiries + (adId ? 0 : row.unattributed_inquiries);
 }
 const key = (page: string, ad: string | null) => JSON.stringify([page, ad]);
 const count = (value: any) => { const n = Number(value || 0); if (!Number.isSafeInteger(n) || n < 0) throw Error('Invalid or unsafe report counts'); return n; };

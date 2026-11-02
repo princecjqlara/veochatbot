@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAdCalendar, calendarHeat, calendarRange } from '@/lib/ad-calendar';
+import { buildAdCalendar, calendarHeat, calendarInquiryCount, calendarRange, shiftCalendarMonth } from '@/lib/ad-calendar';
 import { actionAmount, dailyDeliveryMetrics } from '@/lib/ad-daily-spend';
 const now = Date.parse('2020-02-04T00:00:00Z'), ad = { page_id: 'p', ad_id: '11', ad_account_id: '22', ad_name: 'Creative' };
 const group = { page_id: 'p', ad_id: '11', day: '2020-01-01', inquiries: 10, converted: 3, converted_later: 2, payers: 2, payers_later: 2,
@@ -49,8 +49,23 @@ describe('acquisition-day ad economics', () => {
  it('builds real PHT month boundaries and marks future/current dates distinctly', () => {
   expect(calendarRange('2020-02', Date.parse('2020-02-10T00:00:00Z')).days).toHaveLength(29);
   expect(calendarRange('2020-01', now).from).toBe('2019-12-31T16:00:00.000Z');
-  expect(() => calendarRange('2020-13', now)).toThrow(); expect(() => calendarRange('2030-01', now)).toThrow();
+  expect(() => calendarRange('2020-13', now)).toThrow(); expect(() => calendarRange('1999-01', now)).toThrow();
   const result = build({ now: Date.parse('2020-01-02T00:00:00Z') }); expect(result.days[1].partial).toBe(true); expect(result.days[2].future).toBe(true);
+ });
+});
+describe('calendar browsing and inquiry coverage', () => {
+ it('browses past and future months across year boundaries without inventing future activity', () => {
+  expect(shiftCalendarMonth('2026-01', -1)).toBe('2025-12');
+  expect(shiftCalendarMonth('2025-12', 1)).toBe('2026-01');
+  const future = build({ month: '2030-02', groups: [], spend: [] });
+  expect(future.days).toHaveLength(28); expect(future.days.every(day => day.future)).toBe(true);
+  expect(future.summary.spend.amount).toBeNull(); expect(future.summary.profit).toBeNull();
+ });
+ it('includes unknown-source inquiries in the default overview without duplicating filtered unknown inquiries', () => {
+  const row = { inquiries: 15, unattributed_inquiries: 7 };
+  expect(calendarInquiryCount(row)).toBe(22);
+  expect(calendarInquiryCount(row, '11')).toBe(15);
+  expect(calendarInquiryCount({ inquiries: 7, unattributed_inquiries: 7 }, 'unknown')).toBe(7);
  });
 });
 describe('signed calendar colors', () => {

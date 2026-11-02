@@ -14,6 +14,11 @@ beforeEach(() => {
  } });
 });
 describe('ad calendar authorization and cohort dates', () => {
+ it('returns a complete future month for browsing with unavailable actual financial results', async () => {
+  const response = await GET(new NextRequest('https://app.test/api/ad-calendar?month=2099-02'));
+  const body = await response.json(); expect(response.status).toBe(200); expect(body.days).toHaveLength(28);
+  expect(body.days.every((day: any) => day.future)).toBe(true); expect(body.summary.profit).toBeNull();
+ });
  it('requires authentication and Page access before reading financial data', async () => {
   m.session.mockResolvedValueOnce(null); expect((await GET(request())).status).toBe(401);
   expect((await GET(request('&pageId=foreign'))).status).toBe(403); expect(m.db).not.toHaveBeenCalled();
