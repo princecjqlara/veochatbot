@@ -5,6 +5,7 @@ import { calendarHeat, calendarRange, phtDay, shiftCalendarMonth } from '@/lib/a
 import AdCreativePreview from '@/components/AdCreativePreview';
 import { signIn } from 'next-auth/react';
 import { FACEBOOK_PERMISSION_SCOPE } from '@/lib/facebook-permissions';
+import { requestDeadline } from '@/lib/request-deadline';
 
 const number = (value: number | null | undefined) => value == null ? 'Not available' : new Intl.NumberFormat('en-PH', { maximumFractionDigits: 2 }).format(value);
 const money = (value: number | null | undefined, currency?: string | null) => value == null || !currency ? 'Not available' : new Intl.NumberFormat('en-PH', { style: 'currency', currency, currencyDisplay: 'code' }).format(value);
@@ -74,14 +75,20 @@ export default function AdCalendar() {
  useEffect(() => {
   const controller = new AbortController();
   setPagesLoading(true); setPagesError('');
-  void fetch('/api/pages', { cache: 'no-store', signal: controller.signal }).then(async response => {
+  void requestDeadline(async signal => { const response = await fetch('/api/pages', { cache: 'no-store', signal });
    const body = await response.json();
    if (!response.ok || !Array.isArray(body.pages)) throw Error('Could not load connected Pages. Please retry.');
    if (!controller.signal.aborted) setPages(body.pages.filter((page: any) => page.id && !page.requiresReconnect));
-  }).catch(e => { if (!controller.signal.aborted) { setPages([]); setPagesError(e.message); } })
+  }, 15000, controller.signal).catch(e => { if (!controller.signal.aborted) { setPages([]); setPagesError(e.message); } })
    .finally(() => { if (!controller.signal.aborted) setPagesLoading(false); });
   return () => controller.abort();
  }, [pagesAttempt]);
+ useEffect(() => {
+  if (!pagesError) return;
+  const retry = () => { if (!document.hidden) setPagesAttempt(value => value + 1); };
+  const timer = setTimeout(retry, 30000); window.addEventListener('online', retry); document.addEventListener('visibilitychange', retry);
+  return () => { clearTimeout(timer); window.removeEventListener('online', retry); document.removeEventListener('visibilitychange', retry); };
+ }, [pagesError, pagesAttempt]);
  const hasSelectedPage = pages.some(page => page.id === pageId);
  useEffect(() => {
   if (pagesLoading || hasSelectedPage) return;
@@ -104,15 +111,21 @@ export default function AdCalendar() {
  const queryFor = useCallback(() => new URLSearchParams({ month, day, ...(pageId ? { pageId } : {}), ...(adId ? { adId } : {}) }), [month, day, pageId, adId]);
  const getReport = useCallback(async (signal?: AbortSignal) => {
   if (!pageId) throw Error('Choose a connected Page.');
-  const response = await fetch('/api/ad-calendar?' + queryFor(), { cache: 'no-store', signal }), body = await response.json();
-  if (!response.ok) throw Error(body.error || 'Calendar unavailable'); return body;
+  return requestDeadline(async transport => {
+   const response = await fetch('/api/ad-calendar?' + queryFor(), { cache: 'no-store', signal: transport }), body = await response.json();
+   if (!response.ok) throw Error(body.error || 'Calendar unavailable'); return body;
+  }, 95000, signal);
  }, [pageId, queryFor]);
  const reloadRef = useRef(getReport); reloadRef.current = getReport;
- const issue = useRef(0);
- const refresh = useCallback(async (signal?: AbortSignal) => { if (pagesLoading || !hasSelectedPage) return; const current = ++issue.current; setLoading(true); try { const result = await getReport(signal); if (issue.current === current && !signal?.aborted) { setData(result); setError(''); } } catch (e) { if (issue.current === current && !signal?.aborted) setError((e as Error).message); } finally { if (issue.current === current) setLoading(false); } }, [getReport, pagesLoading, hasSelectedPage]);
+ const issue = useRef(0), refreshing = useRef(false);
+ const refresh = useCallback(async (signal?: AbortSignal) => { if (pagesLoading || !hasSelectedPage) return; const current = ++issue.current; refreshing.current = true; setLoading(true); try { const result = await getReport(signal); if (issue.current === current && !signal?.aborted) { setData(result); setError(''); } } catch (e) { if (issue.current === current && !signal?.aborted) setError((e as Error).message); } finally { if (issue.current === current) { refreshing.current = false; setLoading(false); } } }, [getReport, pagesLoading, hasSelectedPage]);
  useEffect(() => { const controller = new AbortController(); void refresh(controller.signal); return () => { controller.abort(); issue.current++; }; }, [refresh]);
  useEffect(() => { setData(null); setNotice(''); setImportError(''); setCreativePage(1); setShowPeople(false); setPeopleOffset(0); if (tasks.current.scope !== scope) { tasks.current = { scope, items: [] }; setRemaining(0); } }, [scope]);
- useEffect(() => { const timer = setInterval(() => { if (!document.hidden && !syncing) void refresh(); }, 60000); return () => clearInterval(timer); }, [refresh, syncing]);
+ useEffect(() => {
+  const update = () => { if (!document.hidden && !syncing && !refreshing.current) void refresh(); };
+  const timer = setInterval(update, 60000); document.addEventListener('visibilitychange', update); window.addEventListener('online', update);
+  return () => { clearInterval(timer); document.removeEventListener('visibilitychange', update); window.removeEventListener('online', update); };
+ }, [refresh, syncing]);
  useEffect(() => { setCreativePage(1); setPeopleOffset(0); setPeople(null); setProof(null); proofIssue.current++; }, [day, creativeMode, peopleStatus, scope]);
  useEffect(() => {
   if (!showPeople) return; const controller = new AbortController(); setPeople(null);

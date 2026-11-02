@@ -15,7 +15,7 @@ if(fs.existsSync(lockFile)){
 }
 fs.writeFileSync(lockFile,JSON.stringify({pid:process.pid}),{flag:'wx'});
 process.once('exit',()=>{try{if(JSON.parse(fs.readFileSync(lockFile,'utf8')).pid===process.pid)fs.unlinkSync(lockFile);}catch{}});
-const status={pid:process.pid,started_at:new Date().toISOString(),status:'starting',ai_calls:0,ai_jobs_created:0,customer_messages_sent:0,scope:'connected_pages',refetch_new_contacts:true,refresh_requests_complete:false,ad_refresh:{status:'waiting_for_database'},new_contact_discovery_status:'waiting_for_database',cycles:[],retained_live_histories:fs.existsSync(path.join(dir,'live/histories'))?fs.readdirSync(path.join(dir,'live/histories')).filter(file=>file.endsWith('.json.gz')).length:0};
+const status={pid:process.pid,started_at:new Date().toISOString(),status:'starting',ai_calls:0,ai_jobs_created:0,customer_messages_sent:0,scope:'connected_pages',refetch_new_contacts:true,refresh_requests_complete:false,calendar_backlog:{status:'waiting_for_database',complete:false},ad_refresh:{status:'waiting_for_database'},new_contact_discovery_status:'waiting_for_database',cycles:[],retained_live_histories:fs.existsSync(path.join(dir,'live/histories'))?fs.readdirSync(path.join(dir,'live/histories')).filter(file=>file.endsWith('.json.gz')).length:0};
 const flush=()=>fs.writeFileSync(statusFile,JSON.stringify({...status,updated_at:new Date().toISOString()},null,2));
 const read=file=>fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;
 const refreshRequest=read(path.join(dir,'connected-refetch-request.json')),refreshSince=refreshRequest?.requested_at||null;status.refresh_requested_at=refreshSince;
@@ -27,7 +27,30 @@ function command(script,args=[],label=script.replace(/\W/g,'-')){
  const result=new Promise(resolve=>{child.once('error',e=>{done=true;fs.closeSync(log);resolve({exit_code:1,error:e.message});});child.once('exit',code=>{if(done)return;done=true;fs.closeSync(log);resolve({exit_code:code});});});
  return{child,result,job_id:jobId,get done(){return done;}};
 }
-async function reconcile(){
+let lastRegistryRepair=0;
+async function reconcileRegistry(force=false){
+ const registry=path.resolve('.vercel/system-data-audit/latest-sources.jsonl'),auditDir=path.join(dir,'calendar-registry-audit');
+ if(!fs.existsSync(registry)||!force&&Date.now()-lastRegistryRepair<1800000)return;
+ if(pendingHistoricalRepair(auditDir)){
+  status.status='resuming_calendar_registry_repair';flush();
+  const resumed=await command('repair-historical-leads.mjs',['--apply','--audit-dir='+auditDir],'background-calendar-resume').result;
+  if(resumed.exit_code||!read(path.join(auditDir,'repair-apply.json'))?.passed)throw Error('Calendar registry repair needs review; its pending manifest is retained');
+ }
+ status.status='verifying_calendar_registry';status.calendar_backlog={status:'verifying_saved_histories'};flush();
+ const audit=await command('audit-historical-leads.mjs',['--registry='+registry,'--only-new'],'background-calendar-registry-audit').result;
+ const report=read(path.join(auditDir,'audit.json'));if(audit.exit_code||!report?.passed)throw Error(report?.error||'Calendar registry audit failed; existing calendar records retained');
+ if(report.matched>0){
+  status.status='preflighting_calendar_registry';flush();
+  const check=await command('repair-historical-leads.mjs',['--preflight','--audit-dir='+auditDir],'background-calendar-registry-preflight').result;
+  if(check.exit_code||!read(path.join(auditDir,'repair-preflight.json'))?.passed)throw Error('Calendar registry preflight failed; source records retained');
+  status.status='applying_calendar_registry';flush();
+  const applied=await command('repair-historical-leads.mjs',['--apply','--audit-dir='+auditDir],'background-calendar-registry-apply').result,receipt=read(path.join(auditDir,'repair-apply.json'));
+  if(applied.exit_code||!receipt?.passed)throw Error(receipt?.error||'Calendar registry apply interrupted; committed batches are saved');
+  status.calendar_backlog={status:'saved_histories_reconciled',complete:!report.unmatched&&!report.unverified_pages?.length,matched_histories:report.matched,unimported_contacts:report.unmatched,already_reconciled:report.already_reconciled,unverified_pages:report.unverified_pages||[],...Object.fromEntries(['contact_dates_corrected','inquiry_sources_refined','stage_events_imported','projection_sources_refreshed'].map(key=>[key,receipt[key]||0]))};
+ }else status.calendar_backlog={status:'no_unapplied_matching_histories',complete:!report.unmatched&&!report.unverified_pages?.length,unimported_contacts:report.unmatched,already_reconciled:report.already_reconciled,unverified_pages:report.unverified_pages||[]};
+ lastRegistryRepair=Date.now();flush();
+}
+async function reconcile(final=false){
  const auditDir=path.join(dir,'live-audit');
  if(pendingHistoricalRepair(auditDir)){
   status.status='resuming_saved_repair';flush();
@@ -45,7 +68,7 @@ async function reconcile(){
   if(apply.exit_code||!receipt?.passed)throw Error(receipt?.error||'Repair interrupted; committed batches are checkpointed');
   for(const key of ['contact_dates_corrected','inquiry_sources_refined','stage_events_imported','pipeline_stages_corrected','projection_sources_refreshed'])cycle[key]=receipt[key];
  }
- status.cycles.push(cycle);status.status='collecting_sources';flush();
+ status.cycles.push(cycle);await reconcileRegistry(final);status.status='collecting_sources';flush();
 }
 let listing,histories,ads;
 try{
@@ -83,7 +106,7 @@ try{
    if(listed.exit_code||loaded.exit_code)throw Error('Source connection interrupted; collection and repair checkpoints are retained');
    if(!finalHistoryPass){histories=command('collect-lead-reconciliation-sources.mjs',['--histories'],'background-histories');finalHistoryPass=true;continue;}
    if(ads&&!ads.done){status.ad_refresh={status:'running'};flush();await sleep(15000);continue;}
-   await reconcile();const inventory=read(path.join(dir,'live/list-receipt.json')),sources=read(path.join(dir,'live/histories-receipt.json'));
+   await reconcile(true);const inventory=read(path.join(dir,'live/list-receipt.json')),sources=read(path.join(dir,'live/histories-receipt.json'));
    const adResult=await ads.result,rawAdReport=read(path.join(dir,'connected-ads-refresh.json')),adCurrent=currentAdRefreshReceipt(rawAdReport,ads.job_id,adResult.exit_code),adReport=adCurrent?rawAdReport:null,adFailures=(rawAdReport?.refresh_job_id===ads.job_id?rawAdReport.errors||[]:[]).filter(retryableSourceError);
    if(adFailures.length&&adRetryRounds<3){adRetryRounds++;status.ad_refresh={status:'retrying',attempt:adRetryRounds};flush();await sleep(adFailures.some(error=>[4,17,32,613,80004].includes(Number(error.code)))?600000:60000*adRetryRounds);ads=command('refetch-connected-ad-data.mjs',[],'background-ads');continue;}
    const retryable=[...(inventory?.pages||[]).flatMap(page=>page.error?[page.error]:[]),...(inventory?.unverified_pages||[]).map(page=>page.error),...(sources?.unverified_pages||[]).map(page=>page.error),...(sources?.errors||[])].filter(retryableSourceError);
@@ -94,7 +117,13 @@ try{
     listing=command('collect-lead-reconciliation-sources.mjs',['--list','--discover-new-contacts'],'background-list');histories=command('collect-lead-reconciliation-sources.mjs',['--histories'],'background-histories');finalHistoryPass=false;continue;
    }
    status.source_scope_complete=backfillCoverageComplete(inventory,sources);status.new_contact_discovery_status=inventory?.coverage_complete?'completed_connected_inboxes':'incomplete';status.new_contacts_discovered=inventory?.new_contacts_discovered||0;
-   const sameAdScope=adCurrent&&adRefreshCoversPages(adReport,(inventory?.pages||[]).map(page=>page.page_id));status.ad_refresh={complete:sameAdScope&&adReport?.complete===true,inventory_complete:adReport?.inventory_complete===true,daily_spend_complete:adReport?.daily_spend_complete===true,blocked:adReport?.ad_account_refresh_blocked||(!adCurrent?'Current ad refresh did not finish successfully':!sameAdScope?'Connected Page scope changed during refresh':null)};status.refresh_requests_complete=status.source_scope_complete&&status.ad_refresh.complete;
+   const sameAdScope=adCurrent&&adRefreshCoversPages(adReport,(inventory?.pages||[]).map(page=>page.page_id));status.ad_refresh={complete:sameAdScope&&adReport?.complete===true,inventory_complete:adReport?.inventory_complete===true,daily_spend_complete:adReport?.daily_spend_complete===true,blocked:adReport?.ad_account_refresh_blocked||(!adCurrent?'Current ad refresh did not finish successfully':!sameAdScope?'Connected Page scope changed during refresh':null)};status.refresh_requests_complete=status.source_scope_complete&&status.ad_refresh.complete&&status.calendar_backlog.complete===true;
+   if(status.source_scope_complete){
+    status.status='verifying_live_calendar';flush();
+    const started=Date.now(),verified=await command('verify-connected-calendar-refresh.mjs',[],'background-calendar-verification').result,receipt=read(path.join(dir,'calendar-refresh-verification.json'));
+    status.calendar_report_validation={passed:verified.exit_code===0&&receipt?.passed===true&&Date.parse(receipt.started_at)>=started,cases:receipt?.cases?.length||0,error:receipt?.error||null};
+    status.refresh_requests_complete=status.refresh_requests_complete&&status.calendar_report_validation.passed;
+   }
    status.status=inventory?.expected_pages===0&&inventory?.scope_check_complete?'no_connected_pages':status.source_scope_complete?'completed_connected_sources':'completed_accessible_sources';
    status.unavailable_pages=(inventory?.pages||[]).filter(page=>!page.complete).map(page=>({page:page.page,error:page.error}));status.source_errors=sources?.errors||[];status.completed_at=new Date().toISOString();flush();break;
   }

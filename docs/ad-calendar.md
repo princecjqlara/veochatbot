@@ -26,6 +26,11 @@ in the link. Disconnected Page links fall back to a connected Page and clear the
 old creative filter. No combined all-Page report is requested by the calendar.
 If no Pages are connected, the date grid stays unavailable with a connection
 link. Page-list failures can be retried without issuing an unscoped report.
+Page-list reads and calendar reads have transport deadlines. A database outage
+returns a retryable error instead of leaving the connected-Page loader pending
+or supplying an empty successful month. The Page list retries after 30 seconds
+and on reconnect/tab return. Available reports refresh once per minute, on tab
+return and when the browser comes online; automatic reads do not overlap.
 
 Daily cells, monthly totals, selected-day totals and creative metrics use full
 labels and exact displayed amounts, without A/L/C shortcuts or compact K/M
@@ -60,6 +65,14 @@ inbox indexes, duplicate Page receipts and successful commands with partial
 reads cannot qualify. A timed-out inbox keeps its saved pagination cursor and
 downloaded conversations; index writes are atomic and repeated conversation
 identifiers are deduplicated. Facebook access failures remain explicit gaps.
+The calendar repair also reads the complete retained-history registry, including
+older exports outside the live-download folder. It rechecks connected Pages,
+matches current contacts by Page and PSID, and verifies every source fingerprint
+before updating inquiry dates, historical stages and conversion caches. This is
+separate from publishing contact-profile summaries. An interrupted registry
+repair retains its own manifest and resumes before a fresh audit can replace it.
+New audit manifests are installed atomically only after a successful read-only
+pass. Unknown contact identities and inaccessible Pages remain explicit gaps.
 During a database outage, the supervisor checks the data API before opening a
 pooler connection and backs off to five-minute intervals. Pooler circuit-breaker
 responses receive at least a 150-second cooldown.

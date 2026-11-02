@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 const m = vi.hoisted(() => ({ session: vi.fn(), ids: vi.fn(), db: vi.fn(), rpc: vi.fn() }));
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: m.session }));
@@ -6,14 +6,24 @@ vi.mock('@/lib/page-access', () => ({ getUserPageIds: m.ids }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: m.db }));
 import { GET } from './route';
 const request = (query = '') => new NextRequest('https://app.test/api/ad-calendar?month=2020-01' + query);
+afterEach(() => { vi.useRealTimers(); });
 beforeEach(() => {
- vi.clearAllMocks(); m.session.mockResolvedValue({ user: { id: 'owner' } }); m.ids.mockResolvedValue(['p']); m.rpc.mockResolvedValue({ data: { groups: [], contacts: [], total: 0 }, error: null });
+ vi.clearAllMocks(); m.session.mockResolvedValue({ user: { id: 'owner' } }); m.ids.mockResolvedValue(['p']);
+ const result = Promise.resolve({ data: { groups: [], contacts: [], total: 0 }, error: null });
+ m.rpc.mockReturnValue(Object.assign(result, { abortSignal: () => result }));
  m.db.mockReturnValue({ rpc: m.rpc, from: (table: string) => {
   const builder: any = { then: (resolve: any) => Promise.resolve({ data: table === 'pages' ? [{ id: 'p', name: 'Page' }] : [], count: 0, error: null }).then(resolve) };
   for (const method of ['select', 'in', 'eq', 'is', 'limit', 'abortSignal', 'gte', 'lte', 'order', 'range']) builder[method] = () => builder; return builder;
  } });
 });
 describe('ad calendar authorization and cohort dates', () => {
+ it('ends an unresponsive membership lookup with a retryable error and never returns empty calendar totals', async () => {
+  vi.useFakeTimers(); m.ids.mockImplementationOnce(() => new Promise(() => {}));
+  const pending = GET(request()); await vi.advanceTimersByTimeAsync(10000);
+  const response = await pending, body = await response.json();
+  expect(response.status).toBe(503); expect(body).toMatchObject({ code: 'DATABASE_UNAVAILABLE', retryable: true });
+  expect(body).not.toHaveProperty('days'); expect(m.rpc).not.toHaveBeenCalled();
+ });
  it('normalizes an empty ad selection to all sources rather than sending an invalid scope to SQL', async () => {
   const response = await GET(request('&adId=%20')); expect(response.status).toBe(200);
   expect(m.rpc).toHaveBeenCalledWith('get_ad_calendar_report', expect.objectContaining({ p_ad_id: null }));

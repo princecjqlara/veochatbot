@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { DatabaseReadTimeout, requestDeadline } from '@/lib/request-deadline';
 
 export const dynamic = 'force-dynamic';
 
@@ -104,7 +105,7 @@ export async function GET(request: NextRequest) {
 
         const supabase = getSupabaseAdmin();
 
-        const { data: userPages, error } = await supabase
+        const { data: userPages, error } = await requestDeadline(signal => supabase
             .from('user_pages')
             .select(`
         page_id,
@@ -118,7 +119,7 @@ export async function GET(request: NextRequest) {
           access_token
         )
       `)
-            .eq('user_id', userId);
+            .eq('user_id', userId).abortSignal(signal), 10000);
 
         if (error) throw error;
 
@@ -159,6 +160,7 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({ pages, reconnectRequiredPages });
     } catch (error) {
+        if (error instanceof DatabaseReadTimeout) return NextResponse.json({ error: 'Connected Pages are temporarily unavailable. Please retry.', code: error.code, retryable: true }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
         console.error('Error fetching pages:', error);
         return NextResponse.json(
             { error: 'Failed to fetch pages', message: (error as Error).message },

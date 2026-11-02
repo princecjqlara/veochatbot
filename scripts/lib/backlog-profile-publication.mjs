@@ -12,6 +12,7 @@ export async function publishBacklogProfile(db, artifact, apply = false) {
  await db.query('BEGIN');
  try {
   await db.query("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='30s'");
+  if (!(await db.query("SELECT pg_try_advisory_xact_lock_shared(hashtext('historical_lead_repair_v2')) AS locked")).rows[0].locked) return await stop('calendar_repair_active');
   const contact = (await db.query(`SELECT c.*,p.fb_page_id FROM public.contacts c JOIN public.pages p ON p.id=c.page_id
    WHERE c.page_id=$1 AND c.psid=$2 FOR UPDATE OF c`, [artifact.page_id, artifact.psid])).rows[0];
   if (!contact) return await stop('contact_not_imported');

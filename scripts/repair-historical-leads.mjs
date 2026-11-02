@@ -1,11 +1,12 @@
 // Reconcile retained full histories without AI, customer sends or inferred cash.
 import fs from'node:fs';import path from'node:path';import crypto from'node:crypto';import{spawn}from'node:child_process';import{fileURLToPath}from'node:url';import{createRequire}from'node:module';import{build}from'esbuild';import pg from'pg';
 import{gunzipSync}from'node:zlib';
+import {markRetainedCalendarCacheSql} from './lib/calendar-source-registry.mjs';
 const apply=process.argv.includes('--apply');if(Number(apply)+Number(process.argv.includes('--preflight'))!==1)throw Error('Choose exactly --preflight or --apply');
 const root=path.resolve('..'),dir=path.resolve(process.argv.find(arg=>arg.startsWith('--audit-dir='))?.slice(12)||'.vercel/historical-leads');
 if(dir!==path.resolve('.vercel/historical-leads')&&!dir.startsWith(path.resolve('.vercel/historical-leads')+path.sep))throw Error('Invalid audit directory');
 const audit=JSON.parse(fs.readFileSync(path.join(dir,'audit.json'),'utf8'));
-if(!audit.passed||!audit.read_only||Date.now()-Date.parse(audit.completed_at)>86400000)throw Error('A complete recent source audit is required');
+if(!audit.passed||!audit.read_only||!Number.isFinite(Date.parse(audit.completed_at))||Date.parse(audit.completed_at)>Date.now()+60000||Date.now()-Date.parse(audit.completed_at)>86400000)throw Error('A complete recent source audit is required');
 const digest=s=>crypto.createHash('sha256').update(s).digest('hex'),manifestText=fs.readFileSync(path.join(dir,'manifest.jsonl'),'utf8');
 const allCandidates=manifestText.trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(r=>r.contact_id&&r.complete&&(r.first_date_mismatch||r.source_date_mismatch||r.missing_stage_events||r.projection_cache||r.source_reviewed));
 const offsetArg=process.argv.find(arg=>arg.startsWith('--batch-offset='));
@@ -35,7 +36,7 @@ await build({entryPoints:['src/lib/messenger-stage-sync.ts'],outfile:path.join(d
 const{parseMessengerStageEvent}=createRequire(import.meta.url)(path.join(dir,'repair-parser.cjs'));
 const assert=(v,message)=>{if(!v)throw Error(message);};
 for(const r of candidates){
- const sourcePath=path.resolve(root,r.archive_path);assert(sourcePath.startsWith(root+path.sep),'Source escaped workspace');const data=fs.readFileSync(sourcePath),text=sourcePath.endsWith('.gz')?gunzipSync(data).toString('utf8'):data.toString('utf8');assert(digest(text)===r.archive_sha256,'Source changed since audit');
+ const sourcePath=path.resolve(root,r.archive_path);assert(sourcePath.startsWith(root+path.sep),'Source escaped workspace');const data=fs.readFileSync(sourcePath),text=(sourcePath.endsWith('.gz')?gunzipSync(data).toString('utf8'):data.toString('utf8')).replace(/^\uFEFF/,'');assert(digest(text)===r.archive_sha256,'Source changed since audit');
  const messages=JSON.parse(text).messages||[],byId=new Map(messages.map(m=>[m.id,m]));
  if(r.first_message_id){const first=byId.get(r.first_message_id);assert(first?.from?.id===r.psid&&Date.parse(first.created_time)===Date.parse(r.first_inquiry_at),'First-inquiry proof does not match its customer or time');}
  for(const e of r.stage_events){const parsed=parseMessengerStageEvent(byId.get(e.messageId)||{},r.fb_page_id);assert(JSON.stringify(parsed)===JSON.stringify(e),'Stage evidence changed');assert(Date.parse(e.occurredAt)<=Date.parse(r.source_cutoff_at),'Stage exceeds its source cutoff');}
@@ -69,6 +70,9 @@ try{
  const sources=await db.query("INSERT INTO ad_contact_sources AS s(contact_id,page_id,first_inquiry_at,first_message_id,inquiry_basis) SELECT contact_id,page_id,first_inquiry_at,first_message_id,'audited_history' FROM repair_input WHERE first_inquiry_at IS NOT NULL AND first_message_id IS NOT NULL ON CONFLICT(contact_id) DO UPDATE SET first_inquiry_at=EXCLUDED.first_inquiry_at,first_message_id=EXCLUDED.first_message_id,inquiry_basis='audited_history',origin_ad_id=CASE WHEN s.first_message_id IS NOT DISTINCT FROM EXCLUDED.first_message_id THEN s.origin_ad_id END,origin_evidence_key=CASE WHEN s.first_message_id IS NOT DISTINCT FROM EXCLUDED.first_message_id THEN s.origin_evidence_key END,attribution_status=CASE WHEN s.first_message_id IS NOT DISTINCT FROM EXCLUDED.first_message_id THEN s.attribution_status ELSE 'unknown' END,updated_at=clock_timestamp() WHERE s.page_id=EXCLUDED.page_id AND (s.first_inquiry_at IS NULL OR s.inquiry_basis='legacy_recorded' OR EXCLUDED.first_inquiry_at<s.first_inquiry_at AND (s.first_message_id IS NOT DISTINCT FROM EXCLUDED.first_message_id OR s.first_message_id IS NULL OR date_trunc('second',EXCLUDED.first_inquiry_at)<date_trunc('second',s.first_inquiry_at)))");
  receipt.inquiry_sources_refined=sources.rowCount;
  const projections=await db.query("SELECT save_contact_conversion_cache(r.page_id,r.contact_id,r.projection_cache) FROM repair_input r WHERE r.projection_cache IS NOT NULL AND r.projection_cache<>'null'::jsonb");receipt.projection_sources_refreshed=projections.rowCount;
+ // The shared Graph refresh function writes live_graph. Retained exports keep
+ // their audited provenance; an equal/newer existing live read is preserved.
+ await db.query(markRetainedCalendarCacheSql);
  assert((await db.query("SELECT count(*)::int AS n FROM repair_before b LEFT JOIN contact_conversion_cache f ON f.contact_id=b.id WHERE b.conversion_cache->>'payment_at' IS NOT NULL AND (f.payment_at IS NULL OR f.payment_at>(b.conversion_cache->>'payment_at')::timestamptz)")).rows[0].n===0,'Existing payment confirmations must not disappear or move to a later date');
  const dates=await db.query("UPDATE contacts c SET first_interaction_at=s.first_inquiry_at FROM repair_input r JOIN ad_contact_sources s ON s.contact_id=r.contact_id AND s.page_id=r.page_id WHERE c.id=r.contact_id AND c.page_id=r.page_id AND r.first_inquiry_at IS NOT NULL AND s.first_inquiry_at IS NOT NULL AND s.inquiry_basis<>'legacy_recorded' AND c.first_interaction_at IS DISTINCT FROM s.first_inquiry_at");
  receipt.contact_dates_corrected=dates.rowCount;

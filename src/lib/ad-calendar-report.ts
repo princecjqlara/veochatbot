@@ -1,3 +1,4 @@
+import { DatabaseReadTimeout, requestDeadline } from './request-deadline';
 type Report = { groups: any[]; as_of?: string };
 type Scope = { pageIds: string[]; from: string; to: string; adId: string | null };
 type Db = { rpc: (name: string, args: Record<string, unknown>) => any };
@@ -17,8 +18,11 @@ export async function loadCalendarReport(db: Db, scope: Scope): Promise<Report> 
  const query = async (pageIds: string[]) => {
   if (Date.now() >= deadline) throw new CalendarReportError('CALENDAR_TIMEOUT', 'DEADLINE');
   let reply: any;
-  try { reply = await db.rpc('get_ad_calendar_report', { p_page_ids: pageIds, p_from: scope.from, p_to: scope.to, p_ad_id: scope.adId }); }
-  catch { throw new CalendarReportError('CALENDAR_UNAVAILABLE', 'TRANSPORT'); }
+  try { reply = await requestDeadline(signal => {
+   const query = db.rpc('get_ad_calendar_report', { p_page_ids: pageIds, p_from: scope.from, p_to: scope.to, p_ad_id: scope.adId });
+   return typeof query?.abortSignal === 'function' ? query.abortSignal(signal) : query;
+  }, Math.min(20000, deadline - Date.now())); }
+  catch (error) { if (error instanceof DatabaseReadTimeout) throw error; throw new CalendarReportError('CALENDAR_UNAVAILABLE', 'TRANSPORT'); }
   if (!reply || typeof reply !== 'object') throw new CalendarReportError('CALENDAR_UNAVAILABLE', 'INVALID_REPORT');
   if (reply.error) {
    if (timeout(reply.error)) return null;

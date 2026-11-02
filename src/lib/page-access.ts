@@ -1,10 +1,11 @@
 import { getSupabaseAdmin } from '@/lib/supabase';
 
-export async function getUserPageIds(userId: string): Promise<string[]> {
-    const { data, error } = await getSupabaseAdmin()
+export async function getUserPageIds(userId: string, signal?: AbortSignal): Promise<string[]> {
+    const query = getSupabaseAdmin()
         .from('user_pages')
         .select('page_id')
         .eq('user_id', userId);
+    const { data, error } = await (signal ? query.abortSignal(signal) : query);
     if (error) throw error;
     return [...new Set((data || []).map((membership) => membership.page_id))];
 }

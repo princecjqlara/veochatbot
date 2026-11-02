@@ -21,7 +21,7 @@ function createRequest(): NextRequest {
 }
 
 function createSupabaseMock() {
-    const eq = vi.fn().mockResolvedValue({
+    const response = {
         data: [
             {
                 page_id: 'old_page',
@@ -49,7 +49,8 @@ function createSupabaseMock() {
             }
         ],
         error: null
-    });
+    };
+    const eq = vi.fn().mockReturnValue({ abortSignal: () => Promise.resolve(response) });
     const select = vi.fn().mockReturnValue({ eq });
     const from = vi.fn().mockReturnValue({ select });
 
