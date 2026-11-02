@@ -24,6 +24,8 @@ describe('calendar cohort and ledger SQL', () => {
      ('${p}','${c}','2019-12-01T00:00:00Z',NULL,'full','PHP',9999,'${c}'),('${other}','${foreign}','2020-02-04T10:00:00+08',NULL,'full','PHP',888888,'${c}');`);
    await db.exec(readFileSync('supabase/migrations/202611020005_ad_calendar.sql', 'utf8'));
    await db.exec(readFileSync('supabase/migrations/202611020006_calendar_outcome_sources.sql', 'utf8'));
+   await db.exec(readFileSync('supabase/migrations/202611020007_calendar_report_performance.sql', 'utf8'));
+   await db.exec("INSERT INTO contacts VALUES('10000000-0000-4000-8000-000000000004','" + p + "','2020-01-01T12:00:00+08','Unverified origin','u2','new'); INSERT INTO ad_contact_sources VALUES('10000000-0000-4000-8000-000000000004','" + p + "','2020-01-01T12:00:00+08','recorded_referral','11','unverified')");
    await db.exec("INSERT INTO contact_conversion_cache VALUES('" + c + "','" + p + "','2020-01-01T12:00:00+08','2020-03-05T00:00:00Z','2020-02-04T10:00:00+08','chat-ack',true,NULL),('" + unknown + "','" + p + "','2020-01-01T12:00:00+08','2020-03-05T00:00:00Z','2020-02-05T10:00:00+08','unknown-source-ack',true,'2020-03-06T00:00:00Z')");
    const args = [[p], '2020-01-01T00:00:00+08', '2020-02-01T00:00:00+08'];
    const report = (await db.query<{ result: any }>('SELECT get_ad_calendar_report($1,$2,$3,NULL) AS result', args)).rows[0].result;
@@ -35,6 +37,12 @@ describe('calendar cohort and ledger SQL', () => {
    expect(report.groups.find((row: any) => row.ad_id === null).legacy_dates).toBe(1); expect(JSON.stringify(report)).not.toContain('888888');
    const customers = (await db.query<{ result: any }>("SELECT get_ad_calendar_contacts($1,$2,$3,NULL,'paid',0) AS result", args)).rows[0].result;
    expect(customers.total).toBe(1); expect(customers.contacts[0].id).toBe(c); expect(customers.contacts[0].paid_at).toContain('2020-02-04');
+   expect(customers.contacts[0].name).toBe('Customer'); expect(customers.contacts[0].psid).toBe('psid');
+   const named = (await db.query<{ name: string }>('SELECT name FROM ad_calendar_cohort($1,$2,$3,NULL) WHERE id=$4', [...args, c])).rows[0];
+   expect(named.name).toBe('Customer');
+   const unknownOnly = (await db.query<{ result: any }>("SELECT get_ad_calendar_report($1,$2,$3,'unknown') AS result", args)).rows[0].result;
+   expect(unknownOnly.groups).toHaveLength(1); expect(unknownOnly.groups[0].ad_id).toBeNull();
+   expect(unknownOnly.groups[0].inquiries).toBe(2);
    const confirmations = (await db.query<{ result: any }>("SELECT get_ad_calendar_contacts($1,$2,$3,NULL,'confirmed',0) AS result", args)).rows[0].result;
    expect(confirmations.total).toBe(2); expect(confirmations.contacts.find((row: any) => row.id === unknown).confirmation_basis).toBe('conversation_documented');
    await db.query("UPDATE contacts SET pipeline_stage='order_created' WHERE id=$1", [c]);

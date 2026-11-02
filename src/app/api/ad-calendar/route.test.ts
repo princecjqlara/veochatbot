@@ -14,6 +14,25 @@ beforeEach(() => {
  } });
 });
 describe('ad calendar authorization and cohort dates', () => {
+ it('normalizes an empty ad selection to all sources rather than sending an invalid scope to SQL', async () => {
+  const response = await GET(request('&adId=%20')); expect(response.status).toBe(200);
+  expect(m.rpc).toHaveBeenCalledWith('get_ad_calendar_report', expect.objectContaining({ p_ad_id: null }));
+ });
+ it('loads Page filters independently so a failed cohort cannot prevent changing Page scope', async () => {
+  m.ids.mockResolvedValue(Array.from({ length: 51 }, (_, n) => 'page-' + n));
+  const response = await GET(request('&view=pages')); expect(response.status).toBe(200); expect((await response.json()).pages).toHaveLength(1); expect(m.rpc).not.toHaveBeenCalled();
+ });
+ it('returns correct empty report and contact shapes for an account without Pages', async () => {
+  m.ids.mockResolvedValue([]);
+  const report = await GET(request()); expect(report.status).toBe(200); expect((await report.json()).days).toHaveLength(31);
+  const contacts = await GET(request('&view=contacts&day=2020-01-01')); expect(await contacts.json()).toEqual({ total: 0, contacts: [] }); expect(m.rpc).not.toHaveBeenCalled();
+ });
+ it('exposes a recoverable timeout without revealing database internals', async () => {
+  m.rpc.mockResolvedValue({ error: { code: '57014', message: 'private SQL details' } });
+  const response = await GET(request()), body = await response.json();
+  expect(response.status).toBe(503); expect(body).toMatchObject({ code: 'CALENDAR_TIMEOUT', retryable: true });
+  expect(JSON.stringify(body)).not.toContain('private SQL details');
+ });
  it('returns a complete future month for browsing with unavailable actual financial results', async () => {
   const response = await GET(new NextRequest('https://app.test/api/ad-calendar?month=2099-02'));
   const body = await response.json(); expect(response.status).toBe(200); expect(body.days).toHaveLength(28);

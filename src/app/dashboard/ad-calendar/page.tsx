@@ -39,6 +39,15 @@ function Revenue({ rows, field = 'gross' }: { rows: any[]; field?: string }) {
 export default function AdCalendar() {
  const today = phtDay(Date.now()), [month, setMonth] = useState(today.slice(0, 7)), [pageId, setPageId] = useState(''), [adId, setAdId] = useState(''), [day, setDay] = useState(today);
  const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('total_inquiries');
+ const [pages, setPages] = useState<any[]>([]);
+ useEffect(() => {
+  const controller = new AbortController();
+  void fetch('/api/ad-calendar?view=pages', { cache: 'no-store', signal: controller.signal }).then(async response => {
+   const body = await response.json(); if (response.ok && Array.isArray(body.pages) && !controller.signal.aborted) setPages(body.pages);
+  }).catch(() => {});
+  return () => controller.abort();
+ }, []);
+ useEffect(() => { if (data?.pages) setPages(data.pages); }, [data]);
  const [connection, setConnection] = useState<any>(null), [syncing, setSyncing] = useState(false), [notice, setNotice] = useState(''), [remaining, setRemaining] = useState(0), [importError, setImportError] = useState('');
  const [creativeMode, setCreativeMode] = useState('day'), [creativePage, setCreativePage] = useState(1);
  const [showPeople, setShowPeople] = useState(false), [peopleStatus, setPeopleStatus] = useState('all'), [peopleOffset, setPeopleOffset] = useState(0), [people, setPeople] = useState<any>(null);
@@ -60,8 +69,8 @@ export default function AdCalendar() {
  }, [queryFor]);
  const reloadRef = useRef(getReport); reloadRef.current = getReport;
  const issue = useRef(0);
- const refresh = useCallback(async () => { const current = ++issue.current; setLoading(true); try { const result = await getReport(); if (issue.current === current) { setData(result); setError(''); } } catch (e) { if (issue.current === current) setError((e as Error).message); } finally { if (issue.current === current) setLoading(false); } }, [getReport]);
- useEffect(() => { void refresh(); return () => { issue.current++; }; }, [refresh]);
+ const refresh = useCallback(async (signal?: AbortSignal) => { const current = ++issue.current; setLoading(true); try { const result = await getReport(signal); if (issue.current === current && !signal?.aborted) { setData(result); setError(''); } } catch (e) { if (issue.current === current && !signal?.aborted) setError((e as Error).message); } finally { if (issue.current === current) setLoading(false); } }, [getReport]);
+ useEffect(() => { const controller = new AbortController(); void refresh(controller.signal); return () => { controller.abort(); issue.current++; }; }, [refresh]);
  useEffect(() => { setData(null); setNotice(''); setImportError(''); setCreativePage(1); setShowPeople(false); setPeopleOffset(0); if (tasks.current.scope !== scope) { tasks.current = { scope, items: [] }; setRemaining(0); } }, [scope]);
  useEffect(() => { const timer = setInterval(() => { if (!document.hidden && !syncing) void refresh(); }, 60000); return () => clearInterval(timer); }, [refresh, syncing]);
  useEffect(() => { setCreativePage(1); setPeopleOffset(0); setPeople(null); setProof(null); proofIssue.current++; }, [day, creativeMode, peopleStatus, scope]);
@@ -147,7 +156,7 @@ export default function AdCalendar() {
     <button disabled={syncing || month === today.slice(0, 7)} onClick={() => changeMonth(today.slice(0, 7))} className={`${fieldStyle} disabled:opacity-40`}>This month</button>
     <button aria-label="Next month" disabled={syncing || month === '2099-12'} onClick={() => changeMonth(shiftCalendarMonth(month, 1))} className={`${fieldStyle} disabled:opacity-40`}>Next →</button>
    </nav>
-   <label className="text-xs font-medium">Page<select aria-label="Calendar Page" disabled={syncing} value={pageId} onChange={e => { setPageId(e.target.value); setAdId(''); }} className={`${fieldStyle} mt-1 block`}><option value="">All my Pages</option>{data?.pages.map((page: any) => <option key={page.id} value={page.id}>{page.name}</option>)}</select></label>
+   <label className="text-xs font-medium">Page<select aria-label="Calendar Page" disabled={syncing} value={pageId} onChange={e => { setPageId(e.target.value); setAdId(''); }} className={`${fieldStyle} mt-1 block`}><option value="">All my Pages</option>{pages.map((page: any) => <option key={page.id} value={page.id}>{page.name}</option>)}</select></label>
    <label className="max-w-full text-xs font-medium">Source / creative<select aria-label="Calendar creative" disabled={syncing} value={adId} onChange={e => setAdId(e.target.value)} className={`${fieldStyle} mt-1 block max-w-[280px]`}><option value="">All sources</option><option value="unknown">Unknown / unattributed inquiries</option>{data?.inventory.map((ad: any) => <option key={`${ad.page_id}:${ad.ad_id}`} value={ad.ad_id}>{ad.ad_name || ad.ad_title || ad.ad_id}</option>)}</select></label>
    <button disabled={loading || syncing} onClick={() => void refresh()} className={`${fieldStyle} disabled:opacity-40`}>Refresh results</button>
    <button disabled={syncing || !connection?.accounts?.length || !data || adId === 'unknown' || futureMonth} onClick={() => void sync()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40">{syncing ? 'Importing actual spend…' : remaining ? `Continue spend import (${remaining})` : 'Import actual spend and metrics'}</button>

@@ -124,6 +124,32 @@ Primary API reference: [Meta Insights fields and enums](https://github.com/faceb
 
 ## Release and checks
 
+Large historical cohorts use indexed contact/date reads, one payment aggregation
+per report, and name/PSID lookups only after the contact list is paginated.
+The finance aggregate is materialized once; it is not recomputed for each
+day/creative group. Calendar functions disable their own JIT compilation
+overhead without changing the database-wide query limit.
+
+Install `202611020007_calendar_report_performance.sql` using
+`release-calendar-performance.mjs --prepare-indexes`, then `--preflight` and
+`--apply`. The preparation step builds the two indexes concurrently. Validation
+replaces only reporting functions inside a repeatable-read transaction, checks
+identical July/October results and requires timings below 6.5 seconds before
+committing. Tags, payment records, ad spend and bot settings are preserved.
+
+If a complete report still times out, the API retries smaller authorized Page
+batches with at most two concurrent reads and a bounded time budget. Every batch
+must succeed before totals are returned. Failed or malformed results never become
+zero-filled or partially successful reports. Page filters load independently of
+the report and remain usable during an error. Empty ad-filter values mean All
+sources; new accounts with no Pages return a correctly shaped empty report.
+
+`verify-calendar-report-matrix.mjs` checks every recorded inquiry month for the
+largest authorized account, empty/future months, blank/unknown/creative filters,
+the largest Page scopes, all six contact-status filters and Page options. It
+reconciles daily counts with each complete month's totals and writes no financial
+records or customer messages.
+
 Profit after salary and ad spend remains selectable. Heat colors follow
 the selected value's sign: negative red, positive green, verified zero white,
 unavailable gray. Intensity follows absolute magnitude. Signed profit/ROAS labels

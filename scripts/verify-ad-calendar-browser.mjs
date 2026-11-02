@@ -63,6 +63,7 @@ try{let port;for(let i=0;i<100;i++){const file=path.join(profile,'DevToolsActive
  await click('← Previous');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b')?.textContent==='22'");
  failMonth='2020-02';await click('Next →');await wait("document.body.textContent.includes('Fixture report unavailable')");
  assert.equal(await evaluate("document.querySelectorAll('button[aria-label^=\"Inquiry cohort \"]').length"),29);
+ assert(await evaluate("!!document.querySelector('select[aria-label=\"Calendar Page\"] option[value=\"p\"]')"));checks.push('Authorized Page filters remain usable after a report failure');
  assert(await evaluate("[...document.querySelectorAll('button[aria-label^=\"Inquiry cohort \"]')].every(button=>button.disabled&&button.querySelector('b').textContent==='—')"));
  failMonth=null;await click('← Previous');await wait("document.querySelector('[aria-label=\"Inquiry cohort 2020-01-01\"] b')?.textContent==='22'");
  checks.push('Report failure retains month dates and navigation; a new month selection recovers');
