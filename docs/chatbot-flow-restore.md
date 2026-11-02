@@ -24,3 +24,11 @@ Regression tests cover migration defaults, pricing behavior, explicit opt-in,
 unsolicited links and requested web forms. The authenticated preview script runs
 a real Luna conversation through greeting, business, duration/pricing/process and
 requested in-chat form. It never sends customer messages or changes configuration.
+
+The audit also covers configuration round trips. GET defaults, PUT saves and
+draft previews preserve `{}` rather than expanding it into enabled assistant
+defaults. The settings screen states which flow is active, requires an explicit
+action to configure the alternate assistant, and offers a return to the original
+flow. An unrelated settings save cannot silently switch conversation behavior.
+The live preview verifier now submits the same draft configuration as the
+dashboard and can test a follow-up with `--follow-up`.

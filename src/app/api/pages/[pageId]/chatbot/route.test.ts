@@ -54,6 +54,7 @@ vi.mock('@/lib/chatbot-drive-folders', async (importOriginal) => ({
 import { GET, POST, PUT } from './route';
 import { COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
 import { videoPreferences } from '@/lib/__tests__/fixtures/commercial-video';
+import { usesSalesAssistant } from '@/lib/chatbot-sales-assistant';
 
 const savedConfig = {
     page_id: 'page_1',
@@ -184,6 +185,27 @@ describe('chatbot Page-member access', () => {
         expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
     });
 
+    it('preserves the original flow when an unchanged empty sales object is saved', async () => {
+        const builder = updateBuilder(); mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
+        const response = await PUT(configRequest({ ...savedConfig, commercial_video_intake_enabled: true, sales_assistant_settings: {} }),
+            { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200);
+        const config = builder.upsert.mock.calls[0][0]; expect(config.sales_assistant_settings).toEqual({}); expect(usesSalesAssistant(config)).toBe(false);
+    });
+    it('preserves the original flow when the dashboard previews its unchanged empty sales object', async () => {
+        const builder = selectBuilder({ data: { ...savedConfig, sales_assistant_settings: {}, commercial_video_intake_enabled: true }, error: null });
+        mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
+        mocks.generateChatbotResponse.mockResolvedValue({ reply: 'Business?', messages: ['Business?'], knowledge: [] });
+        const response = await POST(configRequest({ message: 'Hello', draft_config: { ...savedConfig, sales_assistant_settings: {}, commercial_video_intake_enabled: true } }, 'POST'),
+            { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200); const config = mocks.generateChatbotResponse.mock.calls[0][0].config;
+        expect(config.sales_assistant_settings).toEqual({}); expect(usesSalesAssistant(config)).toBe(false);
+    });
+    it('does not preconfigure an alternate flow for a Page without saved chatbot settings', async () => {
+        const builder = selectBuilder({ data: null, error: null }); mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });
+        const response = await GET(new Request('http://localhost/api/pages/page_1/chatbot') as NextRequest, { params: Promise.resolve({ pageId: 'page_1' }) });
+        expect(response.status).toBe(200); expect((await response.json()).config.sales_assistant_settings).toEqual({});
+    });
     it('saves the first-day timing mode', async () => {
         const builder = updateBuilder();
         mocks.getSupabaseAdmin.mockReturnValue({ from: vi.fn(() => builder) });

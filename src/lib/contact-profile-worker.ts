@@ -115,6 +115,26 @@ async function outboundSources(db: Db, pageId: string, contactId: string) {
     }
 }
 
+export function profileAnalysisChunk(messages: ProfileMessage[], offset: number) {
+    const fresh: ProfileMessage[] = [];
+    let chars = 0;
+    for (const message of messages.slice(offset, offset + 100)) {
+        if (fresh.length && chars + message.text.length > 40000) break;
+        chars += message.text.length; fresh.push(message);
+    }
+    const context: ProfileMessage[] = [];
+    // A final one-line follow-up needs its immediate context. Context is read
+    // again, but only fresh source messages advance the persisted checkpoint.
+    if (offset > 0 && messages.length - offset < 10) {
+        let contextChars = 0;
+        for (let index = offset - 1; index >= Math.max(0, offset - 5); index--) {
+            if (contextChars + messages[index].text.length > 5000) break;
+            contextChars += messages[index].text.length; context.unshift(messages[index]);
+        }
+    }
+    return { messages: [...context, ...fresh], advance: fresh.length };
+}
+
 async function processJob(db: Db, job: ProfileJob, budgetMs: number) {
     const deadline = Date.now() + budgetMs;
     const model = process.env.OPENROUTER_MODEL || DEFAULT_CHATBOT_MODEL;
@@ -171,14 +191,9 @@ async function processJob(db: Db, job: ProfileJob, budgetMs: number) {
                 }
             }
             while (job.analyzed_count < messages.length && Date.now() < deadline - 45000) {
-                const chunk: ProfileMessage[] = [];
-                let chars = 0;
-                for (const message of messages.slice(job.analyzed_count, job.analyzed_count + 100)) {
-                    if (chunk.length && chars + message.text.length > 40000) break;
-                    chars += message.text.length; chunk.push(message);
-                }
-                const result = await analyze(chunk, deadline, requestedFields);
-                await saveProgress(db, job, [], { analyzed_count: job.analyzed_count + chunk.length, partial_analysis: [...job.partial_analysis, result] });
+                const chapter = profileAnalysisChunk(messages, job.analyzed_count);
+                const result = await analyze(chapter.messages, deadline, requestedFields);
+                await saveProgress(db, job, [], { analyzed_count: job.analyzed_count + chapter.advance, partial_analysis: [...job.partial_analysis, result] });
             }
             if (job.analyzed_count >= messages.length && Date.now() < deadline - 45000) {
                 const combined = job.partial_analysis.length === 1 ? job.partial_analysis[0]

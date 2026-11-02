@@ -33,6 +33,7 @@ import { getSupabaseClient } from '@/lib/supabase';
 import { COMMERCIAL_VIDEO_FIELDS, COMMERCIAL_VIDEO_REQUIRED_DETAILS } from '@/lib/chatbot-intake';
 import { buildChatbotTestMessages, getChatbotTestHistory, type TestChatMessage, type TestMedia, type TestSource } from '@/lib/chatbot-test-preview';
 import { COMMERCIAL_FORM_CHOICE, resolveChatbotAction, type ChatbotChoice } from '@/lib/chatbot-interactions';
+import { usesSalesAssistant } from '@/lib/chatbot-sales-assistant';
 import ChatbotSalesSettings from '@/components/ChatbotSalesSettings';
 import { DEFAULT_SALES_FORM_FIELDS } from '@/lib/chatbot-guided-sales';
 
@@ -1784,7 +1785,7 @@ export default function ChatbotPage() {
                             </span>
                         </label>
 
-                        {config.commercial_video_intake_enabled && !config.sales_assistant_settings && <div className="mb-4 border border-blue-200 p-4 space-y-3">
+                        {config.commercial_video_intake_enabled && !usesSalesAssistant(config) && <div className="mb-4 border border-blue-200 p-4 space-y-3">
                             <label className="flex items-start gap-3 text-sm">
                                 <input type="checkbox" className="mt-1" checked={config.guided_sales_enabled === true}
                                     onChange={event => updateConfig({ guided_sales_enabled: event.target.checked })} />
@@ -1825,7 +1826,7 @@ export default function ChatbotPage() {
                             className="input-wireframe min-h-[210px] w-full resize-y px-4 py-3 text-sm leading-6"
                             placeholder={'Full name\nMobile number\nService needed\nPreferred schedule\nBudget'}
                         />
-                        {config.commercial_video_intake_enabled && <ChatbotSalesSettings value={config.sales_assistant_settings} onChange={settings => updateConfig({ sales_assistant_settings: settings })} />}
+                        {config.commercial_video_intake_enabled && <ChatbotSalesSettings value={config.sales_assistant_settings} onChange={settings => updateConfig({ sales_assistant_settings: settings })} onDisable={() => updateConfig({ sales_assistant_settings: {} })} />}
                         <p className="mt-2 text-xs text-gray-500 font-mono">
                             {config.commercial_video_intake_enabled
                                 ? 'The eight production details below retain the existing team-handoff criteria. The optional sales form above guides recommendations and never blocks customers from continuing in chat.'

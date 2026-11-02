@@ -78,6 +78,13 @@ export function validateSalesSettings(value: unknown): SalesSettings {
     return settings;
 }
 
+/** Preserve the migration's unconfigured state on ordinary saves/previews.
+ * Applying display defaults here would silently opt the Page into another flow. */
+export function normalizeSalesSettingsForConfig(value: unknown): SalesSettings | Record<string, never> {
+    if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) return {};
+    return validateSalesSettings(value);
+}
+
 const comparable = (text: string) => text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 function positiveEvidence(text: string, answer: string): boolean {
     const source = comparable(text), value = comparable(answer);

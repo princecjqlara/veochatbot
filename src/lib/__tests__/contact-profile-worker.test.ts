@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ db: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: mocks.db }));
-import { processContactProfiles, profileSourceMessages, safeProfileCursor } from '@/lib/contact-profile-worker';
+import { processContactProfiles, profileAnalysisChunk, profileSourceMessages, safeProfileCursor } from '@/lib/contact-profile-worker';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 beforeEach(() => { vi.stubEnv('OPENROUTER_API_KEY', 'test-key'); vi.clearAllMocks(); });
@@ -24,6 +24,14 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe('bounded whole-conversation worker', () => {
+    it('gives an orphan final follow-up its preceding context without counting those messages twice', () => {
+        const messages = Array.from({ length: 201 }, (_, index) => ({ id: `message-${index}`, at: '2026-10-01T00:00:00Z', sender: 'page' as const, text: index === 200 ? 'hi ma’am, papagawa po ba kayo?' : 'Previous conversation detail.', attachments: 0 }));
+        const chapter = profileAnalysisChunk(messages, 200);
+        expect(chapter.advance).toBe(1); expect(chapter.messages.map(message => message.id)).toEqual(['message-195', 'message-196', 'message-197', 'message-198', 'message-199', 'message-200']);
+        expect(200 + chapter.advance).toBe(messages.length);
+        expect(profileAnalysisChunk(messages, 0).advance).toBe(100);
+        expect(profileAnalysisChunk(messages, 100).advance).toBe(100);
+    });
     it('validates history cursors and strips access tokens before persistence', () => {
         expect(safeProfileCursor('https://graph.facebook.com/thread/messages?after=abc&access_token=secret')).not.toContain('secret');
         for (const value of ['http://graph.facebook.com/thread/messages', 'https://evil.example/messages', 'https://graph.facebook.com/me/accounts']) expect(() => safeProfileCursor(value)).toThrow();

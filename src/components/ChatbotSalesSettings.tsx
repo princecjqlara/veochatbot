@@ -1,14 +1,23 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { salesSettings, validateSalesSettings, type SalesSettings } from '@/lib/chatbot-sales-assistant';
+import { salesSettings, usesSalesAssistant, validateSalesSettings, type SalesSettings } from '@/lib/chatbot-sales-assistant';
 
-export default function ChatbotSalesSettings({ value, onChange }: { value: unknown; onChange: (settings: SalesSettings) => void }) {
+export default function ChatbotSalesSettings({ value, onChange, onDisable }: { value: unknown; onChange: (settings: SalesSettings) => void; onDisable: () => void }) {
     const settings = salesSettings(value);
     const [advanced, setAdvanced] = useState(JSON.stringify(settings, null, 2));
     const [error, setError] = useState('');
     useEffect(() => { setAdvanced(JSON.stringify(salesSettings(value), null, 2)); }, [value]);
+    if (!usesSalesAssistant({ commercial_video_intake_enabled: true, sales_assistant_settings: value })) return <div className="border-2 border-black p-5 mt-5 space-y-3">
+        <h3 className="font-bold">Original in-chat sales flow is active</h3>
+        <p className="text-sm text-gray-600">The bot follows the saved Page instructions, existing samples, verified pricing and Messenger form. Saving other settings keeps this flow.</p>
+        <details><summary className="cursor-pointer text-sm underline">Change to the optional conversion sales assistant</summary>
+            <p className="mt-3 text-sm text-gray-600">This changes the sales guidance and uses a separate pricing switch. Its optional form stays in chat unless the customer asks for an online link. Review its settings before saving.</p>
+            <button type="button" className="mt-3 border border-black px-4 py-2" onClick={() => onChange(salesSettings({}))}>Configure conversion sales assistant</button>
+        </details>
+    </div>;
     return <div className="border-2 border-black p-5 mt-5 space-y-4">
         <h3 className="font-bold">Conversion sales assistant</h3>
+        <button type="button" className="text-sm underline" onClick={onDisable}>Use original in-chat flow instead</button>
         <p className="text-sm text-gray-600">The form is optional. Confirmed chat answers and form edits share the existing customer record. Existing human handoff rules remain in control.</p>
         <label className="flex items-center gap-3 font-medium"><input type="checkbox" checked={settings.pricing_enabled} onChange={e => onChange({ ...settings, pricing_enabled: e.target.checked })} />Pricing {settings.pricing_enabled ? 'ON' : 'OFF'}</label>
         <p className="text-xs text-gray-600">OFF acknowledges pricing questions without disclosing costs. ON uses approved pricing catalogs. Manage package inclusions, freebies and promotions in <a className="underline" href="/dashboard/pricing">Pricing Packages</a>.</p>
