@@ -45,12 +45,13 @@ const db=new pg.Client({connectionString:process.env.DATABASE_POOLER_URL_5432||p
 const run=process.argv.find(arg=>arg.startsWith('--run-id='))?.slice(9)||crypto.randomUUID(),receipt={run_id:run,applied:false,manifest_sha256:digest(manifestText),candidate_contacts:candidates.length,ai_calls:0,ai_jobs_created:0,customer_messages_sent:0,financial_records_created:0};
 const migrations=['202611020008_historical_repair_no_ai','202611020009_calendar_historical_conversions'];
 try{
- await db.connect();
- // Serialize maintenance sessions before taking a repeatable-read snapshot.
- // Live webhooks keep their normal transactions; competing repair/dry-run
- // sessions cannot hold schema locks against one another.
- await db.query("SELECT pg_advisory_lock(hashtext('historical_lead_repair'))");
+ receipt.phase='connecting';await db.connect();
+ // Transaction-scoped locks cannot leak through a transaction pooler. Fail
+ // immediately on contention rather than waiting with a stale RR snapshot.
+ receipt.phase='locking';
  await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await db.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='120s'");
+ if(!(await db.query("SELECT pg_try_advisory_xact_lock(hashtext('historical_lead_repair_v2')) AS locked")).rows[0].locked)throw Object.assign(Error('Another historical repair is running; saved checkpoints are retained'),{code:'55P03'});
+ receipt.phase='preparing';
  await db.query("SELECT set_config('app.historical_lead_repair','deterministic_only',true)");
  for(const name of migrations){const sql=fs.readFileSync('supabase/migrations/'+name+'.sql','utf8');await db.query(sql.replace(/^BEGIN;\s*$/m,'').replace(/^COMMIT;\s*$/m,''));}
  await db.query("CREATE TABLE IF NOT EXISTS app_private.lead_reconciliation_changes(run_id uuid NOT NULL,contact_id uuid NOT NULL,page_id uuid NOT NULL,before_data jsonb NOT NULL,after_data jsonb NOT NULL,evidence jsonb NOT NULL,repaired_at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(run_id,contact_id)); REVOKE ALL ON app_private.lead_reconciliation_changes FROM PUBLIC,anon,authenticated");
@@ -97,6 +98,6 @@ try{
  assert((await db.query('SELECT count(*)::int AS n FROM repair_protected p JOIN contacts c ON c.id=p.id JOIN repair_before b ON b.id=p.id WHERE c.pipeline_stage IS DISTINCT FROM b.pipeline_stage OR c.pipeline_stage_source IS DISTINCT FROM b.pipeline_stage_source OR c.messenger_stage_message_id IS DISTINCT FROM b.messenger_stage_message_id')).rows[0].n===0,'Newer local decisions must remain unchanged');
  receipt.after_stages=await stageCounts();
  if(apply)for(const fullName of migrations){const version=fullName.slice(0,12),name=fullName.slice(13),sql=fs.readFileSync('supabase/migrations/'+fullName+'.sql','utf8');await db.query('INSERT INTO app_private.schema_migrations(version,description) VALUES($1,$2) ON CONFLICT DO NOTHING',[version,name]);await db.query('INSERT INTO supabase_migrations.schema_migrations(version,name,statements) VALUES($1,$2,$3::text[]) ON CONFLICT DO NOTHING',[version,name,[sql]]);}
- await db.query(apply?'COMMIT':'ROLLBACK');receipt.applied=apply;receipt.passed=true;
+ receipt.phase='finishing';await db.query(apply?'COMMIT':'ROLLBACK');receipt.applied=apply;receipt.passed=true;receipt.phase='completed';
 }catch(e){await db.query('ROLLBACK').catch(()=>{});receipt.passed=false;receipt.error=e.message||e.code||'Database connection failed';receipt.code=e.code;process.exitCode=1;}
 finally{await db.end();fs.writeFileSync(path.join(dir,'repair-'+(apply?'apply':'preflight')+'-batch-'+batchOffset+'.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));}

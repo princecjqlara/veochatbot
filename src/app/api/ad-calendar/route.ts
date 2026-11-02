@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { buildAdCalendar, calendarRange, phtDay } from '@/lib/ad-calendar';
 import { profileAdFields } from '@/lib/contact-profile-sources';
 import { CalendarReportError, loadCalendarReport } from '@/lib/ad-calendar-report';
+import { loadCalendarCoverage } from '@/lib/ad-calendar-coverage';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
    if (result.error) throw Error('Could not load this inquiry cohort');
    return NextResponse.json(result.data, { headers: { 'Cache-Control': 'no-store' } });
   }
-  if (!ids.length) return NextResponse.json({ ...buildAdCalendar({ month, groups: [], spend: [], inventory: [], adId, selectedDay: q.get('day') || undefined }), pages: [] }, { headers: { 'Cache-Control': 'no-store' } });
+  if (!ids.length) return NextResponse.json({ ...buildAdCalendar({ month, groups: [], spend: [], inventory: [], adId, selectedDay: q.get('day') || undefined }), coverage: await loadCalendarCoverage(db, []), pages: [] }, { headers: { 'Cache-Control': 'no-store' } });
   const pages = await db.from('pages').select('id,name,fb_page_id,messaging_auto_tag_checked_at,messaging_auto_tag_last_error').in('id', memberships);
   if (pages.error) throw Error('Could not load authorized Pages');
   async function inventory() {
@@ -65,11 +66,11 @@ export async function GET(request: NextRequest) {
    }
    throw Error('Select a single Page to report this month completely');
   }
-  const [cohort, ads, daily] = await Promise.all([
-   loadCalendarReport(db, { pageIds: ids, from: range.from, to: range.to, adId }), inventory(), spend()
+  const [cohort, ads, daily, coverage] = await Promise.all([
+   loadCalendarReport(db, { pageIds: ids, from: range.from, to: range.to, adId }), inventory(), spend(), loadCalendarCoverage(db, ids)
   ]);
   const result = buildAdCalendar({ month, groups: cohort.groups, spend: daily, inventory: ads, adId, selectedDay: q.get('day') || undefined });
-  return NextResponse.json({ ...result, outcome_as_of: cohort.as_of || result.generated_at, pages: pages.data || [] }, { headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json({ ...result, outcome_as_of: cohort.as_of || result.generated_at, coverage, pages: pages.data || [] }, { headers: { 'Cache-Control': 'no-store' } });
  } catch (error) {
   if (error instanceof CalendarReportError) {
    console.error('[ad-calendar] Report failed', { code: error.code, sourceCode: error.sourceCode, month });

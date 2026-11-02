@@ -9,14 +9,15 @@ const request = (query = '') => new NextRequest('https://app.test/api/ad-calenda
 beforeEach(() => {
  vi.clearAllMocks(); m.session.mockResolvedValue({ user: { id: 'owner' } }); m.ids.mockResolvedValue(['p']); m.rpc.mockResolvedValue({ data: { groups: [], contacts: [], total: 0 }, error: null });
  m.db.mockReturnValue({ rpc: m.rpc, from: (table: string) => {
-  const builder: any = { then: (resolve: any) => Promise.resolve({ data: table === 'pages' ? [{ id: 'p', name: 'Page' }] : [], error: null }).then(resolve) };
-  for (const method of ['select', 'in', 'eq', 'gte', 'lte', 'order', 'range']) builder[method] = () => builder; return builder;
+  const builder: any = { then: (resolve: any) => Promise.resolve({ data: table === 'pages' ? [{ id: 'p', name: 'Page' }] : [], count: 0, error: null }).then(resolve) };
+  for (const method of ['select', 'in', 'eq', 'is', 'limit', 'abortSignal', 'gte', 'lte', 'order', 'range']) builder[method] = () => builder; return builder;
  } });
 });
 describe('ad calendar authorization and cohort dates', () => {
  it('normalizes an empty ad selection to all sources rather than sending an invalid scope to SQL', async () => {
   const response = await GET(request('&adId=%20')); expect(response.status).toBe(200);
   expect(m.rpc).toHaveBeenCalledWith('get_ad_calendar_report', expect.objectContaining({ p_ad_id: null }));
+  expect((await response.json()).coverage).toMatchObject({ available: true, page_contacts_total: 0, contacts_missing_inquiry_date: 0 });
  });
  it('loads Page filters independently so a failed cohort cannot prevent changing Page scope', async () => {
   m.ids.mockResolvedValue(Array.from({ length: 51 }, (_, n) => 'page-' + n));

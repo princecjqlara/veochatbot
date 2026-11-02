@@ -65,7 +65,8 @@ function finish(value: Bucket) {
   const gross = (row.received_minor - row.refunded_minor) / 100;
   return { ...row, gross, after_salary: gross - row.salary, refunds_exceed_receipts: row.refunded_minor > row.received_minor };
  });
- const comparable = finance.length === 1 && finance[0].currency === currency && spend != null ? finance[0] : null;
+ const missingPaymentAmounts = Math.max(0, value.confirmed_payers - value.payers);
+ const comparable = !missingPaymentAmounts && finance.length === 1 && finance[0].currency === currency && spend != null ? finance[0] : null;
  const profit = comparable ? comparable.after_salary - spend! : null;
  const totals = Object.fromEntries(fields.map(field => [field, value[field]])) as Record<(typeof fields)[number], number>;
  return { ...totals, conversion_rate: ratio(value.converted, value.inquiries), payer_rate: ratio(value.payers, value.inquiries), confirmed_payer_rate: ratio(value.confirmed_payers, value.inquiries),
@@ -77,6 +78,7 @@ function finish(value: Bucket) {
   ctr: ratio(metrics.clicks, metrics.impressions), link_ctr: ratio(metrics.link_clicks, metrics.impressions), cpc: ratio(spend, metrics.clicks), cpm: metrics.impressions ? ratio(spend, metrics.impressions / 1000) : null,
   cost_per_messaging: ratio(spend, metrics.messaging_started), cost_per_inquiry: ratio(spend, value.inquiries), cpa: ratio(spend, value.payers), confirmed_cpa: ratio(spend, value.confirmed_payers), cost_per_stage_conversion: ratio(spend, value.converted),
   profit, gross_roas: comparable ? ratio(comparable.gross, spend) : null, after_salary_roas: comparable ? ratio(comparable.after_salary, spend) : null, net_roas: ratio(profit, spend),
+  confirmed_customers_without_receipts: missingPaymentAmounts,
   financial_currency_mismatch: finance.length > 0 && currency != null && (finance.length !== 1 || finance[0].currency !== currency), financial_verified: finance.length > 0 };
 }
 
@@ -116,7 +118,7 @@ export function buildAdCalendar(input: { month: string; now?: number; groups: an
    payers: 'Unique customers with a non-void verified receipt. Deposits and balances do not count as separate acquisitions. Refunds reduce revenue while retaining the acquisition history.',
    gross_roas: 'Recorded revenue after refunds / ad spend', after_salary_roas: '(Recorded revenue - 40% salary) / ad spend', net_roas: '(Recorded revenue - 40% salary - ad spend) / ad spend',
    messaging: 'Meta messaging conversations started, reported by conversion time using ad-set attribution. This is separate from unique VeoBot inquiry cohorts.',
-   coverage: 'Calendar totals cover the recorded, verified Page ad inventory. Missing ad-days, currency conflicts or account-timezone mismatches prevent complete cost/profit ratios. Today is provisional.' } };
+   coverage: 'Calendar totals cover the recorded, verified Page ad inventory, not proof of complete Ads Manager inventory. Contacts without a known inquiry date are excluded from date cohorts. Missing ad-days, currency conflicts, account-timezone mismatches or confirmed customers without recorded receipt amounts prevent complete profit and return ratios. Even with receipts, missing balances or unreviewed histories may understate revenue. Today is provisional.' } };
 }
 
 export function calendarHeat(value: number | null | undefined, scale: number) {

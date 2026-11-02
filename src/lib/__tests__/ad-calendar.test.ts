@@ -9,6 +9,13 @@ const spend = { page_id: 'p', ad_id: '11', account_id: '22', spend_date: '2020-0
 const build = (patch: any = {}) => buildAdCalendar({ month: '2020-01', now, groups: [group], spend: [spend], inventory: [ad], ...patch });
 
 describe('acquisition-day ad economics', () => {
+ it('retains partial recorded revenue but withholds profit and return ratios when confirmed customers have no receipts', () => {
+  const result = build({ groups: [{ ...group, confirmed_payers: 3 }] });
+  expect(result.days[0].confirmed_customers_without_receipts).toBe(1);
+  expect(result.days[0].finance[0].gross).toBe(450);
+  expect(result.days[0].profit).toBeNull(); expect(result.days[0].gross_roas).toBeNull(); expect(result.days[0].net_roas).toBeNull();
+  expect(result.days[0].confirmed_cpa).toBeCloseTo(100 / 3);
+ });
  it('reports all-source cohort returns without assigning unknown customers to a creative or counting a payer twice', () => {
   const unknown = { ...group, ad_id: null, inquiries: 5, confirmed_payers: 2, chat_confirmed_payers: 2, confirmed_payers_later: 2, finance: [{ currency: 'PHP', received_minor: 10000, refunded_minor: 0, records: 1, paid_orders: 1 }] };
   const result = build({ groups: [{ ...group, confirmed_payers: 2 }, unknown] });

@@ -27,6 +27,33 @@ old creative filter. No combined all-Page report is requested by the calendar.
 If no Pages are connected, the date grid stays unavailable with a connection
 link. Page-list failures can be retried without issuing an unscoped report.
 
+Daily cells, monthly totals, selected-day totals and creative metrics use full
+labels and exact displayed amounts, without A/L/C shortcuts or compact K/M
+amounts. Lead-stage conversions remain separate from confirmed customers.
+Gross and net return on ad spend have separate labels. The calendar scrolls
+within its container on smaller screens so labels stay readable.
+
+The data-completeness panel shows checked and stale histories, known-ad report
+coverage, confirmed customers without receipts, and Page-wide contacts excluded
+because their inquiry date is unknown. Page-wide coverage errors return unknown
+counts and never prevent an otherwise valid report from loading. Calculation
+time and the most recent individual history check do not imply all source data
+is current. A failed refresh explicitly marks the retained report as stale.
+
+When known confirmed customers outnumber customers with verified receipts,
+recorded revenue stays visible but affected profit and return ratios are
+unavailable. Even when every known confirmed customer has a receipt, incomplete
+histories, balances, or inventory can understate recorded returns. No receipt
+amounts or unpaid statuses are inferred from missing data.
+
+The deterministic backfill waits for database connectivity before starting
+source collection. It resumes an interrupted apply against its saved manifest
+before a fresh audit may overwrite that manifest. Competing repairs use a
+nonblocking transaction advisory lock, which releases on commit or rollback
+and cannot leak through a transaction pooler. A supervisor lock prevents
+duplicate background scans. Existing audit freshness and evidence checks still
+apply; unsafe or expired checkpoints stop with their evidence retained.
+
 The heat map can show spend, inquiries, stage conversion rate, verified payers,
 payer rate, CPA, cost per Meta conversation, profit, gross ROAS and net ROAS.
 Profit uses diverging gain/loss colors. Unavailable data stays gray. Daily cells
