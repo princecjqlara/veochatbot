@@ -9,6 +9,14 @@ const discovery = [turn('Anong business ang gusto mong gawan ng commercial video
 const sampled = [...discovery, turn('Ito ang existing sample namin na related sa bakery.', 'page', 2), turn('Ilang seconds ang gusto mo?', 'page', 3)];
 
 describe('history-based commercial-video sales flow', () => {
+    it('remembers a delivered sample when its bubble also ends with the early form question', () => {
+        const combined = turn('Ito ang existing sample namin na related sa bakery.\n\n' + COMMERCIAL_VIDEO_EARLY_FORM_REASON + '\n\n' + renderCommercialVideoForm(), 'page', 2);
+        const flow = resolve([...discovery, combined, turn('Ilang seconds ang gusto mo?', 'page', 3)], { inboundMessage: '24 seconds po', details: { 'Business Name': 'Preview Bakery', 'Preferred Video Length': '24 seconds' } });
+        expect(flow).toMatchObject({ sampleSent: true, sampleHandled: true, step: 'pricing_process', earlyFormSent: true });
+    });
+    it('remembers an unavailable sample statement followed by a question without claiming delivery', () => {
+        expect(resolve([...discovery, turn('Wala pa akong verified sample para sa bakery. Ilang seconds ang gusto mo?', 'page', 2)], { inboundMessage: '24 seconds' })).toMatchObject({ sampleSent: false, sampleHandled: true, step: 'pricing_process' });
+    });
     it('does not count business type and business name as two details', () => {
         expect(resolve(discovery, { details: { 'Business Name': 'CJ Bakery' } })).toMatchObject({ informationCount: 1, pricingReady: false });
     });

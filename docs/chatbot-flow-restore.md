@@ -16,6 +16,10 @@ cannot leak back into the legacy flow from history. GPT-6 Luna continues through
 OpenRouter; no model, prices, handoff rules, bot enablement or follow-up schedules
 are changed by the repair.
 
+A delivered-sample statement is also recognized when it shares a message with
+the early form or a duration question. The form's final question mark no longer
+resets sample progress or traps the next duration answer in the sample step.
+
 Regression tests cover migration defaults, pricing behavior, explicit opt-in,
 unsolicited links and requested web forms. The authenticated preview script runs
 a real Luna conversation through greeting, business, duration/pricing/process and

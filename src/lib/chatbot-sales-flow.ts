@@ -214,8 +214,11 @@ export function resolveCommercialVideoSalesFlow(input: {
                 else intakeFormSent = true;
             }
             if (/STEP-BY-STEP PROCESS PO:/i.test(text) && /(?:^|\n)7[.) ]/.test(text)) processSent = true;
-            if (sampleDelivery.test(text) && !unavailableSample.test(text) && !/\?\s*$/.test(text)) sampleSent = sampleHandled = true;
-            if (sampleRequest.test(text) && unavailableSample.test(text) && !/\?\s*$/.test(text)) sampleHandled = true;
+            // A sample statement can share a bubble with an early form or the
+            // next question. Evaluate its sentence rather than the bubble's end.
+            const statements = text.split(/\r?\n|(?<=[.!?])\s+/).map(part => part.trim()).filter(part => part && !/\?\s*$/.test(part));
+            if (statements.some(part => sampleDelivery.test(part) && !unavailableSample.test(part))) sampleSent = sampleHandled = true;
+            if (statements.some(part => sampleRequest.test(part) && unavailableSample.test(part))) sampleHandled = true;
             lastPageMessage = text;
             continue;
         }
