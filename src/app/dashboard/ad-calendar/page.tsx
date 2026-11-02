@@ -12,17 +12,17 @@ const pct = (value: number | null | undefined) => value == null ? 'N/A' : `${(va
 const roas = (value: number | null | undefined) => value == null ? 'N/A' : `${value.toFixed(2)}×`;
 const dateTime = (value: string | null) => value ? new Date(value).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : 'Not recorded';
 const fieldStyle = 'max-w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
-const heatMetrics: Record<string, { label: string; value: (row: any) => number | null; format: string; hue: number }> = {
- spend: { label: 'Ad spend', value: row => row.spend.amount, format: 'money', hue: 210 },
- inquiries: { label: 'Linked inquiries', value: row => row.inquiries, format: 'count', hue: 210 },
- conversion: { label: 'Stage conversion rate', value: row => row.conversion_rate, format: 'percent', hue: 155 },
- payers: { label: 'Verified paying customers', value: row => row.payers, format: 'count', hue: 155 },
- payer_rate: { label: 'Verified payer rate', value: row => row.payer_rate, format: 'percent', hue: 155 },
- cpa: { label: 'Cost per verified acquisition', value: row => row.cpa, format: 'money', hue: 15 },
- messaging: { label: 'Cost per Meta conversation', value: row => row.cost_per_messaging, format: 'money', hue: 15 },
- profit: { label: 'Profit after salary and ads', value: row => row.profit, format: 'money', hue: 155 },
- gross_roas: { label: 'Gross ROAS', value: row => row.gross_roas, format: 'roas', hue: 155 },
- net_roas: { label: 'Net ROAS (profit / ads)', value: row => row.net_roas, format: 'roas', hue: 155 }
+const heatMetrics: Record<string, { label: string; value: (row: any) => number | null; format: string }> = {
+ profit: { label: 'Profit after salary and ads', value: row => row.profit, format: 'money' },
+ spend: { label: 'Ad spend', value: row => row.spend.amount, format: 'money' },
+ inquiries: { label: 'Linked inquiries', value: row => row.inquiries, format: 'count' },
+ conversion: { label: 'Stage conversion rate', value: row => row.conversion_rate, format: 'percent' },
+ payers: { label: 'Verified paying customers', value: row => row.payers, format: 'count' },
+ payer_rate: { label: 'Verified payer rate', value: row => row.payer_rate, format: 'percent' },
+ cpa: { label: 'Cost per verified acquisition', value: row => row.cpa, format: 'money' },
+ messaging: { label: 'Cost per Meta conversation', value: row => row.cost_per_messaging, format: 'money' },
+ gross_roas: { label: 'Gross ROAS', value: row => row.gross_roas, format: 'roas' },
+ net_roas: { label: 'Net ROAS (profit / ads)', value: row => row.net_roas, format: 'roas' }
 };
 function Card({ label, children, note }: { label: string; children: React.ReactNode; note?: string }) {
  return <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-4"><h2 className="text-xs font-medium text-slate-500">{label}</h2><div className="mt-2 break-words text-xl font-semibold">{children}</div>{note && <p className="mt-2 text-xs leading-5 text-slate-500">{note}</p>}</section>;
@@ -33,7 +33,7 @@ function Revenue({ rows, field = 'gross' }: { rows: any[]; field?: string }) {
 
 export default function AdCalendar() {
  const today = phtDay(Date.now()), [month, setMonth] = useState(today.slice(0, 7)), [pageId, setPageId] = useState(''), [adId, setAdId] = useState(''), [day, setDay] = useState(today);
- const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('conversion');
+ const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('profit');
  const [connection, setConnection] = useState<any>(null), [syncing, setSyncing] = useState(false), [notice, setNotice] = useState(''), [remaining, setRemaining] = useState(0), [importError, setImportError] = useState('');
  const [creativeMode, setCreativeMode] = useState('day'), [creativePage, setCreativePage] = useState(1);
  const [showPeople, setShowPeople] = useState(false), [peopleStatus, setPeopleStatus] = useState('all'), [peopleOffset, setPeopleOffset] = useState(0), [people, setPeople] = useState<any>(null);
@@ -110,7 +110,11 @@ export default function AdCalendar() {
  const heatValue = (row: any) => mixedMoney && ['money', 'roas'].includes(heat.format) ? null : heat.value(row);
  const scale = Math.max(1, ...(data?.days || []).filter((row: any) => !row.future).map((row: any) => Math.abs(heatValue(row) || 0)));
  const creativeRows = creativeMode === 'day' ? data?.day_ads || [] : data?.ads || [];
- const formatCell = (value: number | null) => value == null ? '—' : heat.format === 'percent' ? pct(value) : heat.format === 'roas' ? roas(value) : new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+ const formatCell = (value: number | null) => {
+  if (value == null) return '—';
+  const formatted = heat.format === 'percent' ? pct(value) : heat.format === 'roas' ? roas(value) : new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+  return value > 0 && ['profit', 'gross_roas', 'net_roas'].includes(metric) ? '+' + formatted : formatted;
+ };
  const blank = data ? (new Date(data.range.days[0] + 'T00:00:00Z').getUTCDay() + 6) % 7 : 0;
  return <div className="min-w-0 space-y-6 p-4 text-slate-800 md:p-8">
   <header><h1 className="text-2xl font-bold">Ad calendar and profit</h1><p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">Each day groups the leads who first inquired that day. Later conversions and payments keep updating that original cohort. Dates use Philippine Time.</p></header>
@@ -125,7 +129,7 @@ export default function AdCalendar() {
   {(error || importError) && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error || importError}</p>}{notice && <p role="status" className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">{notice}</p>}
   {!data ? <p role="status" className="text-sm text-slate-500">{loading ? 'Loading the inquiry cohorts and actual spend…' : 'No report available.'}</p> : <>
    <p className="text-xs text-slate-500">Outcomes as of {dateTime(data.outcome_as_of)}. Amounts cover imported ads with verified Page ownership. Stage conversions are separate from verified payments. Revenue is credited to the first verified ad origin.</p>
-   {data.pages.some((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error) && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{data.pages.filter((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error).length} Page(s) need Facebook reconnection. Their recorded stage outcomes may be stale until synchronization resumes. <a href="/dashboard/connect" className="underline">Review Page connections</a></p>}
+   {data.pages.some((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error) && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{data.pages.filter((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error).length} Page(s) have synchronization errors. Their recorded stage outcomes may be stale until access is restored. <a href="/dashboard/connect" className="underline">Review Page connections</a></p>}
    {!!summary.legacy_dates && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">{summary.legacy_dates} inquiries use older CRM dates that have not been verified against the original conversation. These remain marked as legacy dates.</p>}
    {mixedMoney && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Multiple ad currencies are recorded. Select one Page or creative to compare money metrics. Currencies are never converted or combined.</p>}
    {!!summary.spend.timezone_mismatch && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Some ad-account days ({summary.spend.account_timezones.join(', ') || 'timezone unavailable'}) do not match Philippine day boundaries. Their spend is retained in its native reporting dates; PHT cost and profit ratios remain unavailable.</p>}
@@ -141,11 +145,17 @@ export default function AdCalendar() {
    </div>
    <section className="rounded-xl border border-slate-200 bg-white p-3 md:p-5" aria-label="Advertising heat map calendar">
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{new Date(month + '-01T12:00:00Z').toLocaleDateString('en-PH', { month: 'long', year: 'numeric', timeZone: 'Asia/Manila' })}</h2><label className="text-xs">Color by <select aria-label="Calendar heat metric" className={fieldStyle} value={metric} onChange={e => setMetric(e.target.value)}>{Object.entries(heatMetrics).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label></div>
-    <p className="mb-3 text-xs text-slate-500">{heat.label}{currencies.size === 1 ? ` · Ad spend currency: ${[...currencies][0]}` : ''}. Darker means a larger value. Profit uses red for losses and green for gains. Gray means unavailable.</p>
+    <p className="mb-2 text-xs text-slate-500">{heat.label}{currencies.size === 1 ? ` · Ad spend currency: ${[...currencies][0]}` : ''}. Darker means a larger magnitude.{['spend', 'cpa', 'messaging'].includes(metric) && ' Costs are shown as positive expenses; green does not mean a lower cost.'}</p>
+    <div aria-label="Heat map color legend" className="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-600">
+     <span className="flex items-center gap-1.5"><i aria-hidden="true" className="h-3 w-3 rounded bg-red-600" />Negative</span>
+     <span className="flex items-center gap-1.5"><i aria-hidden="true" className="h-3 w-3 rounded bg-green-600" />Positive</span>
+     <span className="flex items-center gap-1.5"><i aria-hidden="true" className="h-3 w-3 rounded border border-slate-300 bg-white" />Zero</span>
+     <span className="flex items-center gap-1.5"><i aria-hidden="true" className="h-3 w-3 rounded border border-slate-300 bg-slate-100" />Unavailable</span>
+    </div>
     <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-500 md:gap-2 md:text-xs">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(label => <span key={label} className="pb-2">{label}</span>)}
      {Array.from({ length: blank }, (_, index) => <div key={`blank-${index}`} />)}
      {data.days.map((row: any) => <button key={row.day} aria-label={`Inquiry cohort ${row.day}`} aria-describedby={`day-values-${row.day}`} aria-pressed={day === row.day} disabled={row.future} onClick={() => { setDay(row.day); setPeopleOffset(0); }}
-      style={calendarHeat(row.future ? null : heatValue(row), scale, metric === 'profit' || metric === 'net_roas', heat.hue)} className={`min-w-0 rounded-lg border px-1 py-2 text-left disabled:opacity-35 md:min-h-[105px] md:p-3 ${day === row.day ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}>
+      style={calendarHeat(row.future ? null : heatValue(row), scale)} className={`min-w-0 rounded-lg border px-1 py-2 text-left disabled:opacity-35 md:min-h-[105px] md:p-3 ${day === row.day ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}>
       <span className="block text-xs font-semibold">{Number(row.day.slice(-2))}{row.partial && <span className="hidden text-[10px] font-normal md:inline"> · today</span>}</span>
       <b className="mt-2 block break-words text-[10px] md:text-lg">{row.future ? '—' : formatCell(heatValue(row))}</b>
       {metric !== 'spend' && <span className="mt-1 block text-[8px] md:text-[11px]"><span className="md:hidden">A{row.spend.amount == null ? '—' : `${mixedMoney ? row.spend.currency : ''}${new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(row.spend.amount)}`}</span><span className="hidden md:inline">A {row.spend.amount == null ? '—' : `${row.spend.currency} ${new Intl.NumberFormat('en-PH', { notation: 'compact', maximumFractionDigits: 1 }).format(row.spend.amount)}`}</span></span>}

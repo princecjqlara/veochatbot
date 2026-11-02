@@ -4,6 +4,7 @@ import { conversationEvidence, groundedAnalysis, mergeProfileFacts, type Profile
 import { projectionCacheFromMessages } from '@/lib/contact-projection-refresh';
 import { forecastPageName, scoreContactForecast } from '@/lib/contact-forecast';
 import { getChatbotDetailProgress } from '@/lib/chatbot-form-progress';
+import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
 
 type Db = { from: (table: string) => any; rpc: (name: string, args: Record<string, unknown>) => any };
 type ProfileJob = { contact_id: string; page_id: string; working_version: number; claim_token: string; source_cutoff_at: string;
@@ -173,11 +174,18 @@ async function processJob(db: Db, job: ProfileJob, budgetMs: number) {
         if (job.history_complete && Date.now() < deadline - 14000) {
             const messages = await loadProfileMessages(db, job.page_id, job.contact_id, job.working_version);
             if (!messages.length) throw new Error('No dated messages were returned by Meta');
+            const state = await db.from('chatbot_contact_states').select('messenger_history_reset_at')
+                .eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle();
+            if (state.error) throw new Error('Could not verify the Messenger history reset');
+            const raw = messages.map(message => ({ id: message.id, created_time: message.at, message: message.text,
+                from: { id: message.sender === 'customer' ? contact.psid : message.sender === 'page' ? page.fb_page_id : 'unknown' } }));
+            // Full reviews also see older stages outside the incremental scanner's
+            // window. Save their history tags without rolling back a newer stage.
+            await syncMessengerStageHistory(db, { pageId: job.page_id, contactId: job.contact_id, facebookPageId: page.fb_page_id,
+                messages: raw, options: { historyResetAt: state.data?.messenger_history_reset_at } });
             if (forecastPageName(page.fb_page_id)) {
                 const previous = await db.from('contact_conversion_cache').select('*').eq('page_id', job.page_id).eq('contact_id', job.contact_id).maybeSingle();
                 if (previous.error) throw new Error('Could not verify earlier forecast history');
-                const raw = messages.map(message => ({ id: message.id, created_time: message.at, message: message.text,
-                    from: { id: message.sender === 'customer' ? contact.psid : message.sender === 'page' ? page.fb_page_id : 'unknown' } }));
                 const cache = projectionCacheFromMessages(raw, { contactId: job.contact_id, pageId: job.page_id, facebookPageId: page.fb_page_id,
                     psid: contact.psid, cutoff: Date.parse(job.source_cutoff_at), previous: previous.data });
                 if (cache.complete_history) {

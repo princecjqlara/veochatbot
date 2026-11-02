@@ -27,6 +27,7 @@ Messenger-owned CRM stage, and zero stage events missing their corresponding
 history tag. The scanner was running. Bot model and enabled/disabled settings
 were preserved; the two enabled bots had follow-up scheduling disabled, so
 follow-ups were verified through previews and automated guard tests rather than
-actual customer sends. Existing eleven Facebook permission failures still require
-Page reconnection. Missing spend and verified receipts remain explicit; the audit
+actual customer sends. Eleven Facebook access failures require attention to
+authorization, Page roles or login checkpoints; the detailed causes are recorded
+in `conversation-data-audit-2026-11-02.md`. Missing spend and verified receipts remain explicit; the audit
 does not certify unimported financial data or an inaccessible Facebook Page.

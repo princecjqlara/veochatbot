@@ -51,7 +51,20 @@ describe('acquisition-day ad economics', () => {
   expect(calendarRange('2020-01', now).from).toBe('2019-12-31T16:00:00.000Z');
   expect(() => calendarRange('2020-13', now)).toThrow(); expect(() => calendarRange('2030-01', now)).toThrow();
   const result = build({ now: Date.parse('2020-01-02T00:00:00Z') }); expect(result.days[1].partial).toBe(true); expect(result.days[2].future).toBe(true);
-  expect(calendarHeat(-100, 100, true).backgroundColor).not.toBe(calendarHeat(100, 100, true).backgroundColor); expect(calendarHeat(null, 100).color).toBe('#64748b');
+ });
+});
+describe('signed calendar colors', () => {
+ it('always colors negative results red and positive results green, including refund-driven negative ROAS', () => {
+  expect(calendarHeat(-100, 100).backgroundColor).toMatch(/^hsl\(0 /);
+  expect(calendarHeat(100, 100).backgroundColor).toMatch(/^hsl\(140 /);
+  const refunded = build({ groups: [{ ...group, finance: [{ currency: 'PHP', received_minor: 0, refunded_minor: 10000, records: 1 }] }] }).days[0];
+  expect(refunded.gross_roas).toBe(-1);
+  expect(calendarHeat(refunded.gross_roas, 5).backgroundColor).toMatch(/^hsl\(0 /);
+ });
+ it('keeps zero distinct from unknown values and uses equal intensity for equal gains and losses', () => {
+  expect(calendarHeat(0, 100).backgroundColor).toBe('#ffffff');
+  for (const value of [null, undefined, NaN, Infinity]) expect(calendarHeat(value, 100).backgroundColor).toBe('#f1f5f9');
+  expect(calendarHeat(-50, 100).backgroundColor.split('%').slice(1)).toEqual(calendarHeat(50, 100).backgroundColor.split('%').slice(1));
  });
 });
 describe('exact Meta messaging and video metrics', () => {

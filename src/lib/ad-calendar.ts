@@ -107,10 +107,10 @@ export function buildAdCalendar(input: { month: string; now?: number; groups: an
    coverage: 'Calendar totals cover the recorded, verified Page ad inventory. Missing ad-days, currency conflicts or account-timezone mismatches prevent complete cost/profit ratios. Today is provisional.' } };
 }
 
-export function calendarHeat(value: number | null | undefined, scale: number, diverging = false, baseHue = 155) {
+export function calendarHeat(value: number | null | undefined, scale: number) {
  if (value == null || !Number.isFinite(value)) return { backgroundColor: '#f1f5f9', color: '#64748b', borderColor: '#cbd5e1' };
  if (value === 0) return { backgroundColor: '#ffffff', color: '#334155', borderColor: '#e2e8f0' };
- const intensity = Math.max(.12, Math.min(1, Math.abs(value) / (scale || 1))), hue = diverging && value < 0 ? 0 : baseHue;
+ const intensity = Math.max(.12, Math.min(1, Math.abs(value) / (scale || 1))), hue = value < 0 ? 0 : 140;
  const light = (96 - intensity * 61) / 100, chroma = (1 - Math.abs(2 * light - 1)) * .55, x = chroma * (1 - Math.abs((hue / 60) % 2 - 1)), m = light - chroma / 2;
  const channels = hue < 60 ? [chroma, x, 0] : hue < 120 ? [x, chroma, 0] : hue < 180 ? [0, chroma, x] : hue < 240 ? [0, x, chroma] : hue < 300 ? [x, 0, chroma] : [chroma, 0, x];
  const linear = channels.map(channel => { const v = channel + m; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; });

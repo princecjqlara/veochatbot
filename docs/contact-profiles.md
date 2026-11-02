@@ -94,6 +94,11 @@ source freshness and valid comparisons; it does not retrain or recalibrate the m
 
 ## Operations and verification
 
+Full-history reviews also save Page-authored stage and order notices through the
+normal Messenger stage RPC, including older events outside the scanner's window.
+History tags are additive, timestamp ordering protects the current stage, and
+explicit history resets are respected. Order notices never verify payment.
+
 Apply `202611020004_contact_profiles.sql` before deploying the new routes. All new
 tables use RLS with server-only access; each HTTP operation checks authentication
 and Page membership, and writes require a same-origin request. Financial RPCs

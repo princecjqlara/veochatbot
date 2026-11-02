@@ -88,6 +88,12 @@ Primary API reference: [Meta Insights fields and enums](https://github.com/faceb
 
 ## Release and checks
 
+The calendar defaults to profit after salary and ad spend. Heat colors follow
+the selected value's sign: negative red, positive green, verified zero white,
+unavailable gray. Intensity follows absolute magnitude. Signed profit/ROAS labels
+and a visible legend keep the meaning readable without relying only on color.
+Positive cost amounts remain expenses; color does not rank cost efficiency.
+
 Apply `202611020005_ad_calendar.sql` before deploying. New reporting functions
 are server-only; every HTTP read checks Page membership and writes also require
 same-origin requests. Migration preflight and application preserve tags, bot
