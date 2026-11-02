@@ -31,7 +31,9 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     const firstInquiryAt = firstCandidates.sort((a, b) => Date.parse(a) - Date.parse(b))[0] || null;
     const metrics = purchaseMetrics(finance.purchases as PurchaseRecord[], finance.payments as VerifiedPayment[], firstInquiryAt);
     const meta: any[] = metaResult.data || [], stages: any[] = stageResult.data || [];
-    const conversions = [...meta.filter(event => event.applied && event.stage === 'converted').map(event => event.occurred_at),
+    // A late historical notice remains evidence even when a newer local stage
+    // meant it did not overwrite the pipeline when imported.
+    const conversions = [...meta.filter(event => event.stage === 'converted').map(event => event.occurred_at),
         ...stages.filter(event => event.stage === 'converted' && event.previous_stage && event.previous_stage !== 'converted' && event.source !== 'messenger').map(event => event.stage_timestamp)]
         .filter((value): value is string => Boolean(value)).sort((a, b) => Date.parse(a) - Date.parse(b));
     const firstConvertedAt = conversions[0] || null;

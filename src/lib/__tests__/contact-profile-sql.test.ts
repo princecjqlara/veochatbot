@@ -8,6 +8,30 @@ const foreign = '00000000-0000-4000-8000-000000000004';
 const request = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 describe('contact profile persistence and verified finance', () => {
+    it('imports historical stage evidence without an AI backlog and resumes normal queueing after the repair transaction', async () => {
+        const db = new PGlite();
+        try {
+            await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
+                CREATE TABLE pages(id uuid PRIMARY KEY); CREATE TABLE users(id uuid PRIMARY KEY,name text);
+                CREATE TABLE contacts(id uuid PRIMARY KEY,page_id uuid REFERENCES pages(id));
+                CREATE TABLE user_pages(page_id uuid,user_id uuid);
+                CREATE TABLE messenger_lead_stage_events(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,page_id uuid,contact_id uuid,applied boolean DEFAULT false,observed_at timestamptz DEFAULT now());
+                CREATE TABLE outbound_message_events(page_id uuid,contact_id uuid,sent_at timestamptz);
+                CREATE TABLE ad_lead_stage_events(page_id uuid,contact_id uuid,recorded_at timestamptz);
+                INSERT INTO pages VALUES('${page}'); INSERT INTO contacts VALUES('${contact}','${page}');`);
+            await db.exec(readFileSync('supabase/migrations/202611020004_contact_profiles.sql', 'utf8'));
+            await db.exec(readFileSync('supabase/migrations/202611020008_historical_repair_no_ai.sql', 'utf8'));
+            await db.exec('BEGIN');
+            await db.query("SELECT set_config('app.historical_lead_repair','deterministic_only',true)");
+            await db.query('INSERT INTO messenger_lead_stage_events(page_id,contact_id,applied) VALUES($1,$2,true)', [page, contact]);
+            await db.exec('COMMIT');
+            expect((await db.query('SELECT * FROM contact_profile_jobs')).rows).toHaveLength(0);
+            expect((await db.query('SELECT * FROM messenger_lead_stage_events')).rows).toHaveLength(1);
+            await db.query('INSERT INTO messenger_lead_stage_events(page_id,contact_id,applied) VALUES($1,$2,true)', [page, contact]);
+            expect((await db.query<any>('SELECT status,requested_version FROM contact_profile_jobs')).rows[0]).toMatchObject({ status: 'queued', requested_version: 1 });
+        } finally { await db.close(); }
+    }, 30000);
+
     it('isolates contacts, resumes whole-history analysis, preserves stage-triggered refreshes and audits payments', async () => {
         const db = new PGlite();
         try {

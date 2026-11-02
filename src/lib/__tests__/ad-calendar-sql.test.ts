@@ -25,6 +25,7 @@ describe('calendar cohort and ledger SQL', () => {
    await db.exec(readFileSync('supabase/migrations/202611020005_ad_calendar.sql', 'utf8'));
    await db.exec(readFileSync('supabase/migrations/202611020006_calendar_outcome_sources.sql', 'utf8'));
    await db.exec(readFileSync('supabase/migrations/202611020007_calendar_report_performance.sql', 'utf8'));
+   await db.exec(readFileSync('supabase/migrations/202611020009_calendar_historical_conversions.sql', 'utf8'));
    await db.exec("INSERT INTO contacts VALUES('10000000-0000-4000-8000-000000000004','" + p + "','2020-01-01T12:00:00+08','Unverified origin','u2','new'); INSERT INTO ad_contact_sources VALUES('10000000-0000-4000-8000-000000000004','" + p + "','2020-01-01T12:00:00+08','recorded_referral','11','unverified')");
    await db.exec("INSERT INTO contact_conversion_cache VALUES('" + c + "','" + p + "','2020-01-01T12:00:00+08','2020-03-05T00:00:00Z','2020-02-04T10:00:00+08','chat-ack',true,NULL),('" + unknown + "','" + p + "','2020-01-01T12:00:00+08','2020-03-05T00:00:00Z','2020-02-05T10:00:00+08','unknown-source-ack',true,'2020-03-06T00:00:00Z')");
    const args = [[p], '2020-01-01T00:00:00+08', '2020-02-01T00:00:00+08'];
@@ -45,6 +46,12 @@ describe('calendar cohort and ledger SQL', () => {
    expect(unknownOnly.groups[0].inquiries).toBe(2);
    const confirmations = (await db.query<{ result: any }>("SELECT get_ad_calendar_contacts($1,$2,$3,NULL,'confirmed',0) AS result", args)).rows[0].result;
    expect(confirmations.total).toBe(2); expect(confirmations.contacts.find((row: any) => row.id === unknown).confirmation_basis).toBe('conversation_documented');
+   // The same real notice may be imported after a newer Order Created event.
+   // applied=false describes delivery order, not whether conversion happened.
+   await db.query("UPDATE messenger_lead_stage_events SET applied=false WHERE contact_id=$1", [c]);
+   await db.query('DELETE FROM ad_lead_stage_events WHERE contact_id=$1', [c]);
+   const lateHistory = (await db.query<{ result: any }>('SELECT get_ad_calendar_report($1,$2,$3,NULL) AS result', args)).rows[0].result;
+   expect(lateHistory.groups.find((row: any) => row.ad_id === '11')).toMatchObject({ converted: 1, conversion_time_unknown: 0, converted_later: 1 });
    await db.query("UPDATE contacts SET pipeline_stage='order_created' WHERE id=$1", [c]);
    const ordered = (await db.query<{ result: any }>('SELECT get_ad_calendar_report($1,$2,$3,NULL) AS result', args)).rows[0].result;
    expect(ordered.groups.find((row: any) => row.ad_id === '11')).toMatchObject({ converted: 1, orders: 1, confirmed_payers: 1 });

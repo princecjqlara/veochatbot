@@ -124,6 +124,11 @@ Primary API reference: [Meta Insights fields and enums](https://github.com/faceb
 
 ## Release and checks
 
+Historical first-inquiry and stage reconciliation runs independently of AI
+summaries. See [the deterministic repair workflow](historical-data-reconciliation.md).
+Late authenticated notices retain their historical conversion times even when
+they did not overwrite a newer local pipeline decision.
+
 Large historical cohorts use indexed contact/date reads, one payment aggregation
 per report, and name/PSID lookups only after the contact list is paginated.
 The finance aggregate is materialized once; it is not recomputed for each
