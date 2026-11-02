@@ -20,6 +20,13 @@ Previous, Next, This month and the month picker browse months from 2000 through
 remain disabled; future-month ad-spend imports are disabled too. An incomplete
 month-input edit retains the current valid month.
 
+The calendar uses the dashboard's connected-Page list and opens one Page at a
+time. It selects the first connected Page unless a connected Page is specified
+in the link. Disconnected Page links fall back to a connected Page and clear the
+old creative filter. No combined all-Page report is requested by the calendar.
+If no Pages are connected, the date grid stays unavailable with a connection
+link. Page-list failures can be retried without issuing an unscoped report.
+
 The heat map can show spend, inquiries, stage conversion rate, verified payers,
 payer rate, CPA, cost per Meta conversation, profit, gross ROAS and net ROAS.
 Profit uses diverging gain/loss colors. Unavailable data stays gray. Daily cells

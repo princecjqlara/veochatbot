@@ -40,14 +40,23 @@ export default function AdCalendar() {
  const today = phtDay(Date.now()), [month, setMonth] = useState(today.slice(0, 7)), [pageId, setPageId] = useState(''), [adId, setAdId] = useState(''), [day, setDay] = useState(today);
  const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('total_inquiries');
  const [pages, setPages] = useState<any[]>([]);
+ const [pagesLoading, setPagesLoading] = useState(true), [pagesError, setPagesError] = useState(''), [pagesAttempt, setPagesAttempt] = useState(0);
  useEffect(() => {
   const controller = new AbortController();
-  void fetch('/api/ad-calendar?view=pages', { cache: 'no-store', signal: controller.signal }).then(async response => {
-   const body = await response.json(); if (response.ok && Array.isArray(body.pages) && !controller.signal.aborted) setPages(body.pages);
-  }).catch(() => {});
+  setPagesLoading(true); setPagesError('');
+  void fetch('/api/pages', { cache: 'no-store', signal: controller.signal }).then(async response => {
+   const body = await response.json();
+   if (!response.ok || !Array.isArray(body.pages)) throw Error('Could not load connected Pages. Please retry.');
+   if (!controller.signal.aborted) setPages(body.pages.filter((page: any) => page.id && !page.requiresReconnect));
+  }).catch(e => { if (!controller.signal.aborted) { setPages([]); setPagesError(e.message); } })
+   .finally(() => { if (!controller.signal.aborted) setPagesLoading(false); });
   return () => controller.abort();
- }, []);
- useEffect(() => { if (data?.pages) setPages(data.pages); }, [data]);
+ }, [pagesAttempt]);
+ const hasSelectedPage = pages.some(page => page.id === pageId);
+ useEffect(() => {
+  if (pagesLoading || hasSelectedPage) return;
+  setPageId(pages[0]?.id || ''); setAdId('');
+ }, [pages, pagesLoading, hasSelectedPage]);
  const [connection, setConnection] = useState<any>(null), [syncing, setSyncing] = useState(false), [notice, setNotice] = useState(''), [remaining, setRemaining] = useState(0), [importError, setImportError] = useState('');
  const [creativeMode, setCreativeMode] = useState('day'), [creativePage, setCreativePage] = useState(1);
  const [showPeople, setShowPeople] = useState(false), [peopleStatus, setPeopleStatus] = useState('all'), [peopleOffset, setPeopleOffset] = useState(0), [people, setPeople] = useState<any>(null);
@@ -64,12 +73,13 @@ export default function AdCalendar() {
  }, []);
  const queryFor = useCallback(() => new URLSearchParams({ month, day, ...(pageId ? { pageId } : {}), ...(adId ? { adId } : {}) }), [month, day, pageId, adId]);
  const getReport = useCallback(async (signal?: AbortSignal) => {
+  if (!pageId) throw Error('Choose a connected Page.');
   const response = await fetch('/api/ad-calendar?' + queryFor(), { cache: 'no-store', signal }), body = await response.json();
   if (!response.ok) throw Error(body.error || 'Calendar unavailable'); return body;
- }, [queryFor]);
+ }, [pageId, queryFor]);
  const reloadRef = useRef(getReport); reloadRef.current = getReport;
  const issue = useRef(0);
- const refresh = useCallback(async (signal?: AbortSignal) => { const current = ++issue.current; setLoading(true); try { const result = await getReport(signal); if (issue.current === current && !signal?.aborted) { setData(result); setError(''); } } catch (e) { if (issue.current === current && !signal?.aborted) setError((e as Error).message); } finally { if (issue.current === current) setLoading(false); } }, [getReport]);
+ const refresh = useCallback(async (signal?: AbortSignal) => { if (pagesLoading || !hasSelectedPage) return; const current = ++issue.current; setLoading(true); try { const result = await getReport(signal); if (issue.current === current && !signal?.aborted) { setData(result); setError(''); } } catch (e) { if (issue.current === current && !signal?.aborted) setError((e as Error).message); } finally { if (issue.current === current) setLoading(false); } }, [getReport, pagesLoading, hasSelectedPage]);
  useEffect(() => { const controller = new AbortController(); void refresh(controller.signal); return () => { controller.abort(); issue.current++; }; }, [refresh]);
  useEffect(() => { setData(null); setNotice(''); setImportError(''); setCreativePage(1); setShowPeople(false); setPeopleOffset(0); if (tasks.current.scope !== scope) { tasks.current = { scope, items: [] }; setRemaining(0); } }, [scope]);
  useEffect(() => { const timer = setInterval(() => { if (!document.hidden && !syncing) void refresh(); }, 60000); return () => clearInterval(timer); }, [refresh, syncing]);
@@ -156,9 +166,9 @@ export default function AdCalendar() {
     <button disabled={syncing || month === today.slice(0, 7)} onClick={() => changeMonth(today.slice(0, 7))} className={`${fieldStyle} disabled:opacity-40`}>This month</button>
     <button aria-label="Next month" disabled={syncing || month === '2099-12'} onClick={() => changeMonth(shiftCalendarMonth(month, 1))} className={`${fieldStyle} disabled:opacity-40`}>Next →</button>
    </nav>
-   <label className="text-xs font-medium">Page<select aria-label="Calendar Page" disabled={syncing} value={pageId} onChange={e => { setPageId(e.target.value); setAdId(''); }} className={`${fieldStyle} mt-1 block`}><option value="">All my Pages</option>{pages.map((page: any) => <option key={page.id} value={page.id}>{page.name}</option>)}</select></label>
+   <label className="text-xs font-medium">Page<select aria-label="Calendar Page" disabled={syncing || pagesLoading || !pages.length} value={hasSelectedPage ? pageId : ''} onChange={e => { setPageId(e.target.value); setAdId(''); }} className={`${fieldStyle} mt-1 block`}>{!hasSelectedPage && <option value="">{pagesLoading ? 'Loading connected Pages…' : 'No connected Pages'}</option>}{pages.map((page: any) => <option key={page.id} value={page.id}>{page.name}</option>)}</select></label>
    <label className="max-w-full text-xs font-medium">Source / creative<select aria-label="Calendar creative" disabled={syncing} value={adId} onChange={e => setAdId(e.target.value)} className={`${fieldStyle} mt-1 block max-w-[280px]`}><option value="">All sources</option><option value="unknown">Unknown / unattributed inquiries</option>{data?.inventory.map((ad: any) => <option key={`${ad.page_id}:${ad.ad_id}`} value={ad.ad_id}>{ad.ad_name || ad.ad_title || ad.ad_id}</option>)}</select></label>
-   <button disabled={loading || syncing} onClick={() => void refresh()} className={`${fieldStyle} disabled:opacity-40`}>Refresh results</button>
+   <button disabled={loading || syncing || pagesLoading || !hasSelectedPage} onClick={() => void refresh()} className={`${fieldStyle} disabled:opacity-40`}>Refresh results</button>
    <button disabled={syncing || !connection?.accounts?.length || !data || adId === 'unknown' || futureMonth} onClick={() => void sync()} className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40">{syncing ? 'Importing actual spend…' : remaining ? `Continue spend import (${remaining})` : 'Import actual spend and metrics'}</button>
   </div>
   {(connection?.status !== 'ready' || !connection?.accounts?.length) && <div className="space-y-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p>{connection?.message || 'Checking Facebook ad-account access…'}</p><button className="rounded border border-amber-300 px-3 py-2 text-sm" onClick={() => void signIn('facebook', { callbackUrl: '/dashboard/ad-calendar?' + queryFor() }, { scope: FACEBOOK_PERMISSION_SCOPE + ',ads_read', auth_type: 'rerequest' })}>Connect read-only ad access</button> <a href="/dashboard/ad-quality" className="underline">Manage ad connection</a></div>}
@@ -166,7 +176,8 @@ export default function AdCalendar() {
    <section className="rounded-xl border border-slate-200 bg-white p-3 md:p-5" aria-label="Advertising heat map calendar" aria-busy={loading}>
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{new Date(month + '-01T12:00:00Z').toLocaleDateString('en-PH', { month: 'long', year: 'numeric', timeZone: 'Asia/Manila' })}</h2><label className="text-xs">Color by <select aria-label="Calendar heat metric" className={fieldStyle} value={metric} onChange={e => setMetric(e.target.value)}>{Object.entries(heatMetrics).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></label></div>
     <p className="mb-2 text-xs text-slate-500">{heat.label}{currencies.size === 1 ? ` · Ad spend currency: ${[...currencies][0]}` : ''}. Darker means a larger magnitude.{['spend', 'cpa', 'messaging'].includes(metric) && ' Costs are shown as positive expenses; green does not mean a lower cost.'}</p>
-    {!data && <p role="status" className="mb-3 text-sm text-slate-500">{loading ? 'Loading inquiries and recorded outcomes…' : 'Report unavailable. Choose another month or refresh to retry.'}</p>}
+    {pagesError ? <div role="alert" className="mb-3 text-sm text-slate-500">{pagesError} <button className="underline" onClick={() => setPagesAttempt(value => value + 1)}>Retry Page list</button></div>
+     : !data && <p role="status" className="mb-3 text-sm text-slate-500">{pagesLoading ? 'Loading connected Pages…' : !pages.length ? <>No connected Pages. <a href="/dashboard/connect" className="underline">Connect a Page</a> to view its calendar.</> : loading ? 'Loading inquiries and recorded outcomes…' : 'Report unavailable. Choose another month or refresh to retry.'}</p>}
     {futureMonth && <p role="status" className="mb-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">This month is in the future. Actual inquiries and spending will appear as the dates occur.</p>}
     {metric === 'total_inquiries' && !adId && <p className="mb-3 text-xs text-slate-500">Includes linked ad inquiries and other / unknown-source inquiries.</p>}
     {unavailableMetric && <div role="status" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p>{['profit', 'gross_roas', 'net_roas'].includes(metric) ? 'Profit and ROAS need imported ad spend and verified payment records. Inquiry counts are available while those records are missing.' : 'This metric is unavailable for this month. Costs need imported ad spend and the matching delivery or payment records.'}</p><button onClick={() => setMetric('total_inquiries')} className="mt-2 font-medium underline">Show inquiries</button></div>}
