@@ -13,7 +13,18 @@ const receipt={action,scope:'connected_pages',scope_check_complete:false,started
 const clean=e=>({code:e.code||null,subcode:e.subcode||null,message:String(e.message).replace(/EA[A-Za-z0-9_-]{25,}|access_token=[^\s&]+|https?:\/\/[^\s]+/g,'[redacted]').slice(0,500)});
 const flush=()=>fs.writeFileSync(path.join(dir,action+'-receipt.json'),JSON.stringify(receipt,null,2));
 const writeIndex=(file,index)=>{const temporary=file+'.'+process.pid+'.tmp';fs.writeFileSync(temporary,JSON.stringify(index));try{fs.renameSync(temporary,file);}catch(error){if(error.code!=='EPERM'&&error.code!=='EACCES')throw error;fs.copyFileSync(temporary,file);fs.unlinkSync(temporary);}};
-const writeHistory=(file,value)=>{const temporary=file+'.'+process.pid+'.tmp';fs.writeFileSync(temporary,gzipSync(JSON.stringify(value)));try{fs.renameSync(temporary,file);}catch(error){if(error.code!=='EPERM'&&error.code!=='EACCES')throw error;fs.copyFileSync(temporary,file);fs.unlinkSync(temporary);}};
+// A Page can have more than one Messenger thread for the same PSID. History
+// workers can finish concurrently, so merge at write time instead of letting
+// whichever thread finishes last replace the contact's full transcript.
+const writeHistory=(file,value)=>{
+ let previous=null;
+ if(fs.existsSync(file)){try{previous=JSON.parse(gunzipSync(fs.readFileSync(file)).toString('utf8'));}catch{}}
+ const messages=new Map();for(const message of [...(previous?.messages||[]),...(value.messages||[])]){const key=message?.id||JSON.stringify(message);if(!messages.has(key))messages.set(key,message);}
+ const conversationIds=[...new Set([...(previous?.conversationIds||[]),...(previous?.conversationId?[previous.conversationId]:[]),...(value.conversationIds||[]),...(value.conversationId?[value.conversationId]:[])])];
+ const merged={...previous,...value,conversationId:value.conversationId,conversationIds,complete:previous?previous.complete===true&&value.complete===true:value.complete===true,messages:[...messages.values()].sort((a,b)=>Date.parse(a.created_time||0)-Date.parse(b.created_time||0))};
+ const previousCutoff=Date.parse(previous?.source_cutoff_at||0),nextCutoff=Date.parse(value.source_cutoff_at||0);if(previousCutoff>nextCutoff)merged.source_cutoff_at=previous.source_cutoff_at;
+ const temporary=file+'.'+process.pid+'.tmp';fs.writeFileSync(temporary,gzipSync(JSON.stringify(merged)));try{fs.renameSync(temporary,file);}catch(error){if(error.code!=='EPERM'&&error.code!=='EACCES')throw error;fs.copyFileSync(temporary,file);fs.unlinkSync(temporary);}
+};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function safeUrl(value){const url=new URL(value.startsWith('https:')?value:'https://graph.facebook.com/v24.0/'+value);if(url.protocol!=='https:'||url.hostname!=='graph.facebook.com')throw Error('Invalid Messenger cursor');url.searchParams.delete('access_token');return url;}
 let capacityExceeded=false;
