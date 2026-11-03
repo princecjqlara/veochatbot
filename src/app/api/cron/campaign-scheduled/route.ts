@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendCampaignById } from '@/lib/campaign-send';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { getAutomationPageScope, scopeAutomationQuery } from '@/lib/page-automation-scope';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,27 +73,28 @@ async function getDueCampaignLevelCampaigns(
     now: string,
     staleSendingCutoff: string
 ) {
-    const { data: scheduledCampaigns, error: scheduledError } = await supabase
+    const scope=await getAutomationPageScope(supabase);
+    const { data: scheduledCampaigns, error: scheduledError } = await scopeAutomationQuery(supabase
         .from('campaigns')
         .select(SCHEDULED_CAMPAIGN_SELECT)
         .eq('status', 'scheduled')
         .eq('is_loop', false)
         .lte('scheduled_at', now)
-        .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`)
+        .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`),scope)
         .order('scheduled_at', { ascending: true, nullsFirst: true });
 
     if (scheduledError) {
         throw scheduledError;
     }
 
-    const { data: staleSendingCampaigns, error: staleSendingError } = await supabase
+    const { data: staleSendingCampaigns, error: staleSendingError } = await scopeAutomationQuery(supabase
         .from('campaigns')
         .select(SCHEDULED_CAMPAIGN_SELECT)
         .eq('status', 'sending')
         .eq('is_loop', false)
         .lte('scheduled_at', now)
         .lte('updated_at', staleSendingCutoff)
-        .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`)
+        .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`),scope)
         .order('scheduled_at', { ascending: true, nullsFirst: true });
 
     if (staleSendingError) {
@@ -107,13 +109,14 @@ async function getDueRecipientLevelCampaigns(
     now: string,
     staleSendingCutoff: string
 ) {
-    const { data: dueRecipients, error } = await supabase
+    const scope=await getAutomationPageScope(supabase);
+    const { data: dueRecipients, error } = await scopeAutomationQuery(supabase
         .from('campaign_recipients')
         .select(`campaign_id, campaigns!inner(${SCHEDULED_CAMPAIGN_SELECT}, is_loop)`)
         .in('status', ['pending', 'processing'])
         .lte('scheduled_at', now)
         .eq('campaigns.is_loop', false)
-        .in('campaigns.status', ['scheduled', 'sending'])
+        .in('campaigns.status', ['scheduled', 'sending']),scope,'campaigns.page_id')
         .order('scheduled_at', { ascending: true, nullsFirst: true })
         .limit(MAX_DUE_RECIPIENT_ROWS_TO_SCAN);
 
@@ -145,14 +148,15 @@ async function getResumableImmediateCampaigns(
     supabase: ReturnType<typeof getSupabaseAdmin>,
     now: string
 ) {
-    const { data, error } = await supabase
+    const scope=await getAutomationPageScope(supabase);
+    const { data, error } = await scopeAutomationQuery(supabase
         .from('campaigns')
         .select(SCHEDULED_CAMPAIGN_SELECT)
         .eq('status', 'sending')
         .eq('is_loop', false)
         .is('scheduled_at', null)
         .eq('background_delivery_enabled', true)
-        .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`)
+        .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`),scope)
         .order('updated_at', { ascending: true, nullsFirst: true })
         .limit(MAX_CAMPAIGNS_PER_CRON_RUN);
 

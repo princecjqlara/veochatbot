@@ -11,6 +11,7 @@ import {
     shouldPauseCampaignForSendError
 } from './send-errors';
 import { getSupabaseAdmin } from './supabase';
+import { getAutomationPageScope } from './page-automation-scope';
 import {
     claimCampaignRecipients,
     finishCampaignRecipientBatch,
@@ -144,6 +145,8 @@ export async function sendCampaignById({
             }
         }
 
+        const automationScope=await getAutomationPageScope(supabase);
+        if(automationScope!==null&&!automationScope.includes(campaign.page_id))return {status:409,body:{error:'Page connection required',message:'Reconnect this Page to VeoBot before sending its campaign.'}};
         const allowedStatuses = new Set(allowScheduled ? ['draft', 'scheduled', 'sending'] : ['draft', 'sending']);
         if (!allowedStatuses.has(campaign.status)) {
             return {

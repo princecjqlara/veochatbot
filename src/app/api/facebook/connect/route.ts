@@ -6,7 +6,7 @@ import { UTILITY_TEMPLATES } from '@/lib/facebook-templates';
 import type { UtilityTemplate } from '@/lib/facebook';
 import { isFacebookReauthRequired } from '@/lib/facebook';
 import { DatabaseReadTimeout, requestDeadline } from '@/lib/request-deadline';
-import { FacebookPageConnectionError, verifyFacebookPageConnection } from '@/lib/facebook-page-connection';
+import { FacebookPageConnectionError, verifyFacebookPageConnection, facebookWebhookConnectionStatus } from '@/lib/facebook-page-connection';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
@@ -128,6 +128,13 @@ export async function POST(request: NextRequest) {
                 { status: 409, headers: { 'Cache-Control': 'no-store' } });
         }
 
+        if(process.env.VEO_ENFORCE_PAGE_RUNTIME_SCOPE==='true'){
+            const ownership=await facebookWebhookConnectionStatus(fbPageId,accessToken,process.env.FACEBOOK_CLIENT_ID);
+            if(ownership==='unknown')return NextResponse.json({success:false,saved:true,pageId,code:'FACEBOOK_UNAVAILABLE',retryable:true,message:'Facebook could not confirm the Page connection. Retry Reconnect shortly.'},{status:503});
+            if(ownership!=='ready')return NextResponse.json({success:false,saved:true,pageId,code:'FACEBOOK_REAUTH_REQUIRED',requiresReauth:true,message:'Refresh Permissions using the VeoBot Facebook login, then reconnect this Page.'},{status:409});
+            const registered=await requestDeadline(()=>supabase.rpc('register_automation_page_owner',{p_page_id:pageId,p_app_id:process.env.FACEBOOK_CLIENT_ID}),8000);
+            if(registered.error||registered.data!==true)throw new Error('Page automation ownership could not be saved after connection');
+        }
         // Fire-and-forget: auto-submit all UTILITY_TEMPLATES to the newly connected page
         autoSubmitTemplates(fbPageId, accessToken, name).catch((err) =>
             console.error(`[AUTO_SUBMIT] Background template submission failed for page "${name}":`, err)

@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ session: vi.fn(), db: vi.fn(), verify: vi.fn(), subscribe: vi.fn(), templates: vi.fn() }));
+const m = vi.hoisted(() => ({ session: vi.fn(), db: vi.fn(), verify: vi.fn(), subscribe: vi.fn(), templates: vi.fn(), status:vi.fn() }));
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: m.session }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: m.db }));
 vi.mock('@/lib/facebook', () => ({ subscribePageToAppWebhook: m.subscribe, getPageTemplates: m.templates, createUtilityTemplate: vi.fn(), isFacebookReauthRequired: (error: any) => Boolean(error?.requiresReauth) }));
-vi.mock('@/lib/facebook-page-connection', async () => ({ ...await vi.importActual<any>('@/lib/facebook-page-connection'), verifyFacebookPageConnection: m.verify }));
+vi.mock('@/lib/facebook-page-connection', async () => ({ ...await vi.importActual<any>('@/lib/facebook-page-connection'), verifyFacebookPageConnection: m.verify,facebookWebhookConnectionStatus:m.status }));
 vi.mock('@/lib/facebook-templates', () => ({ UTILITY_TEMPLATES: [] }));
 import { FacebookPageConnectionError } from '@/lib/facebook-page-connection';
 import { POST } from './route';
@@ -22,11 +22,24 @@ function storage(options: { existing?: boolean; lookupError?: any; linkError?: a
  upsert.mockImplementation(() => response({ data: { id: 'page-row' }, error: null }));
  link.mockImplementation(() => response({ data: { page_id: 'page-row' }, error: options.linkError || null }));
  const from = vi.fn((table: string) => table === 'pages' ? { select: () => lookup, update, upsert } : { upsert: link });
- m.db.mockReturnValue({ from }); return { from, update, upsert, link };
+ const rpc=vi.fn().mockResolvedValue({data:true,error:null});m.db.mockReturnValue({ from,rpc }); return { from, update, upsert, link,rpc };
 }
-beforeEach(() => { vi.clearAllMocks(); m.session.mockResolvedValue({ user: { id: 'owner' } }); m.verify.mockResolvedValue({ id: '100', name: 'Verified Page' }); m.subscribe.mockResolvedValue(undefined); m.templates.mockResolvedValue([]); });
-afterEach(() => { vi.useRealTimers(); });
+beforeEach(() => { vi.clearAllMocks(); m.session.mockResolvedValue({ user: { id: 'owner' } }); m.verify.mockResolvedValue({ id: '100', name: 'Verified Page' }); m.subscribe.mockResolvedValue(undefined); m.templates.mockResolvedValue([]);m.status.mockResolvedValue('ready'); });
+afterEach(() => { vi.useRealTimers();vi.unstubAllEnvs(); });
 describe('Facebook Connect completion', () => {
+ it('keeps an unavailable app subscription check retryable without changing runtime ownership',async()=>{
+  vi.stubEnv('VEO_ENFORCE_PAGE_RUNTIME_SCOPE','true');const db=storage();m.status.mockResolvedValue('unknown');const response=await POST(request());
+  expect(response.status).toBe(503);expect(await response.json()).toMatchObject({saved:true,retryable:true,code:'FACEBOOK_UNAVAILABLE'});expect(db.rpc).not.toHaveBeenCalled();
+ });
+ it('subscribes a newly connected Page before verifying and registering its runtime ownership',async()=>{
+  vi.stubEnv('VEO_ENFORCE_PAGE_RUNTIME_SCOPE','true');vi.stubEnv('FACEBOOK_CLIENT_ID','veo-app');const db=storage({existing:false});
+  expect((await POST(request())).status).toBe(200);expect(m.subscribe.mock.invocationCallOrder[0]).toBeLessThan(m.status.mock.invocationCallOrder[0]);
+  expect(db.rpc).toHaveBeenCalledWith('register_automation_page_owner',{p_page_id:'page-row',p_app_id:'veo-app'});
+ });
+ it('keeps another app token out of the runtime scope when Facebook did not confirm the VeoBot subscription',async()=>{
+  vi.stubEnv('VEO_ENFORCE_PAGE_RUNTIME_SCOPE','true');const db=storage();m.status.mockResolvedValue('incomplete');const response=await POST(request());
+  expect(response.status).toBe(409);expect(await response.json()).toMatchObject({saved:true,requiresReauth:true});expect(db.rpc).not.toHaveBeenCalled();
+ });
  it('verifies the Page, saves the token and membership, then confirms webhook subscription', async () => {
   const db = storage(); const response = await POST(request()), body = await response.json();
   expect(response.status).toBe(200); expect(body).toMatchObject({ success: true, pageId: 'page-row', webhookSubscribed: true });

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { getAutomationPageScope, scopeAutomationQuery } from '@/lib/page-automation-scope';
 import { sendMessage } from '@/lib/facebook';
 import { generatePersonalizedMessage } from '@/lib/ai';
 import { getNextPhilippinesScheduledAtIso } from '@/lib/philippines-time';
@@ -28,7 +29,8 @@ export async function GET(_request: NextRequest) {
         console.log('🔄 Campaign loop cron starting...');
 
         // Get active loop campaigns
-        const { data: campaigns, error: campaignError } = await supabase
+        const scope=await getAutomationPageScope(supabase);
+        const { data: campaigns, error: campaignError } = await scopeAutomationQuery(supabase
             .from('campaigns')
             .select(`
                 id, 
@@ -39,7 +41,7 @@ export async function GET(_request: NextRequest) {
                 pages(fb_page_id, access_token)
             `)
             .eq('is_loop', true)
-            .eq('loop_status', 'active')
+            .eq('loop_status', 'active'),scope)
             .limit(MAX_CAMPAIGNS_PER_RUN);
 
         if (campaignError) {

@@ -35,24 +35,32 @@ const state = { pid: process.pid, started_at: new Date().toISOString(), status: 
  attempts: priorCount('attempts'), source_attempts: priorCount('source_attempts'), destination_attempts: priorCount('destination_attempts'), schema_ready: false, source_database_writes: 0, openrouter_calls: 0, customer_messages_sent: 0, production_cutover_completed: false };
 const atomic = (file, value) => { const tmp = file + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(value, null, 2)); fs.renameSync(tmp, file); };
 const flush = () => {
- const now = new Date().toISOString(); atomic(path.join(dir, 'retry-status.json'), { ...state, updated_at: now });
+ const now = new Date().toISOString();
  const progress = read(progressFile), blockers = [];
  const accountBackup=read(path.join(dir,'account-backup-status.json'));
+ const importCheckpoint=read(path.join(dir,'account-import-checkpoints.json'));
+ if(importCheckpoint?.stage==='core_verified_storage_pending'&&state.status==='database_access_restored_export_pending')state.status='destination_storage_capacity_pending';
+ atomic(path.join(dir,'retry-status.json'),{...state,updated_at:now});
  const chatbotBackup=read(path.join(dir,'latest-chatbot-backup.json'));
  const chatbotVerification=chatbotBackup?.manifest?read(path.join(path.dirname(path.resolve(chatbotBackup.manifest)),'verification.json')):null;
  const chatbotPreserved=chatbotVerification?.passed===true&&chatbotVerification.run_id===chatbotBackup.run_id&&chatbotVerification.backup_kind==='chatbot';
  if (!state.source_access?.ok) blockers.push('The source database is unavailable; consistent source export is pending automatic retries.');
  if (!state.destination_access?.ok) blockers.push(state.destination_access?.code === 'ENETUNREACH' ? 'The destination requires a working IPv4 pooler or IPv6 route.' : 'Destination access is pending automatic retries.');
  if (state.source_inventory && !state.source_inventory.passed) blockers.push('VeoBot Page ownership needs verification before data copy.');
+ if(importCheckpoint?.stage==='core_verified_storage_pending')blockers.push('Core records are verified; the two large history tables require more destination disk capacity before cutover.');
  atomic(progressFile, { ...progress, status: state.status, retry_worker_pid: process.pid,
   retry_worker_active: state.status !== 'retry_worker_interrupted', retry_next_at: state.next_retry_at || null, retry_attempts: state.attempts, updated_at: now,
   remote_schema_installed: state.schema_ready || progress.remote_schema_installed, preflight_remote_completed: state.schema_ready || progress.preflight_remote_completed,
   source_database_writes: 0, blockers,
   account_backup_status:accountBackup?.status||'pending',account_backup_run_id:accountBackup?.run_id||null,
+  destination_core_import_verified:importCheckpoint?.passed===true&&importCheckpoint?.applied===true,
+  destination_baseline_import_complete:importCheckpoint?.baseline_complete===true,
+  deferred_history_tables:importCheckpoint?.deferred_tables||[],
   chatbot_setup_backup_verified:chatbotPreserved,chatbot_setup_backup_run_id:chatbotPreserved?chatbotBackup.run_id:null,
   next_action: !state.source_access?.ok ? 'Retry source access; retain saved snapshots and current production settings.' :
    !state.schema_ready ? 'Finish destination provisioning before importing records.' :
-   'Finish the consistent account backup and resolve Page import scope, then copy and verify all data before production cutover.' });
+   importCheckpoint?.stage==='core_verified_storage_pending'?'Increase destination storage, resume the verified history checkpoints, then capture final changes and verify cutover.':
+   'Finish the consistent account backup and matching Page import scope, then copy and verify all data before production cutover.' });
 };
 const cleanError = error => ({ ok: false, code: error.code || (/timeout|timed out/i.test(error.message || '') ? 'ETIMEDOUT' : error.name),
  message: String(error.message || 'Unavailable').replace(/postgres(?:ql)?:\/\/\S+|Bearer\s+\S+|eyJ[\w.-]+|EA[\w-]{25,}/g, '[redacted]').slice(0, 300) });

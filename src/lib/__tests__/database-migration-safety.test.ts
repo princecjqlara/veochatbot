@@ -47,7 +47,7 @@ describe('VeoBot database migration safeguards', () => {
     CREATE TABLE pages(id text PRIMARY KEY,name text);CREATE TABLE messages(id text PRIMARY KEY,page_id text REFERENCES pages(id));`);
    await db.exec('BEGIN');
    await preserveEmptyLegacyTables(adapter(db));
-   const plan = schemaMigrationPlan(); expect(plan).toHaveLength(61);
+   const plan = schemaMigrationPlan(); expect(plan).toHaveLength(62);
    for (const migration of plan) await db.exec(migration.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- local scheduler stub'));
    const fields = (await db.query<any>("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='pages'")).rows.map(row => row.column_name);
    expect(fields).toContain('fb_page_id');
@@ -55,6 +55,14 @@ describe('VeoBot database migration safeguards', () => {
    expect((await db.query<any>("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public' AND tablename=ANY($1::text[])", [required])).rows[0].n).toBe(required.length);
    expect((await db.query<any>("SELECT has_function_privilege('anon','public.get_ad_calendar_report(uuid[],timestamptz,timestamptz,text)','EXECUTE') AS allowed")).rows[0].allowed).toBe(false);
    expect((await db.query<any>("SELECT has_function_privilege('anon','public.get_contact_finance_records(uuid,uuid)','EXECUTE') AS allowed")).rows[0].allowed).toBe(false);
+   expect((await db.query<any>("SELECT has_function_privilege('anon','public.get_automation_page_scope()','EXECUTE') AS allowed")).rows[0].allowed).toBe(false);
+   const own='00000000-0000-4000-8000-000000000001',other='00000000-0000-4000-8000-000000000002';
+   await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,automation_app_id) VALUES($1,'111','Owned','test','veo'),($2,'222','Preserved','test','tokko')",[own,other]);
+   await db.exec("INSERT INTO app_private.veobot_runtime_policy VALUES(true,'veo',true)");
+   expect((await db.query<any>('SELECT public.get_automation_page_scope() AS ids')).rows[0].ids).toEqual([own]);
+   await db.exec(`INSERT INTO chatbot_configs(page_id,enabled) VALUES('${own}',true),('${other}',true);INSERT INTO chatbot_inbound_recovery_pages(page_id,enabled) VALUES('${own}',true),('${other}',true) ON CONFLICT(page_id) DO UPDATE SET enabled=true;`);
+   expect((await db.query<any>('SELECT page_id FROM public.claim_chatbot_inbound_recovery_pages(3,now())')).rows.map(r=>r.page_id)).toEqual([own]);
+   expect((await db.query<any>('SELECT enabled,lease_until FROM chatbot_inbound_recovery_pages WHERE page_id=$1',[other])).rows[0]).toMatchObject({enabled:true,lease_until:null});
    await db.exec('ROLLBACK');
    expect((await db.query<any>("SELECT to_regclass('public.contacts') AS contacts")).rows[0].contacts).toBeNull();
    expect((await db.query<any>("SELECT to_regclass('public.pages') AS original")).rows[0].original).toBe('pages');

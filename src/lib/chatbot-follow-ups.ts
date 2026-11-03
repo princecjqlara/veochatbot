@@ -10,6 +10,7 @@ import { getBestTimeFollowUpDueAt, normalizeBestTimeFollowUpDays } from '@/lib/c
 export { getBestTimeFollowUpDueAt, normalizeBestTimeFollowUpDays } from '@/lib/chatbot-follow-up-timing';
 import { replaceTemplateVariables } from '@/lib/placeholders';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { getAutomationPageScope, scopeAutomationQuery } from '@/lib/page-automation-scope';
 import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
 import { generateChatbotFollowUp, getChatbotKnowledgePageId, type ChatbotConfig } from '@/lib/chatbot';
 import { getChatbotHandoffOptions, isChatbotContactAllowed, saveChatbotContactState, type ChatbotContactState } from '@/lib/chatbot-control';
@@ -241,18 +242,19 @@ export async function processDueChatbotFollowUps(input: {
     const now = input.now || new Date();
     const limit = Math.min(50, Math.max(1, input.limit || 20));
     const result = { checked: 0, sent: 0, readyManual: 0, cancelled: 0, failed: 0, mediaSent: 0 };
+    const scope=await getAutomationPageScope(supabase);
 
-    await supabase.from('chatbot_follow_up_jobs').update({
+    await scopeAutomationQuery(supabase.from('chatbot_follow_up_jobs').update({
         status: 'pending',
         claimed_at: null,
         updated_at: now.toISOString()
-    }).eq('status', 'processing').lt('claimed_at', new Date(now.getTime() - PROCESSING_LEASE_MS).toISOString());
+    }).eq('status', 'processing').lt('claimed_at', new Date(now.getTime() - PROCESSING_LEASE_MS).toISOString()),scope);
 
-    const { data, error } = await supabase
+    const { data, error } = await scopeAutomationQuery(supabase
         .from('chatbot_follow_up_jobs')
         .select('*')
         .eq('status', 'pending')
-        .lte('due_at', now.toISOString())
+        .lte('due_at', now.toISOString()),scope)
         .order('due_at', { ascending: true })
         .limit(limit);
     if (error) throw new Error(error.message || 'Could not load due chatbot follow-ups');

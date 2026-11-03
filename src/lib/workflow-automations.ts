@@ -1,4 +1,5 @@
 import { sendMessage, sendMessengerMediaAttachment } from './facebook';
+import { getAutomationPageScope, scopeAutomationQuery } from './page-automation-scope';
 import { ContactRecord, replaceTemplateVariables } from './placeholders';
 import { recordOutboundMessageEvent } from './outbound-message-events';
 import { isPipelineClosedForAutomation } from './contact-pipeline';
@@ -436,6 +437,7 @@ export async function processDueFollowUpAutomationSteps(params: {
     limit?: number;
 }): Promise<FollowUpCronResult> {
     const { supabase } = params;
+    const scope=await getAutomationPageScope(supabase);
     const now = params.now ?? new Date();
     const limit = Math.max(1, Math.min(params.limit || 10, 50));
     const result: FollowUpCronResult = {
@@ -447,7 +449,7 @@ export async function processDueFollowUpAutomationSteps(params: {
         errors: 0
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await scopeAutomationQuery(supabase
         .from('workflow_automation_states')
         .select(`
             id,
@@ -456,7 +458,7 @@ export async function processDueFollowUpAutomationSteps(params: {
             status,
             current_step_index,
             next_step_at,
-            workflow_automations(
+            workflow_automations${scope===null?'':'!inner'}(
                 id,
                 page_id,
                 name,
@@ -472,7 +474,7 @@ export async function processDueFollowUpAutomationSteps(params: {
             contacts(id, psid, page_id, name, last_interaction_at, last_inbound_at, pipeline_stage, pipeline_stage_source)
         `)
         .eq('status', 'active')
-        .lte('next_step_at', now.toISOString())
+        .lte('next_step_at', now.toISOString()),scope,'workflow_automations.page_id')
         .order('next_step_at', { ascending: true })
         .limit(limit);
 

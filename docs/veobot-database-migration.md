@@ -91,7 +91,8 @@ directory. Its automated scope is connection recovery, destination provisioning
 and source ownership/schema inspection. It does not substitute an inventory for
 a backup, import customer rows, or switch the production database. Those remain
 pending until the consistent scoped export, import and financial/calendar checks
-are implemented and pass. Incomplete or mismatched receipts never count as a
+pass. The separate backup and import commands below perform the data stages;
+the prerequisite worker does not run them or approve a cutover. Incomplete or mismatched receipts never count as a
 completed stage. No model requests or customer messages are made by these retries.
 
 ## Preserve the complete chatbot setup
@@ -150,3 +151,53 @@ jobs. It preserves their original bytes, checks sizes, source update timestamps
 and local SHA256 hashes, and reuses previously verified downloads on retries.
 An unavailable file remains a failed checkpoint. Database snapshots are never
 combined across retries; a final source change check is still needed at cutover.
+
+## Verified imports and retry checkpoints
+
+`account-import-scope.json` records the current account Page set separately from
+which Pages have a verified connection to the VeoBot Facebook app. All preserved
+settings are copied; another app's automation must not start just because its
+historical data was preserved. Migration `202611030001` adds a separate Page
+automation owner and an optional private runtime policy. It filters atomic
+recovery/review claims, and the application filters follow-up, workflow and
+campaign queues before their limits. The policy has no effect on the original
+database. Production enables `VEO_ENFORCE_PAGE_RUNTIME_SCOPE=true` only after the
+destination's owned Page set and policy are configured. A successful reconnect
+must confirm the current Facebook app subscription before registering ownership.
+
+```powershell
+node --env-file=.vercel/veobot-intended-project.env.local scripts/import-veobot-account.mjs --plan --target-project=vhtbmdizugnxkgocmruq
+node --env-file=.vercel/veobot-intended-project.env.local scripts/apply-veobot-import-checkpoints.mjs --target-project=vhtbmdizugnxkgocmruq
+node --env-file=.vercel/veobot-intended-project.env.local scripts/restore-veobot-storage.mjs
+```
+
+The checkpointed importer requires the exact verified snapshot and account scope.
+It refuses destination records without matching import checkpoints. It preserves
+19 legacy Page/account columns instead of dropping their values, and refuses
+unknown nonempty tables. The empty legacy Telegram standby table is accounted
+for explicitly. Each table is copied, checked against a source-derived SHA256
+fingerprint of every original row, and committed together with its checkpoint.
+On retry, committed tables are rechecked before reuse. An incomplete table rolls
+back. Source writes, customer sends and model calls are not part of import.
+
+Historical inserts temporarily disable only application triggers on that table;
+foreign keys and checks still run. Original trigger modes are restored before
+commit. Generated IDs are imported explicitly and their sequences advance past
+the imported maximum. Exact existing placeholder contact names are recorded in a
+private exception table, so they retain their values and allow stage updates;
+new invalid names remain rejected. Target retention jobs pause through their
+supported cron API while staging and must be reviewed before resuming production.
+
+Bulk transfer uses native COPY into a bounded temporary JSON staging table, then
+typed inserts with original IDs, nulls, vectors and timestamps. CSV control
+characters cannot occur literally in canonical PostgreSQL JSON; the importer
+checks this before transfer. Numeric values are never parsed through JavaScript.
+Storage restores use conditional uploads and verify downloaded bytes afterward.
+Unrecognized existing object contents are never overwritten.
+
+If disk fills, use `--defer-large-history` to finish and verify the core/customer
+and chatbot tables while retaining the complete history backup. This explicitly
+leaves `baseline_complete=false`; it is not a completed migration. The two
+deferred tables are `campaign_recipients` and `outbound_message_events`. Resume
+without that option after capacity is sufficient. Do not discard original
+history, remove required indexes, or switch production to an incomplete copy.
