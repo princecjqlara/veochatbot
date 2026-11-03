@@ -1,9 +1,10 @@
 import{safeAdMediaUrl}from'./ad-attribution';
+export const META_MARKETING_API_VERSION='v26.0';
 const numeric=(x:unknown):string|null=>typeof x==='string'&&/^\d{1,100}$/.test(x)?x:null;
 const text=(x:unknown,max=500)=>typeof x==='string'&&x.trim()?x.trim().slice(0,max):null;
 export class MetaAdAccessError extends Error{constructor(public code:number|string,public reconnect=false){super(reconnect?'Connect Facebook with ad-account read access.':'Facebook ad details are temporarily unavailable.');}}
 export async function readMetaAds(path:string,token:string,params:Record<string,string>={}){
- const url=new URL('https://graph.facebook.com/v24.0/'+path);for(const[k,v]of Object.entries(params))url.searchParams.set(k,v);
+ const url=new URL(`https://graph.facebook.com/${META_MARKETING_API_VERSION}/`+path);for(const[k,v]of Object.entries(params))url.searchParams.set(k,v);
  let response:Response,body:any;
  try{response=await fetch(url,{headers:{Authorization:'Bearer '+token},cache:'no-store',signal:AbortSignal.timeout(8000)});body=await response.json();}catch{throw new MetaAdAccessError('META_UNAVAILABLE');}
  if(!response.ok||body.error)throw new MetaAdAccessError(body.error?.code||response.status,[10,190,200,294].includes(body.error?.code));return body;
