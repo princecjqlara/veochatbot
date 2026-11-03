@@ -6,8 +6,8 @@ const apply=process.argv.includes('--apply');if(!apply&&!process.argv.includes('
 const {connectionString}=assertProjectCredentials(process.env,VEO_TARGET_PROJECT),dir=path.resolve('.vercel/veo-backlog');
 const text=fs.readFileSync(path.join(dir,'prepared-manifest.jsonl'),'utf8'),hash=digest(text),records=text.split('\n').filter(Boolean).map(JSON.parse);
 const published=JSON.parse(fs.readFileSync(path.join(dir,'local-publication-checkpoint.json'),'utf8'));if(published.manifest_sha256!==hash)throw Error('Profile publication manifest differs');
-const from=Number(process.argv.find(a=>a.startsWith('--from='))?.slice(7)||0);if(!Number.isSafeInteger(from)||from<0||from>=records.length)throw Error('Invalid source offset');
-let end=Math.min(records.length,published.next_offset);const suffix=from?'-from-'+from:'',stateFile=path.join(dir,'projection-checkpoint'+suffix+'.json'),prior=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):null;
+const rebuild=process.argv.includes('--rebuild'),from=Number(process.argv.find(a=>a.startsWith('--from='))?.slice(7)||0);if(!Number.isSafeInteger(from)||from<0||from>=records.length)throw Error('Invalid source offset');
+let end=rebuild?records.length:Math.min(records.length,published.next_offset);const suffix=[rebuild?'rebuild':'',from?'from-'+from:''].filter(Boolean).join('-')?'-'+[rebuild?'rebuild':'',from?'from-'+from:''].filter(Boolean).join('-'):'',stateFile=path.join(dir,'projection-checkpoint'+suffix+'.json'),prior=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):null;
 let offset=apply&&prior?.manifest_sha256===hash?prior.next_offset:from;
 const bundle=path.join(dir,'projection-runtime.cjs');await build({stdin:{contents:"export {projectionCacheFromMessages} from './src/lib/contact-projection-refresh';export {verifyBacklogArtifact} from './src/lib/contact-backlog-analysis';",resolveDir:process.cwd()},outfile:bundle,bundle:true,platform:'node',format:'cjs',logLevel:'silent'});
 const {projectionCacheFromMessages,verifyBacklogArtifact}=createRequire(import.meta.url)(bundle);

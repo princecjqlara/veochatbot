@@ -9,11 +9,11 @@ const approved=new Set(JSON.parse(fs.readFileSync('src/config/veo-pages.json','u
 const identities=JSON.parse(fs.readFileSync(path.join(dir,'contact-identities.json'),'utf8'));
 const bundle=path.join(dir,'publish-runtime.cjs');await build({stdin:{contents:"export * from './src/lib/contact-backlog-analysis';export * from './src/lib/contact-names';",resolveDir:process.cwd()},outfile:bundle,bundle:true,platform:'node',format:'cjs',logLevel:'silent'});
 const {verifyBacklogArtifact,normalizeContactName}=createRequire(import.meta.url)(bundle);
-const checkpointFile=path.join(dir,'local-publication-checkpoint.json'),checkpoint=fs.existsSync(checkpointFile)?JSON.parse(fs.readFileSync(checkpointFile,'utf8')):null;
+const rebuild=process.argv.includes('--rebuild'),checkpointFile=path.join(dir,rebuild?'local-publication-rebuild-checkpoint.json':'local-publication-checkpoint.json'),checkpoint=fs.existsSync(checkpointFile)?JSON.parse(fs.readFileSync(checkpointFile,'utf8')):null;
 let offset=apply&&checkpoint?.manifest_sha256===manifestHash?checkpoint.next_offset:0;
 const report={pid:process.pid,started_at:new Date().toISOString(),target_project:VEO_TARGET_PROJECT,manifest_sha256:manifestHash,applied:apply,status:'publishing',offset,published:0,evidence_messages:0,no_customer_history:0,skipped:0,errors:[],openrouter_calls:0,customer_messages_sent:0};
-const reportFile=path.join(dir,apply?'local-publication-status.json':'local-publication-preflight.json');
-const flush=()=>{const tmp=reportFile+'.tmp';fs.writeFileSync(tmp,JSON.stringify({...report,updated_at:new Date().toISOString()},null,2));fs.renameSync(tmp,reportFile);};
+const reportFile=path.join(dir,apply?(rebuild?'local-publication-rebuild-status.json':'local-publication-status.json'):(rebuild?'local-publication-rebuild-preflight.json':'local-publication-preflight.json'));
+const flush=()=>{const tmp=reportFile+'.tmp';fs.writeFileSync(tmp,JSON.stringify({...report,updated_at:new Date().toISOString()},null,2));try{fs.renameSync(tmp,reportFile);}catch(error){if(error.code!=='EPERM'&&error.code!=='EACCES')throw error;fs.copyFileSync(tmp,reportFile);fs.unlinkSync(tmp);}};
 const db=new pg.Client({connectionString:endpoint.connectionString,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:25000,query_timeout:120000});db.on('error',()=>{});
 const max=Number(process.argv.find(a=>a.startsWith('--limit='))?.slice(8)||(apply?records.length:10));
 if(!Number.isSafeInteger(max)||max<1||max>1000000)throw Error('Choose a positive publication limit up to 1000000');
