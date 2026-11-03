@@ -6,19 +6,25 @@ const apply=process.argv.includes('--apply');if(!apply&&!process.argv.includes('
 const {connectionString}=assertProjectCredentials(process.env,VEO_TARGET_PROJECT),dir=path.resolve('.vercel/veo-backlog');
 const text=fs.readFileSync(path.join(dir,'prepared-manifest.jsonl'),'utf8'),hash=digest(text),records=text.split('\n').filter(Boolean).map(JSON.parse);
 const published=JSON.parse(fs.readFileSync(path.join(dir,'local-publication-checkpoint.json'),'utf8'));if(published.manifest_sha256!==hash)throw Error('Profile publication manifest differs');
-const end=Math.min(records.length,published.next_offset),stateFile=path.join(dir,'projection-checkpoint.json'),prior=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):null;
-let offset=apply&&prior?.manifest_sha256===hash?prior.next_offset:0;
+const from=Number(process.argv.find(a=>a.startsWith('--from='))?.slice(7)||0);if(!Number.isSafeInteger(from)||from<0||from>=records.length)throw Error('Invalid source offset');
+let end=Math.min(records.length,published.next_offset);const suffix=from?'-from-'+from:'',stateFile=path.join(dir,'projection-checkpoint'+suffix+'.json'),prior=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):null;
+let offset=apply&&prior?.manifest_sha256===hash?prior.next_offset:from;
 const bundle=path.join(dir,'projection-runtime.cjs');await build({stdin:{contents:"export {projectionCacheFromMessages} from './src/lib/contact-projection-refresh';export {verifyBacklogArtifact} from './src/lib/contact-backlog-analysis';",resolveDir:process.cwd()},outfile:bundle,bundle:true,platform:'node',format:'cjs',logLevel:'silent'});
 const {projectionCacheFromMessages,verifyBacklogArtifact}=createRequire(import.meta.url)(bundle);
 const allowed=new Set(JSON.parse(fs.readFileSync('src/config/veo-pages.json','utf8')).map(p=>p.facebook_page_id).filter(Boolean));
 const db=new pg.Client({connectionString,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:25000,query_timeout:120000});db.on('error',()=>{});
 const report={pid:process.pid,target_project:VEO_TARGET_PROJECT,started_at:new Date().toISOString(),applied:apply,status:'processing',offset,manifest_sha256:hash,caches_saved:0,no_identifiable_inquiry:0,payment_acknowledgments:0,openrouter_calls:0,customer_messages_sent:0,errors:[]};
-const flush=()=>fs.writeFileSync(path.join(dir,apply?'projection-status.json':'projection-preflight.json'),JSON.stringify(report,null,2));
+const flush=()=>fs.writeFileSync(path.join(dir,(apply?'projection-status':'projection-preflight')+suffix+'.json'),JSON.stringify(report,null,2));
 try{
- await db.connect();flush();const limit=apply?end:Math.min(end,offset+100);
+ await db.connect();flush();let limit=apply?end:Math.min(end,offset+100);
+ const journalExists=(await db.query("SELECT to_regclass('app_private.veobot_local_projection_publications') IS NOT NULL AS found")).rows[0].found;
+ const done=new Set((journalExists?(await db.query("SELECT c.page_id,c.psid,j.source_sha256 FROM app_private.veobot_local_projection_publications j JOIN contacts c ON c.id=j.contact_id")).rows:[]).map(r=>r.page_id+':'+r.psid+':'+r.source_sha256));
+ if(apply&&process.argv.includes('--follow'))limit=records.length;
  while(offset<limit){
-  const next=Math.min(limit,offset+300),rows=[];
+  if(apply&&process.argv.includes('--follow')){const current=JSON.parse(fs.readFileSync(path.join(dir,'local-publication-checkpoint.json'),'utf8'));if(current.manifest_sha256!==hash)throw Error('Profile manifest changed');end=Math.min(records.length,current.next_offset);if(offset>=end){report.status='waiting_for_profiles';flush();await new Promise(resolve=>setTimeout(resolve,3000));continue;}}
+  const next=Math.min(limit,end,offset+300),rows=[];
   for(const entry of records.slice(offset,next)){
+   if(done.has(entry.page_id+':'+entry.psid+':'+entry.source_sha256))continue;
    if(!entry.verified||!allowed.has(entry.facebook_page_id))throw Error('Profile outside approved VeoBot scope');const file=path.resolve(entry.artifact);if(!file.startsWith(dir+path.sep))throw Error('Profile escapes local archive');
    const bytes=fs.readFileSync(file);if(digest(bytes)!==entry.artifact_sha256)throw Error('Reviewed profile changed');const artifact=JSON.parse(gunzipSync(bytes));verifyBacklogArtifact(artifact);
    if(artifact.page_id!==entry.page_id||artifact.psid!==entry.psid||artifact.source_sha256!==entry.source_sha256)throw Error('Profile identity changed');
@@ -37,7 +43,7 @@ try{
     OR f.first_inquiry_at<(i.payload->>'first_inquiry_at')::timestamptz AND f.first_message_id IS DISTINCT FROM i.payload->>'first_message_id')) FOR UPDATE OF c`,[JSON.stringify(rows)]);
   await db.query('SELECT public.save_contact_conversion_cache(page_id,contact_id,payload) FROM veo_projection_input');
   await db.query(`UPDATE contact_conversion_cache f SET source_kind='audited_history' FROM veo_projection_input i WHERE f.contact_id=i.contact_id AND f.source_cutoff_at=(i.payload->>'source_cutoff_at')::timestamptz`);
-  await db.query(`UPDATE contacts c SET first_interaction_at=(i.payload->>'first_inquiry_at')::timestamptz FROM veo_projection_input i WHERE c.id=i.contact_id`);
+  await db.query(`UPDATE contacts c SET first_interaction_at=(i.payload->>'first_inquiry_at')::timestamptz FROM veo_projection_input i WHERE c.id=i.contact_id AND c.first_interaction_at IS DISTINCT FROM (i.payload->>'first_inquiry_at')::timestamptz`);
   await db.query(`UPDATE ad_contact_sources s SET inquiry_basis='audited_history' FROM veo_projection_input i WHERE s.contact_id=i.contact_id AND s.origin_ad_id IS NULL AND s.first_message_id=i.payload->>'first_message_id' AND s.first_inquiry_at=(i.payload->>'first_inquiry_at')::timestamptz`);
   await db.query('INSERT INTO app_private.veobot_local_projection_publications(contact_id,source_sha256) SELECT contact_id,source_sha256 FROM veo_projection_input');
   const result=(await db.query("SELECT count(*)::int AS n,count(*) FILTER(WHERE payload->>'payment_at' IS NOT NULL)::int AS paid FROM veo_projection_input")).rows[0];

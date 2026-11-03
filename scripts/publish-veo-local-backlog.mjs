@@ -16,10 +16,12 @@ const reportFile=path.join(dir,apply?'local-publication-status.json':'local-publ
 const flush=()=>{const tmp=reportFile+'.tmp';fs.writeFileSync(tmp,JSON.stringify({...report,updated_at:new Date().toISOString()},null,2));fs.renameSync(tmp,reportFile);};
 const db=new pg.Client({connectionString:endpoint.connectionString,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:25000,query_timeout:120000});db.on('error',()=>{});
 const max=Number(process.argv.find(a=>a.startsWith('--limit='))?.slice(8)||(apply?records.length:10));
+if(!Number.isSafeInteger(max)||max<1||max>1000000)throw Error('Choose a positive publication limit up to 1000000');
+const batchSize=Number(process.argv.find(a=>a.startsWith('--batch-size='))?.slice(13)||75);if(!Number.isSafeInteger(batchSize)||batchSize<1||batchSize>150)throw Error('Choose a batch size between 1 and 150');
 try{
  await db.connect();flush();let considered=0;
  while(offset<records.length&&considered<max){
-  const batch=[],end=Math.min(records.length,offset+Math.min(150,max-considered));
+  const batch=[],end=Math.min(records.length,offset+Math.min(batchSize,max-considered));
   for(let index=offset;index<end;index++){
    const row=records[index];if(!row.verified||!approved.has(row.facebook_page_id))throw Error('A prepared profile is outside approved VeoBot scope');
    const file=path.resolve(row.artifact);if(!file.startsWith(dir+path.sep))throw Error('Artifact escapes scoped local archive');
