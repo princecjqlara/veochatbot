@@ -12,18 +12,22 @@ async function graph(path: string, token: string, body?: URLSearchParams): Promi
 }
 
 /** Restore echoes removed by other app clients, without subscribing the wrong app. */
-export async function ensureChatbotPageWebhook(input: { facebookPageId: string; accessToken: string }) {
+export async function ensureChatbotPageWebhook(input: { facebookPageId: string; accessToken: string; automationAppId?: string | null }) {
     const primaryApp = process.env.FACEBOOK_CLIENT_ID;
     const partnerPage = (process.env.FACEBOOK_PARTNER_CHATBOT_PAGE_IDS || '').split(',').map(id => id.trim()).includes(input.facebookPageId);
     const subscriptions = await graph(`${encodeURIComponent(input.facebookPageId)}/subscribed_apps`, input.accessToken);
     if (!Array.isArray(subscriptions.data)) throw new Error('Page webhook subscriptions are unavailable');
-    const candidates = subscriptions.data.filter((app: { id?: string }) => partnerPage ? app.id !== primaryApp : app.id === primaryApp);
+    // The Page's verified app owner can change when it is reconnected. Legacy
+    // partner-Page lists must not override that stored identity.
+    const candidates = subscriptions.data.filter((app: { id?: string }) => input.automationAppId
+        ? app.id === input.automationAppId
+        : partnerPage ? app.id !== primaryApp : app.id === primaryApp);
     if (candidates.length !== 1 || typeof candidates[0].id !== 'string') throw new Error('Expected one existing chatbot app subscription');
     const app = candidates[0];
     const existing: string[] = Array.isArray(app.subscribed_fields) ? app.subscribed_fields : [];
     const missing = REQUIRED_FIELDS.filter(field => !existing.includes(field));
     if (!missing.length) return { verified: true, repaired: false };
-    const secret = partnerPage ? process.env.FACEBOOK_PARTNER_APP_SECRET : process.env.FACEBOOK_CLIENT_SECRET;
+    const secret = app.id === primaryApp ? process.env.FACEBOOK_CLIENT_SECRET : process.env.FACEBOOK_PARTNER_APP_SECRET;
     if (!secret) throw new Error('App credentials are unavailable for webhook subscription repair');
     const debug = await graph(`debug_token?input_token=${encodeURIComponent(input.accessToken)}`, `${app.id}|${secret}`);
     if (!debug.data?.is_valid || debug.data.app_id !== app.id) throw new Error('Page token does not belong to the existing chatbot app');

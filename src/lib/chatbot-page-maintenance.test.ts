@@ -57,6 +57,35 @@ describe('Page echo subscription watchdog', () => {
         await expect(ensureChatbotPageWebhook({ facebookPageId: 'partner-page', accessToken: 'token' })).rejects.toThrow('one existing');
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+
+    it('honors a stored primary app even when a stale partner list includes the Page', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(response({ data: [{ id: 'primary', subscribed_fields: ['messages', 'messaging_postbacks', 'message_echoes'] }] }));
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(ensureChatbotPageWebhook({ facebookPageId: 'partner-page', accessToken: 'token', automationAppId: 'primary' }))
+            .resolves.toEqual({ verified: true, repaired: false });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the actual owning app credentials when repairing a reconnected Page', async () => {
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(response({ data: [{ id: 'primary', subscribed_fields: ['messages', 'messaging_referrals'] }] }))
+            .mockResolvedValueOnce(response({ data: { is_valid: true, app_id: 'primary' } }))
+            .mockResolvedValueOnce(response({ success: true }))
+            .mockResolvedValueOnce(response({ data: [{ id: 'primary', subscribed_fields: ['messages', 'messaging_referrals', 'messaging_postbacks', 'message_echoes'] }] }));
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(ensureChatbotPageWebhook({ facebookPageId: 'partner-page', accessToken: 'token', automationAppId: 'primary' }))
+            .resolves.toEqual({ verified: true, repaired: true });
+        expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer primary|primary-secret');
+        expect(fetchMock.mock.calls.find(([, init]) => init.method === 'POST')?.[1].body.get('subscribed_fields')).toContain('messaging_referrals');
+    });
+
+    it('does not switch to another subscribed app when the saved app is absent', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(response({ data: [{ id: 'primary', subscribed_fields: ['messages'] }] }));
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(ensureChatbotPageWebhook({ facebookPageId: 'page', accessToken: 'token', automationAppId: 'saved-other-app' }))
+            .rejects.toThrow('one existing');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('saved stage outcome recovery', () => {

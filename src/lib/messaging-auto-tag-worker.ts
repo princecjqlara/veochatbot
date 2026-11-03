@@ -30,6 +30,7 @@ type Page = {
     messaging_auto_tag_checked_at: string;
     messaging_auto_tag_cursor: string | null;
     messaging_auto_tag_scan_started_at?: string | null;
+    automation_app_id?: string | null;
 };
 
 type Message = MessengerHistoryMessage & { id: string; created_time: string };
@@ -70,8 +71,8 @@ async function getMessagesSince(conversationId: string, token: string, since: st
 export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: boolean; pageId?: string; claimedPage?: Page } = {}) {
     const db = getSupabaseAdmin();
     const fields = input.chatbotOnly
-        ? 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,messaging_auto_tag_scan_started_at,chatbot_configs!chatbot_configs_page_id_fkey!inner(enabled)'
-        : 'id,fb_page_id,access_token,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,messaging_auto_tag_scan_started_at';
+        ? 'id,fb_page_id,access_token,automation_app_id,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,messaging_auto_tag_scan_started_at,chatbot_configs!chatbot_configs_page_id_fkey!inner(enabled)'
+        : 'id,fb_page_id,access_token,automation_app_id,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,messaging_auto_tag_scan_started_at';
     let pageQuery = db.from('pages')
         .select<typeof fields, Page>(fields)
         .eq('messaging_auto_tag_enabled', true);
@@ -96,7 +97,7 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
     try {
         if (input.chatbotOnly) {
             try {
-                webhookHealth = await ensureChatbotPageWebhook({ facebookPageId: current.fb_page_id, accessToken: current.access_token });
+                webhookHealth = await ensureChatbotPageWebhook({ facebookPageId: current.fb_page_id, accessToken: current.access_token, automationAppId: current.automation_app_id });
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 webhookHealth = { error: message };
