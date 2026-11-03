@@ -3,6 +3,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { publishBacklogProfile } from '../../../scripts/lib/backlog-profile-publication.mjs';
 import { analyzeContactBacklog, BACKLOG_ANALYSIS_VERSION } from '../contact-backlog-analysis';
+import {citedMessages,localPublicationRow,publishLocalBatch} from '../../../scripts/lib/veo-local-publication.mjs';
+import {normalizeContactName} from '../contact-names';
 
 const page = '00000000-0000-4000-8000-000000000001', contact = '00000000-0000-4000-8000-000000000002', actor = '00000000-0000-4000-8000-000000000003';
 let db: PGlite;
@@ -22,6 +24,8 @@ describe('prepared backlog profile publication', () => {
    CREATE TABLE outbound_message_events(page_id uuid,contact_id uuid,sent_at timestamptz);
    CREATE TABLE ad_lead_stage_events(page_id uuid,contact_id uuid,recorded_at timestamptz);
    INSERT INTO pages VALUES('${page}','100'); INSERT INTO users VALUES('${actor}','Staff');`);
+  await db.exec(`ALTER TABLE contacts ADD COLUMN name text,ADD COLUMN profile_pic text,ADD COLUMN first_interaction_at timestamptz,ADD COLUMN interaction_count integer,ADD COLUMN pipeline_stage_updated_at timestamptz,ADD COLUMN pipeline_stage_source text;
+   CREATE FUNCTION public.apply_messenger_lead_stage(uuid,uuid,text,text,text,timestamptz) RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$;`);
   await db.exec(readFileSync('supabase/migrations/202611020004_contact_profiles.sql', 'utf8'));
  });
  afterAll(async () => { await db.close(); });
@@ -73,5 +77,25 @@ describe('prepared backlog profile publication', () => {
   expect(await publishBacklogProfile(adapter, { ...artifact(), psid: '300' }, true)).toMatchObject({ status: 'contact_not_imported' });
   await expect(publishBacklogProfile(adapter, { ...artifact(), facebook_page_id: '101' }, true)).rejects.toThrow('Page identity');
   expect((await db.query('SELECT * FROM contact_profile_jobs')).rows).toHaveLength(0);
+ });
+ it('publishes new contacts atomically with compact evidence, ready jobs and idempotent receipts',async()=>{
+  const prepared={...artifact(),psid:'300'};
+  const row=localPublicationRow(prepared,{name:' Facebook user ',chatbot_enabled:false},normalizeContactName)!;
+  expect(row.name).toBeNull();
+  expect(await publishLocalBatch(adapter,[row],false)).toMatchObject({published:1});
+  expect((await db.query("SELECT * FROM contacts WHERE psid='300'")).rows).toHaveLength(0);
+  expect(await publishLocalBatch(adapter,[row],true)).toMatchObject({published:1});
+  expect(await publishLocalBatch(adapter,[row],true)).toMatchObject({published:0});
+  const saved=(await db.query<any>("SELECT * FROM contacts WHERE psid='300'")).rows[0];
+  expect(saved).toMatchObject({name:null,chatbot_enabled:false});
+  const snapshot=(await db.query<any>('SELECT * FROM contact_profile_snapshots WHERE contact_id=$1',[saved.id])).rows[0];
+  expect(snapshot.payload).toMatchObject({raw_history_storage:'local',database_message_storage:'cited_evidence'});
+  expect((await db.query<any>('SELECT status FROM contact_profile_jobs WHERE contact_id=$1',[saved.id])).rows[0].status).toBe('ready');
+ },30000);
+ it('keeps every nested citation and excludes unrelated raw messages',()=>{
+  const a:any=artifact();a.messages.push({id:'unused',at:'2026-01-02T00:00:00Z',text:'Hello',sender:'page'});
+  expect(citedMessages(a).map((m:any)=>m.id)).toEqual(['answer']);
+  expect(citedMessages({...a,payload:{groups:[{message_ids:['answer','unused']}]}})).toHaveLength(2);
+  expect(()=>citedMessages({...a,payload:{nested:[{message_id:'missing'}]}})).toThrow('missing source');
  });
 });

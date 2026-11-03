@@ -1,10 +1,12 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import {assertVeoDatabaseUrl} from './veo-database-scope';
 
 function getSupabaseUrl() {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
     if (!url) {
         throw new Error('Missing Supabase URL. Set NEXT_PUBLIC_SUPABASE_URL (or SUPABASE_URL for server-only usage).');
     }
+    assertVeoDatabaseUrl(url);
     return url;
 }
 

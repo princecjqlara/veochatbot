@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getFacebookPages, isFacebookReauthRequired } from '@/lib/facebook';
 import { FACEBOOK_REAUTH_MESSAGE } from '@/lib/facebook-permissions';
+import { filterVeoPages } from '@/lib/veo-page-scope';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
 
         const pages = await getFacebookPages(session.accessToken);
 
-        return NextResponse.json({ pages }, { headers: { 'Cache-Control': 'no-store' } });
+        return NextResponse.json({ pages: filterVeoPages(pages) }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
         console.error('Error fetching Facebook pages:', error);
         if (isFacebookReauthRequired(error)) {

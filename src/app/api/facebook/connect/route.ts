@@ -7,6 +7,7 @@ import type { UtilityTemplate } from '@/lib/facebook';
 import { isFacebookReauthRequired } from '@/lib/facebook';
 import { DatabaseReadTimeout, requestDeadline } from '@/lib/request-deadline';
 import { FacebookPageConnectionError, verifyFacebookPageConnection, facebookWebhookConnectionStatus } from '@/lib/facebook-page-connection';
+import { isApprovedVeoPage } from '@/lib/veo-page-scope';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
@@ -65,6 +66,7 @@ export async function POST(request: NextRequest) {
             .abortSignal(signal).maybeSingle(), 10000);
         if (lookupError) throw lookupError;
         const verified = await verifyFacebookPageConnection(fbPageId, accessToken);
+        if(process.env.VEO_PAGE_SCOPE_ENFORCED==='true'&&!isApprovedVeoPage(fbPageId,verified.name||''))return NextResponse.json({success:false,error:'Page outside VeoBot scope',message:'Choose one of the 15 VeoBot Pages configured for this workspace.'},{status:403});
 
         let pageId: string;
 

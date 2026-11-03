@@ -75,7 +75,7 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     return { contact: { ...contact, tags: (contact.contact_tags || []).map((assignment: any) => assignment.tags).filter(Boolean), contact_tags: undefined },
         page: pageResult.data, state: stateResult.data, detail_progress: getChatbotDetailProgress(configResult.data, combinedDetails),
         saved_detail_keys: Object.keys(saved.collected_details), answer_conflicts: conflicts,
-        snapshot, job: jobResult.data, source_stale: Boolean(snapshot && [contact.last_interaction_at, contact.pipeline_stage_updated_at].some(value => value && Date.parse(value) > Date.parse(snapshot.source_cutoff_at))),
+        snapshot, job: jobResult.data, processing_mode: process.env.CONTACT_PROFILE_PROCESSING_MODE === 'local' ? 'local' : 'automatic', source_stale: Boolean(snapshot && [contact.last_interaction_at, contact.pipeline_stage_updated_at].some(value => value && Date.parse(value) > Date.parse(snapshot.source_cutoff_at))),
         first_inquiry_at: firstInquiryAt, first_recorded_conversion_at: firstConvertedAt,
         inquiry_to_conversion_hours: hoursBetween(firstInquiryAt, firstConvertedAt),
         finance: { ...finance, metrics },

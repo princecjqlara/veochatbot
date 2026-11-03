@@ -1,9 +1,11 @@
 # VeoBot database separation
 
-The authorized destination is `vhtbmdizugnxkgocmruq`. The deployed app and the
-Tokko Dev checkout currently inherit `pnhzpeyzpwsmwcuafgpw`. Production must
-remain on its current configuration until the scoped data copy is verified.
-Do not change Tokko Dev's environment or write migration repairs to the source.
+The authorized destination is `vhtbmdizugnxkgocmruq`. The former shared database
+is disabled for VeoBot. The user superseded the original 40-Page import with a
+reset preserving chatbot features, knowledge and setup, scoped to 15 named Pages.
+Follow [the current workflow](veobot-local-data-workflow.md). The remainder of
+this document records the original migration procedure; its broad import scope
+must not be applied again. Do not change Tokko Dev's environment or its database.
 
 The destination originally had an empty lightweight `pages`/`messages` schema.
 It cannot run the CRM simply by replacing an API URL. The schema installer moves

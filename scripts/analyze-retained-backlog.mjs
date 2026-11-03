@@ -1,8 +1,11 @@
 // Prepare durable source-cited profiles locally. No network or model calls.
 import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {gzipSync,gunzipSync} from 'node:zlib';import {createRequire} from 'node:module';import {build} from 'esbuild';
-const root=path.resolve('..'),dir=path.resolve('.vercel/backlog-analysis'),profiles=path.join(dir,'profiles');fs.mkdirSync(profiles,{recursive:true});
+const veoOnly=process.argv.includes('--veo-only');
+const root=path.resolve('..'),dir=path.resolve(veoOnly?'.vercel/veo-backlog':'.vercel/backlog-analysis'),profiles=path.join(dir,'profiles');fs.mkdirSync(profiles,{recursive:true});
 const scopeReport=JSON.parse(fs.readFileSync('.vercel/system-data-audit/coverage.json','utf8'));
-const pageIds=new Set(scopeReport.pages.filter(page=>['last_reported_readable','last_scan_incomplete'].includes(page.scope_status)).map(page=>page.page_id));
+const approvedFacebookIds=new Set(JSON.parse(fs.readFileSync('src/config/veo-pages.json','utf8')).map(page=>page.facebook_page_id).filter(Boolean));
+const retained=veoOnly?JSON.parse(fs.readFileSync('.vercel/veo-reset/retained-manifest.json','utf8')):null;
+const pageIds=new Set(veoOnly?retained.pages.filter(p=>approvedFacebookIds.has(p.fb_page_id)).map(p=>p.id):scopeReport.pages.filter(page=>['last_reported_readable','last_scan_incomplete'].includes(page.scope_status)).map(page=>page.page_id));
 const registryFile=path.resolve(process.argv.find(arg=>arg.startsWith('--registry='))?.slice(11)||'.vercel/system-data-audit/latest-sources.jsonl');
 if(!registryFile.startsWith(path.resolve('.vercel')+path.sep))throw Error('Registry must be inside the ignored workspace audit directory');
 const registry=fs.readFileSync(registryFile,'utf8'),records=registry.split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(row=>pageIds.has(row.page_id));
@@ -13,18 +16,21 @@ const status={pid:process.pid,started_at:new Date().toISOString(),status:'analyz
 const atomic=(file,value)=>{const tmp=file+'.'+process.pid+'.tmp';fs.writeFileSync(tmp,value);fs.renameSync(tmp,file);};
 const flush=()=>atomic(path.join(dir,'status.json'),JSON.stringify({...status,updated_at:new Date().toISOString()},null,2));
 const configMap=new Map();
-for(const file of ['.vercel/conversation-data-audit/config-baseline.json','.vercel/pricing-config-backup.json'])if(fs.existsSync(file)){const value=JSON.parse(fs.readFileSync(file,'utf8'));const rows=Array.isArray(value)?value:Array.isArray(value.configs)?value.configs:[];for(const row of rows)if(row.page_id)configMap.set(row.page_id,{requestedFields:Array.isArray(row.details_to_collect)?row.details_to_collect.filter(field=>typeof field==='string'):[],commercialVideo:row.commercial_video_intake_enabled===true});}
+if(veoOnly){const text=gunzipSync(fs.readFileSync('.vercel/veo-reset/chatbot_configs.jsonl.gz')).toString('utf8');for(const row of text.split('\n').filter(Boolean).map(JSON.parse))configMap.set(row.page_id,{requestedFields:Array.isArray(row.details_to_collect)?row.details_to_collect.filter(field=>typeof field==='string'):[],commercialVideo:row.commercial_video_intake_enabled===true});}
+for(const file of veoOnly?[]:['.vercel/conversation-data-audit/config-baseline.json','.vercel/pricing-config-backup.json'])if(fs.existsSync(file)){const value=JSON.parse(fs.readFileSync(file,'utf8'));const rows=Array.isArray(value)?value:Array.isArray(value.configs)?value.configs:[];for(const row of rows)if(row.page_id)configMap.set(row.page_id,{requestedFields:Array.isArray(row.details_to_collect)?row.details_to_collect.filter(field=>typeof field==='string'):[],commercialVideo:row.commercial_video_intake_enabled===true});}
+if(veoOnly){status.scope='user_approved_veo_pages';status.scope_snapshot_at=retained.started_at;}
 const output=fs.openSync(path.join(dir,'prepared-manifest.jsonl.tmp'),'w');flush();
 try{
  for(const row of records.slice(0,limit)){
   try{
    if(!/^[0-9a-f-]{36}$/.test(row.page_id)||!/^\d+$/.test(row.psid)||!/^\d+$/.test(row.fb_page_id)||!row.complete||!Number.isFinite(Date.parse(row.source_cutoff_at))||! /^[0-9a-f]{64}$/.test(row.archive_sha256))throw Error('Invalid source registry identity or cutoff');
    const pageDir=path.join(profiles,row.page_id);fs.mkdirSync(pageDir,{recursive:true});const file=path.join(pageDir,row.psid+'-'+row.archive_sha256+'-'+BACKLOG_ANALYSIS_VERSION+'.json.gz');
+   const configHash=crypto.createHash('sha256').update(JSON.stringify(configMap.get(row.page_id)||{})).digest('hex');
    let prepared,verified,artifactHash;
-   if(fs.existsSync(file)){const compressed=fs.readFileSync(file),cached=JSON.parse(gunzipSync(compressed).toString('utf8'));if(cached.source_sha256===row.archive_sha256&&cached.engine===BACKLOG_ANALYSIS_VERSION&&cached.page_id===row.page_id&&cached.psid===row.psid&&cached.processing_complete){prepared=cached;verified=verifyBacklogArtifact(prepared);artifactHash=crypto.createHash('sha256').update(compressed).digest('hex');status.reused_prepared_profiles++;}}
+   if(fs.existsSync(file)){const compressed=fs.readFileSync(file),cached=JSON.parse(gunzipSync(compressed).toString('utf8'));if(cached.source_sha256===row.archive_sha256&&cached.engine===BACKLOG_ANALYSIS_VERSION&&cached.page_id===row.page_id&&cached.psid===row.psid&&cached.processing_complete&&(!veoOnly||cached.config_sha256===configHash)){prepared=cached;verified=verifyBacklogArtifact(prepared);artifactHash=crypto.createHash('sha256').update(compressed).digest('hex');status.reused_prepared_profiles++;}}
    if(!prepared){const source=path.resolve(root,row.archive_path);if(!source.startsWith(root+path.sep))throw Error('Source path escapes workspace');const bytes=fs.readFileSync(source),text=(source.endsWith('.gz')?gunzipSync(bytes).toString('utf8'):bytes.toString('utf8')).replace(/^\uFEFF/,'');if(crypto.createHash('sha256').update(text).digest('hex')!==row.archive_sha256)throw Error('Source changed since the registry was verified');
     const history=JSON.parse(text),analysis=analyzeContactBacklog({pageId:row.page_id,facebookPageId:row.fb_page_id,psid:row.psid,cutoff:row.source_cutoff_at,messages:history.messages,...configMap.get(row.page_id)});
-    prepared={engine:BACKLOG_ANALYSIS_VERSION,prepared_at:new Date().toISOString(),processing_complete:true,page_id:row.page_id,facebook_page_id:row.fb_page_id,psid:row.psid,source_sha256:row.archive_sha256,source_cutoff_at:row.source_cutoff_at,source_kind:row.source_kind,source_archive:row.archive_path,...analysis};
+    prepared={engine:BACKLOG_ANALYSIS_VERSION,config_sha256:configHash,prepared_at:new Date().toISOString(),processing_complete:true,page_id:row.page_id,facebook_page_id:row.fb_page_id,psid:row.psid,source_sha256:row.archive_sha256,source_cutoff_at:row.source_cutoff_at,source_kind:row.source_kind,source_archive:row.archive_path,...analysis};
     verified=verifyBacklogArtifact(prepared);const compressed=gzipSync(JSON.stringify(prepared));artifactHash=crypto.createHash('sha256').update(compressed).digest('hex');atomic(file,compressed);status.newly_analyzed++;
    }
    const p=prepared.payload;status.processed++;status.messages_analyzed+=prepared.messages.length;status.citations_verified+=verified.citations_checked;status.profiles_with_explicit_answers+=Number(p.extracted_answers.length>0);status.answer_events+=p.answer_history.length;status.unique_question_texts+=p.conversation.unique_question_count;status.stage_events+=p.stage_events.length;status.chat_payment_acknowledgments+=p.conversation.payment_evidence.filter(event=>event.acknowledgment).length;status.profiles_needing_review+=Number(p.review_reasons.length>0);

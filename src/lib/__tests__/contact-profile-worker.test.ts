@@ -4,7 +4,7 @@ vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: mocks.db }));
 import { processContactProfiles, profileAnalysisChunk, profileSourceMessages, safeProfileCursor } from '@/lib/contact-profile-worker';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-beforeEach(() => { vi.stubEnv('OPENROUTER_API_KEY', 'test-key'); vi.clearAllMocks(); });
+beforeEach(() => { vi.stubEnv('OPENROUTER_API_KEY', 'test-key'); vi.stubEnv('CONTACT_PROFILE_PROCESSING_MODE', 'remote'); vi.clearAllMocks(); });
 const source = [
     { id: 'buyer-1', created_time: '2026-10-01T00:00:00Z', from: { id: 'buyer' }, message: 'I need a video for Facebook ads.' },
     { id: 'page-1', created_time: '2026-10-01T01:00:00Z', from: { id: 'fb-page' }, message: 'What format would you prefer?' }
@@ -24,6 +24,13 @@ function fixture(overrides: Record<string, unknown> = {}, storedSource = source,
 }
 
 describe('bounded whole-conversation worker', () => {
+    it('leaves historical processing to local publication without database claims or model calls', async () => {
+        vi.stubEnv('CONTACT_PROFILE_PROCESSING_MODE', 'local');
+        vi.stubGlobal('fetch', vi.fn());
+        expect(await processContactProfiles()).toEqual({ processed: 0, ready: 0, failed: 0, mode: 'local' });
+        expect(mocks.db).not.toHaveBeenCalled();
+        expect(fetch).not.toHaveBeenCalled();
+    });
     it('saves documented payment evidence for a Page without a forecasting model', async () => {
         const messages = [...source, { id: 'payment-ack', created_time: '2026-10-01T02:00:00Z', from: { id: 'fb-page' }, message: 'Payment received PHP 500, thank you!' }];
         const rpc = fixture({ history_complete: true, scan_started: true, analyzed_count: 3, message_count: 3, partial_analysis: [{ summary_points: [], facts: [], answers: [], excluded: 0 }] }, messages);
