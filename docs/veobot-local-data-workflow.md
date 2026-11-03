@@ -58,6 +58,13 @@ Run it again if profile publication was still in progress during the previous pa
 Keep credentials, raw archives, fingerprints and receipts private under `.vercel`.
 Saved-history counts are not current Meta totals. Refresh missing/new histories
 only for approved Pages, then analyze and publish the updated registry locally.
+`scripts/refresh-veo-missing-profiles.mjs --audit=<private-audit.json>` refreshes
+up to 100 audited missing profiles from the destination's Page credentials. It
+saves complete raw histories locally, verifies citations, publishes atomically
+and refreshes deterministic forecast features without any model calls. The audit
+must name `target_project` and contain `missing_profiles` with verified Page,
+Facebook Page and PSID identities. Retain its refreshed manifests separately from
+the sealed historical pass.
 
 `scripts/verify-veo-page-connections.mjs` checks identities, inbox access and app
 subscriptions without customer messages. Pages requiring reconnection need

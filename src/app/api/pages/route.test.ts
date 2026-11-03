@@ -117,6 +117,22 @@ describe('GET /api/pages', () => {
         expect(body.pages.every((page: { access_token?: string }) => !page.access_token)).toBe(true);
     });
 
+    it('checks the current app subscription for default selectors on the separated database', async () => {
+        vi.stubEnv('FACEBOOK_CLIENT_ID', 'app-id');
+        vi.stubEnv('VEO_ENFORCE_PAGE_RUNTIME_SCOPE', 'true');
+        vi.stubGlobal('fetch', vi.fn(async (value: string | URL) => {
+            const url = new URL(value);
+            return new Response(JSON.stringify(url.pathname.endsWith('/subscribed_apps')
+                ? { data: url.pathname.includes('697291860141214') ? [] : [{ id: 'app-id' }] }
+                : { id: url.pathname.split('/').at(-1) }), { status: 200 });
+        }));
+        mocks.getSessionFromRequest.mockResolvedValue({ user: { id: 'user_1' } });
+        mocks.getSupabaseAdmin.mockReturnValue(createSupabaseMock());
+        const response = await GET(createRequest()), body = await response.json();
+        expect(body.pages.map((page: any) => page.fb_page_id)).toEqual(['606945225824770']);
+        expect(body.reconnectRequiredPages[0].connectionSetupIncomplete).toBe(true);
+    });
+
     it('excludes invalid page-token records from normal page selectors', async () => {
         vi.stubGlobal('fetch', vi.fn(async (url: URL) => {
             const accessToken = url.searchParams.get('access_token');

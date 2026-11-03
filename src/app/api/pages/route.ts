@@ -129,9 +129,10 @@ export async function GET(request: NextRequest) {
             .filter(Boolean) || []) as PageRecord[];
 
         const connectionDetails = request.nextUrl?.searchParams.get('connectionDetails') === '1';
+        const checkWebhook = connectionDetails || process.env.VEO_ENFORCE_PAGE_RUNTIME_SCOPE === 'true';
         const pageStatuses = await Promise.all(pageRecords.map(async page => {
             const tokenStatus = await getPageTokenStatus(page);
-            const webhookStatus = connectionDetails && tokenStatus !== 'invalid' && page.access_token
+            const webhookStatus = checkWebhook && tokenStatus !== 'invalid' && page.access_token
                 ? await facebookWebhookConnectionStatus(page.fb_page_id, page.access_token, process.env.FACEBOOK_CLIENT_ID) : 'unknown';
             return { page, tokenStatus, webhookStatus };
         }));
