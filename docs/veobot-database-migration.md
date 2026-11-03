@@ -5,7 +5,7 @@ Tokko Dev checkout currently inherit `pnhzpeyzpwsmwcuafgpw`. Production must
 remain on its current configuration until the scoped data copy is verified.
 Do not change Tokko Dev's environment or write migration repairs to the source.
 
-The destination currently has an empty lightweight `pages`/`messages` schema.
+The destination originally had an empty lightweight `pages`/`messages` schema.
 It cannot run the CRM simply by replacing an API URL. The schema installer moves
 these empty tables into the private `veobot_legacy` schema, preserving them,
 then installs all maintained migrations. It refuses an unrecognized or nonempty
@@ -93,3 +93,60 @@ a backup, import customer rows, or switch the production database. Those remain
 pending until the consistent scoped export, import and financial/calendar checks
 are implemented and pass. Incomplete or mismatched receipts never count as a
 completed stage. No model requests or customer messages are made by these retries.
+
+## Preserve the complete chatbot setup
+
+`backup-veobot-account.mjs` saves a consistent, read-only snapshot of the Pages
+currently linked to the verified account and their application data. This is a
+preservation backup, separate from approval of the import/activation scope.
+Disconnected Pages retain their settings; a failed Facebook token check does not
+mean their old configuration should be discarded. The original migration scope
+must still be reconciled before importing additional Pages.
+
+The backup includes every column of every `chatbot_` table, shared knowledge,
+vectors, pricing controls, media references, Drive records, collection state,
+handoffs, automation epochs and delivery/job history. It also includes contacts,
+tags, campaign audiences, permissions, welcome messages, workflows, attribution
+and verified finances. Required users and original record IDs are preserved.
+Tokko-specific account/authentication tables are explicitly excluded. Unrecognized
+global tables stop the backup for review; new Page-scoped chatbot tables are
+included automatically. Extra columns are retained in the original artifacts
+even when the destination schema does not yet support them.
+
+```powershell
+node --env-file=.vercel/database-migration/source-production.env.local scripts/backup-veobot-account.mjs
+node --env-file=.vercel/database-migration/source-production.env.local scripts/backup-veobot-storage.mjs
+node scripts/verify-veobot-backup.mjs
+node --env-file=.vercel/veobot-intended-project.env.local scripts/compare-veobot-chatbot-setup.mjs
+```
+
+Artifacts stay under the ignored `.vercel/database-migration/backups` directory.
+Rows stream from one PostgreSQL repeatable-read snapshot into compressed JSONL
+with counts and SHA256 checksums. Original PostgreSQL JSON text is hashed without
+converting large numbers through JavaScript. Failed snapshots are never combined
+with a later retry. Foreign keys, polymorphic tag ownership, shared knowledge and
+campaign audience references are checked for missing or out-of-scope parents.
+
+The verifier requires every source table and original column in the manifest,
+then checks every decompressed byte and row count. The destination comparison
+requires matching original chatbot column types and matching counts/checksums
+for all chatbot setup and state tables. Empty destination tables fail whenever
+the source has records. A passing backup is not proof of a finished migration;
+storage object bytes, any unsupported source extensions, import scope, final
+changes, the financial/calendar checks and production cutover remain separate
+requirements. Do not change prompts, models, enabled flags or queued jobs just
+to make a comparison pass.
+
+Use `backup-veobot-account.mjs --chatbot-only` for an additional, quicker chatbot
+checkpoint while a large account export runs. It writes a separate status and
+latest-checkpoint file. Its verifier checks all chatbot setup/state tables, but
+it cannot be marked as a complete account backup or used to bypass the full data
+copy. The destination comparison can take `--manifest=...` explicitly.
+
+The long CRM snapshot does not read Storage tables: holding a read lock on them
+can delay Supabase's own Storage schema upgrades. The separate storage command
+inventories only files associated with the account's selected Pages or export
+jobs. It preserves their original bytes, checks sizes, source update timestamps
+and local SHA256 hashes, and reuses previously verified downloads on retries.
+An unavailable file remains a failed checkpoint. Database snapshots are never
+combined across retries; a final source change check is still needed at cutover.

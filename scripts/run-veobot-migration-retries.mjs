@@ -37,6 +37,10 @@ const atomic = (file, value) => { const tmp = file + '.' + process.pid + '.tmp';
 const flush = () => {
  const now = new Date().toISOString(); atomic(path.join(dir, 'retry-status.json'), { ...state, updated_at: now });
  const progress = read(progressFile), blockers = [];
+ const accountBackup=read(path.join(dir,'account-backup-status.json'));
+ const chatbotBackup=read(path.join(dir,'latest-chatbot-backup.json'));
+ const chatbotVerification=chatbotBackup?.manifest?read(path.join(path.dirname(path.resolve(chatbotBackup.manifest)),'verification.json')):null;
+ const chatbotPreserved=chatbotVerification?.passed===true&&chatbotVerification.run_id===chatbotBackup.run_id&&chatbotVerification.backup_kind==='chatbot';
  if (!state.source_access?.ok) blockers.push('The source database is unavailable; consistent source export is pending automatic retries.');
  if (!state.destination_access?.ok) blockers.push(state.destination_access?.code === 'ENETUNREACH' ? 'The destination requires a working IPv4 pooler or IPv6 route.' : 'Destination access is pending automatic retries.');
  if (state.source_inventory && !state.source_inventory.passed) blockers.push('VeoBot Page ownership needs verification before data copy.');
@@ -44,7 +48,11 @@ const flush = () => {
   retry_worker_active: state.status !== 'retry_worker_interrupted', retry_next_at: state.next_retry_at || null, retry_attempts: state.attempts, updated_at: now,
   remote_schema_installed: state.schema_ready || progress.remote_schema_installed, preflight_remote_completed: state.schema_ready || progress.preflight_remote_completed,
   source_database_writes: 0, blockers,
-  next_action: state.schema_ready ? 'Wait for source recovery, then verify scoped ownership and prepare the consistent export; data copy and production cutover remain pending.' : 'Retry database access and destination provisioning; retain current production settings.' });
+  account_backup_status:accountBackup?.status||'pending',account_backup_run_id:accountBackup?.run_id||null,
+  chatbot_setup_backup_verified:chatbotPreserved,chatbot_setup_backup_run_id:chatbotPreserved?chatbotBackup.run_id:null,
+  next_action: !state.source_access?.ok ? 'Retry source access; retain saved snapshots and current production settings.' :
+   !state.schema_ready ? 'Finish destination provisioning before importing records.' :
+   'Finish the consistent account backup and resolve Page import scope, then copy and verify all data before production cutover.' });
 };
 const cleanError = error => ({ ok: false, code: error.code || (/timeout|timed out/i.test(error.message || '') ? 'ETIMEDOUT' : error.name),
  message: String(error.message || 'Unavailable').replace(/postgres(?:ql)?:\/\/\S+|Bearer\s+\S+|eyJ[\w.-]+|EA[\w-]{25,}/g, '[redacted]').slice(0, 300) });
