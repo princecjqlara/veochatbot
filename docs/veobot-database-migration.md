@@ -47,6 +47,10 @@ Before cutover:
    Page membership and bot settings. Check that importing historical stages does
    not enqueue a bulk AI backlog or deliver customer messages. Do not replay
    pending campaigns or follow-ups during migration.
+   Existing application traffic may continue changing the source after the
+   snapshot. Capture and verify those later changes before cutover; a snapshot
+   copy alone is not proof that the destination is current. Coordinate the final
+   Page-write transition without disabling unrelated Tokko Dev operations.
 4. Verify calendar cohorts against inquiry counts and recorded outcomes, spend,
    receipts and currencies on the destination. Missing data remains unavailable.
 5. Save the existing production environment as rollback evidence. Change all
