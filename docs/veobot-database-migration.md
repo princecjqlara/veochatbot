@@ -21,8 +21,9 @@ node scripts/provision-veobot-database.mjs --plan --target-project=vhtbmdizugnxk
 When the destination's actual Session pooler URL is available, put it with the
 destination URL, anon key, service-role key and direct URL in an ignored local
 environment file. All routes and JWT project claims must match the destination.
-The pooler host must come from the project's Connect panel; do not derive the
-pooler cluster index from its AWS region.
+Prefer the host from the project's Connect panel. A route independently verified
+by successful project-specific authentication and read-only schema checks can
+also be used. Never assume a pooler cluster index from its AWS region alone.
 
 ```powershell
 node --env-file=.vercel/veobot-intended-project.env.local scripts/provision-veobot-database.mjs --preflight --target-project=vhtbmdizugnxkgocmruq
@@ -63,3 +64,32 @@ Before cutover:
 Current access limitations and migration authorization are recorded privately in
 `.vercel/database-migration/progress.json`. Do not mark migration complete while
 source backup, destination installation, import verification or cutover is pending.
+
+## Automatic prerequisite retries
+
+`node scripts/run-veobot-migration-retries.mjs` watches the two ignored environment
+files, checks both PostgreSQL endpoints using read-only transactions, and backs
+off timeout attempts from 30 seconds to five minutes. Circuit-breaker errors
+receive at least 150 seconds. It detects updated pooler settings without a restart
+and distinguishes IPv6 routing failures from temporary query timeouts. Direct
+database DNS is resolved explicitly so an IPv6-only host is not reported as absent.
+The singleton lock verifies process identity and creation time on Windows.
+After repeated source timeouts, the connection wait increases to 30 seconds so
+a busy session pooler has more time to assign a connection. Query reads remain
+bounded and read-only; invalid credentials and missing routes stay explicit.
+
+Once destination access works, the worker retries transactional schema preflight
+and installation with fresh run IDs and matching migration fingerprints. When
+source access works, it checks account membership, inbox access and subscription
+to VeoBot's Facebook app before saving a read-only schema and ownership inventory.
+Different Meta apps must not be treated as proof of shared Page ownership.
+On restart, a committed schema checkpoint is reused only after a fresh read-only
+check confirms every migration fingerprint in the destination database.
+
+The worker saves `retry-status.json`, per-stage receipts and a log in the migration
+directory. Its automated scope is connection recovery, destination provisioning
+and source ownership/schema inspection. It does not substitute an inventory for
+a backup, import customer rows, or switch the production database. Those remain
+pending until the consistent scoped export, import and financial/calendar checks
+are implemented and pass. Incomplete or mismatched receipts never count as a
+completed stage. No model requests or customer messages are made by these retries.
