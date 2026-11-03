@@ -6,8 +6,10 @@ import{administrative,paymentSignal}from'../src/lib/conversion-runtime/evidence.
 import {connectedPageScope} from './lib/connected-pages.mjs';
 import {calendarRegistryEntries} from './lib/calendar-source-registry.mjs';
 import {pendingHistoricalRepair} from './lib/historical-backfill-state.mjs';
-const registryArg=process.argv.find(arg=>arg.startsWith('--registry='))?.slice(11),registryMode=Boolean(registryArg);
-const live=process.argv.includes('--live')||registryMode,root=path.resolve('..'),dir=path.resolve('.vercel/historical-leads'+(registryMode?'/calendar-registry-audit':live?'/live-audit':''));fs.mkdirSync(dir,{recursive:true});
+const registryArg=process.argv.find(arg=>arg.startsWith('--registry='))?.slice(11),registryMode=Boolean(registryArg),auditDirArg=process.argv.find(arg=>arg.startsWith('--audit-dir='))?.slice(12);
+const live=process.argv.includes('--live')||registryMode,root=path.resolve('..'),dir=path.resolve(auditDirArg||('.vercel/historical-leads'+(registryMode?'/calendar-registry-audit':live?'/live-audit':'')));
+if(auditDirArg&&(!live||!dir.startsWith(path.resolve('.vercel/historical-leads')+path.sep)))throw Error('Custom audit directories must be inside the retained VeoBot history folder');
+fs.mkdirSync(dir,{recursive:true});
 if(pendingHistoricalRepair(dir))throw Error('Resume the saved repair before replacing its audit manifest');
 await build({stdin:{contents:"export {parseMessengerStageEvent} from './src/lib/messenger-stage-sync.ts'; export {projectionCacheFromMessages} from './src/lib/contact-projection-refresh.ts';",resolveDir:process.cwd(),loader:'ts'},outfile:path.join(dir,'parser.cjs'),bundle:true,platform:'node',format:'cjs',logLevel:'silent'});
 const{parseMessengerStageEvent,projectionCacheFromMessages}=createRequire(import.meta.url)(path.join(dir,'parser.cjs'));
@@ -22,7 +24,9 @@ const appliedSources=new Set();report.already_reconciled=0;
 try{
  const registryFile=registryMode?path.resolve(registryArg):null;if(registryFile&&!registryFile.startsWith(path.resolve('.vercel')+path.sep))throw Error('Registry must remain inside the ignored audit directory');
  const archiveDir=path.join(root,'data/industry-conversion-2026-10-24'),metadata=live?null:read(path.join(root,'data/conversion-forecast-prototype/metadata.json')),liveDir=path.resolve('.vercel/historical-leads/live/histories'),archiveContacts=registryMode?fs.readFileSync(registryFile,'utf8').split('\n').filter(Boolean).map(line=>JSON.parse(line)):live?fs.readdirSync(liveDir).filter(file=>/^[0-9a-f-]{36}_\d+\.json\.gz$/.test(file)).map(file=>({page_id:file.slice(0,36),psid:file.slice(37,-8),file:path.relative(root,path.join(liveDir,file))})):read(path.join(archiveDir,'contacts.json'));
- await db.connect();const pages=(await db.query(registryMode?'SELECT p.id,p.name,p.fb_page_id,p.access_token FROM pages p WHERE EXISTS(SELECT 1 FROM user_pages u WHERE u.page_id=p.id)':'SELECT id,name,fb_page_id FROM pages')).rows;
+ await db.connect();const configuredPages=new Set(JSON.parse(fs.readFileSync('src/config/veo-pages.json','utf8')).map(page=>page.facebook_page_id).filter(Boolean));
+ const allPages=(await db.query(registryMode?'SELECT p.id,p.name,p.fb_page_id,p.access_token FROM pages p WHERE EXISTS(SELECT 1 FROM user_pages u WHERE u.page_id=p.id)':'SELECT id,name,fb_page_id FROM pages')).rows;
+ const pages=live?allPages.filter(page=>configuredPages.has(page.fb_page_id)):allPages;
  let registryEntries=[];
  if(registryMode){const scope=await connectedPageScope(pages,async page=>{const response=await fetch('https://graph.facebook.com/v24.0/'+page.fb_page_id+'/conversations?fields=id&limit=1',{headers:{Authorization:'Bearer '+page.access_token},signal:AbortSignal.timeout(8000)}),body=await response.json();if(!response.ok||body.error)throw Object.assign(Error('Page access unavailable'),{code:body.error?.code||response.status});return body;});report.scope='connected_pages';report.unverified_pages=scope.unverified;report.disconnected_pages_excluded=scope.excluded;report.connected_page_ids=scope.connected.map(page=>page.id);registryEntries=calendarRegistryEntries(archiveContacts,pages,report.connected_page_ids).map(entry=>({...entry,file:safePath(entry.file)}));}
  if(live&&process.argv.includes('--only-new')){const exists=(await db.query("SELECT to_regclass('app_private.lead_reconciliation_changes') IS NOT NULL AS ok")).rows[0].ok;if(exists)for(const row of(await db.query("SELECT DISTINCT r.page_id,c.psid,r.evidence->>'archive_sha256' AS hash FROM app_private.lead_reconciliation_changes r JOIN contacts c ON c.id=r.contact_id AND c.page_id=r.page_id"+(registryMode?'':" WHERE r.evidence->>'archive_path' LIKE '%/live/histories/%'"))).rows)appliedSources.add(row.page_id+':'+row.psid+':'+row.hash);}

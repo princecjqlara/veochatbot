@@ -101,7 +101,10 @@ try{
  assert(JSON.stringify(await invariant())===JSON.stringify(beforeInvariant),'Bot settings, AI jobs, verified payments and ad spend must remain unchanged');
  assert((await db.query('SELECT count(*)::int AS n FROM repair_protected p JOIN contacts c ON c.id=p.id JOIN repair_before b ON b.id=p.id WHERE c.pipeline_stage IS DISTINCT FROM b.pipeline_stage OR c.pipeline_stage_source IS DISTINCT FROM b.pipeline_stage_source OR c.messenger_stage_message_id IS DISTINCT FROM b.messenger_stage_message_id')).rows[0].n===0,'Newer local decisions must remain unchanged');
  receipt.after_stages=await stageCounts();
- if(apply)for(const fullName of migrations){const version=fullName.slice(0,12),name=fullName.slice(13),sql=fs.readFileSync('supabase/migrations/'+fullName+'.sql','utf8');await db.query('INSERT INTO app_private.schema_migrations(version,description) VALUES($1,$2) ON CONFLICT DO NOTHING',[version,name]);await db.query('INSERT INTO supabase_migrations.schema_migrations(version,name,statements) VALUES($1,$2,$3::text[]) ON CONFLICT DO NOTHING',[version,name,[sql]]);}
+ // The target project's app_private migration ledger is authoritative here.
+ // Supabase CLI's supabase_migrations schema is optional and may not exist on
+ // projects provisioned from the application schema directly.
+ if(apply)for(const fullName of migrations){const version=fullName.slice(0,12),name=fullName.slice(13);await db.query('INSERT INTO app_private.schema_migrations(version,description) VALUES($1,$2) ON CONFLICT DO NOTHING',[version,name]);}
  receipt.phase='finishing';await db.query(apply?'COMMIT':'ROLLBACK');receipt.applied=apply;receipt.passed=true;receipt.phase='completed';
 }catch(e){await db.query('ROLLBACK').catch(()=>{});receipt.passed=false;receipt.error=e.message||e.code||'Database connection failed';receipt.code=e.code;process.exitCode=1;}
 finally{await db.end();fs.writeFileSync(path.join(dir,'repair-'+(apply?'apply':'preflight')+'-batch-'+batchOffset+'.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));}
