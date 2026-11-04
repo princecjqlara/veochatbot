@@ -230,13 +230,8 @@ async function processJob(db: Db, job: ProfileJob, budgetMs: number) {
 }
 
 export async function processContactProfiles(input: { contactId?: string; limit?: number; budgetMs?: number } = {}) {
-    // Codex prepares and publishes source-cited backlog profiles locally. Keep
-    // live chatbot replies independent from historical summary processing.
-    if (process.env.CONTACT_PROFILE_PROCESSING_MODE === 'local') return { processed: 0, ready: 0, failed: 0, mode: 'local' as const };
-    const db = getSupabaseAdmin();
-    const { data, error } = await db.rpc('claim_contact_profile_jobs', { p_limit: input.limit || 2, p_contact_id: input.contactId || null });
-    if (error) throw new Error('Could not claim conversation profile jobs');
-    const results = await Promise.allSettled((data || []).map((job: ProfileJob) => processJob(db, job, input.budgetMs || 120000)));
-    return { processed: results.length, ready: results.filter(result => result.status === 'fulfilled' && result.value.ready).length,
-        failed: results.filter(result => result.status === 'rejected' || result.value.failed).length };
+    // Historical analysis is performed from the verified local archive. Do not
+    // refetch full histories from Meta or send them to OpenRouter from a request.
+    void input;
+    return { processed: 0, ready: 0, failed: 0, mode: 'local' as const };
 }

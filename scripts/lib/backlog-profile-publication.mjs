@@ -28,15 +28,9 @@ export async function publishBacklogProfile(db, artifact, apply = false) {
   if (latest && !latest.model.startsWith('local-evidence-')) return await stop('existing_review_retained');
   if (latest && new Date(latest.source_cutoff_at).getTime() > cutoff) return await stop('newer_profile_retained');
   if (latest?.model === artifact.engine && latest.payload?.source_sha256 === artifact.source_sha256) return await stop('already_published');
-  const prior = (await db.query('SELECT coalesce(max(generation),0)::int AS generation FROM public.contact_profile_messages WHERE contact_id=$1', [contact.id])).rows[0];
-  const generation = Math.max(1, Number(job.requested_version), Number(job.working_version || 0) + 1, Number(latest?.generation || 0) + 1, Number(prior.generation) + 1);
-  for (let offset = 0; offset < artifact.messages.length; offset += 500) {
-   await db.query(`INSERT INTO public.contact_profile_messages(contact_id,page_id,generation,message_id,sent_at,sender,text,attachment_count,image_count)
-    SELECT $1,$2,$3,m.id,m.at,m.sender,m.text,m.attachments,coalesce(m.images,0)
-    FROM jsonb_to_recordset($4::jsonb) AS m(id text,at timestamptz,sender text,text text,attachments integer,images integer)`,
-    [contact.id, contact.page_id, generation, JSON.stringify(artifact.messages.slice(offset, offset + 500))]);
-  }
-  const payload = { ...artifact.payload, source_sha256: artifact.source_sha256, preparation_engine: artifact.engine };
+  const generation = Math.max(1, Number(job.requested_version), Number(job.working_version || 0) + 1, Number(latest?.generation || 0) + 1);
+  const payload = { ...artifact.payload, source_sha256: artifact.source_sha256, preparation_engine: artifact.engine,
+   raw_history_storage: 'local', database_message_storage: 'profile_only' };
   await db.query(`INSERT INTO public.contact_profile_snapshots(contact_id,page_id,generation,source_cutoff_at,message_count,model,payload) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,
    [contact.id, contact.page_id, generation, artifact.source_cutoff_at, artifact.messages.length, artifact.engine, JSON.stringify(payload)]);
   await db.query(`UPDATE public.contact_profile_jobs SET status='ready',requested_version=$2,working_version=$2,claim_token=NULL,lease_until=NULL,

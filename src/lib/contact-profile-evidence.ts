@@ -4,6 +4,7 @@ export type ProfileMessage = { id: string; at: string; sender: 'customer' | 'pag
 export type PurchaseRecord = { id: string; description: string; total_minor: number; currency: string; purchased_at: string; reference?: string | null };
 export type VerifiedPayment = { id: string; purchase_id: string | null; kind: 'deposit' | 'balance' | 'full' | 'refund'; amount_minor: number; currency: string; occurred_at: string; reference: string; voided_at?: string | null };
 export type ProfileEvidence = { message_id: string; quote: string };
+export type ConversationPaymentEvidence = { kind: string; acknowledgment: boolean; amount: number | null; amount_basis?: string | null; at: string; message_id: string; quote: string; related_message_ids: string[]; payment_type: 'downpayment' | 'full_payment' | 'unspecified' };
 export type ProfileFact = { category: string; key: string; value: string; evidence: ProfileEvidence[] };
 export type SummaryPoint = { text: string; evidence: ProfileEvidence[] };
 export type ExtractedAnswer = { field: string; value: string; evidence: ProfileEvidence[] };
@@ -78,7 +79,7 @@ export function conversationEvidence(raw: ProfileMessage[], outbound: Array<{ me
     const invoices = new Map<string, { reference: string; amount: number | null; at: string; message_id: string; status: 'requested_not_payment' }>();
     const seq = messages.map((message, i) => ({ id: message.id, i, ms: Date.parse(message.at), text: message.text,
         sender: message.sender === 'customer' ? 'contact' : message.sender, attachments: Array.from({ length: message.images || 0 }, () => ({ image_data: { url: 'attachment-present' } })) }));
-    const payments: Array<{ kind: string; acknowledgment: boolean; amount: number | null; at: string; message_id: string; quote: string }> = [];
+    const payments: ConversationPaymentEvidence[] = [];
     const followUps: Array<{ at: string; message_id: string; source: string }> = [];
     for (let index = 0; index < messages.length; index++) {
         const message = messages[index];
@@ -95,8 +96,18 @@ export function conversationEvidence(raw: ProfileMessage[], outbound: Array<{ me
             }
         }
         const signal = paymentSignal(seq[index], seq);
-        if (signal) payments.push({ kind: signal.kind, acknowledgment: signal.confirmed === true, amount: signal.amount ?? null,
-            at: message.at, message_id: message.id, quote: message.text.slice(0, 1000) });
+        if (signal) {
+            const relatedMessageIds = Array.isArray(signal.context_ids) ? signal.context_ids.filter((id: unknown): id is string => typeof id === 'string') : [];
+            const contextText = relatedMessageIds.map((id: string) => messages.find(candidate => candidate.id === id))
+                .filter((candidate): candidate is ProfileMessage => candidate?.sender === 'customer').map(candidate => candidate.text).join('\n');
+            const paymentText = `${message.text}\n${contextText}`;
+            const paymentType = /\b(?:fully\s+paid|paid\s+in\s+full|full\s+payment|balance\s+(?:paid|received)|paid\s+(?:the\s+)?balance|bayad na.*buo)\b/i.test(paymentText)
+                ? 'full_payment'
+                : /\b(?:dp|down\s*payment|deposit)\b/i.test(paymentText) ? 'downpayment' : 'unspecified';
+            payments.push({ kind: signal.kind, acknowledgment: signal.confirmed === true, amount: signal.amount ?? null,
+                amount_basis: signal.amount_basis ?? null, at: message.at, message_id: message.id, quote: message.text.slice(0, 1000),
+                related_message_ids: relatedMessageIds, payment_type: paymentType });
+        }
         if (message.sender === 'page' && /^(?:You created an order for|You requested) /i.test(message.text)) {
             const reference = /invoice_id=(\d+)/.exec(message.text)?.[1];
             if (reference && !invoices.has(reference)) invoices.set(reference, { reference, amount: explicitAmount(message.text), at: message.at, message_id: message.id, status: 'requested_not_payment' });

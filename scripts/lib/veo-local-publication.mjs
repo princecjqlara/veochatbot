@@ -5,7 +5,7 @@ export function citedMessages(artifact){
  const ids=new Set();
  const visit=value=>{if(!value||typeof value!=='object')return;for(const [key,item]of Object.entries(value)){
   if(typeof item==='string'&&(/(?:^|_)message_id$/.test(key)||key==='messageId'))ids.add(item);
-  else if(key==='message_ids'&&Array.isArray(item)){for(const id of item)if(typeof id==='string')ids.add(id);}
+  else if(['message_ids','related_message_ids'].includes(key)&&Array.isArray(item)){for(const id of item)if(typeof id==='string')ids.add(id);}
   else if(item&&typeof item==='object')visit(item);
  }};
  visit(artifact.payload);const messages=new Map(artifact.messages.map(m=>[m.id,m]));
@@ -28,7 +28,7 @@ export function localPublicationRow(artifact,identity,normalizeName){
  return {page_id:safe.page_id,facebook_page_id:safe.facebook_page_id,psid:safe.psid,proposed_id:identity?.id||randomUUID(),name,profile_pic:identity?.profile_pic||null,chatbot_enabled:identity?.chatbot_enabled!==false,
   source_cutoff_at:safe.source_cutoff_at,source_sha256:safe.source_sha256,engine:safe.engine,message_count:messages.length,
   first_inquiry_at:inbound[0].at,last_interaction_at:messages.at(-1).at,last_inbound_at:inbound.at(-1).at,
-  payload:{...safe.payload,source_sha256:safe.source_sha256,preparation_engine:safe.engine,raw_history_storage:'local',database_message_storage:'cited_evidence',stored_evidence_message_count:evidence.length,...(removedNullCharacter?{source_text_cleaning:'Removed NUL or unpaired UTF-16 characters unsupported by PostgreSQL.'}:{})},evidence};
+  payload:{...safe.payload,source_sha256:safe.source_sha256,preparation_engine:safe.engine,raw_history_storage:'local',database_message_storage:'profile_only',stored_evidence_message_count:evidence.length,...(removedNullCharacter?{source_text_cleaning:'Removed NUL or unpaired UTF-16 characters unsupported by PostgreSQL.'}:{})},evidence:[]};
 }
 
 // Batches commit contact + source evidence + ready profile + receipt together.
@@ -50,8 +50,7 @@ export async function publishLocalBatch(db,rows,apply){
   await db.query(`CREATE TEMP TABLE veo_profile_locked ON COMMIT DROP AS SELECT c.id AS contact_id,i.* FROM veo_profile_input i JOIN contacts c ON c.page_id=i.page_id AND c.psid=i.psid
    WHERE COALESCE(GREATEST(c.last_interaction_at,c.last_inbound_at,c.messenger_stage_event_at),'-infinity'::timestamptz)<=i.source_cutoff_at FOR UPDATE OF c`);
   await db.query(`CREATE TEMP TABLE veo_profile_eligible ON COMMIT DROP AS
-   SELECT i.*,GREATEST(1,COALESCE(j.requested_version,1),COALESCE(j.working_version,0)+1,COALESCE(s.generation,0)+1,
-    COALESCE((SELECT max(generation) FROM contact_profile_messages m WHERE m.contact_id=i.contact_id),0)+1) AS generation
+   SELECT i.*,GREATEST(1,COALESCE(j.requested_version,1),COALESCE(j.working_version,0)+1,COALESCE(s.generation,0)+1) AS generation
    FROM veo_profile_locked i LEFT JOIN contact_profile_jobs j ON j.contact_id=i.contact_id
    LEFT JOIN LATERAL(SELECT * FROM contact_profile_snapshots s WHERE s.contact_id=i.contact_id ORDER BY generation DESC LIMIT 1)s ON true
    WHERE NOT EXISTS(SELECT 1 FROM app_private.contact_backlog_publications b WHERE b.contact_id=i.contact_id AND b.engine=i.engine AND b.source_sha256=i.source_sha256)
@@ -75,9 +74,6 @@ export async function publishLocalBatch(db,rows,apply){
    last_interaction_at=COALESCE(c.last_interaction_at,i.last_interaction_at),last_inbound_at=COALESCE(c.last_inbound_at,i.last_inbound_at),
    interaction_count=GREATEST(COALESCE(c.interaction_count,0),i.message_count)
    FROM veo_profile_eligible i WHERE c.id=i.contact_id AND (c.first_interaction_at IS NULL OR c.last_interaction_at IS NULL OR c.last_inbound_at IS NULL OR COALESCE(c.interaction_count,0)<i.message_count)`);
-  await db.query(`INSERT INTO contact_profile_messages(contact_id,page_id,generation,message_id,sent_at,sender,text,attachment_count,image_count)
-   SELECT i.contact_id,i.page_id,i.generation,m.id,m.at,m.sender,m.text,m.attachments,coalesce(m.images,0)
-   FROM veo_profile_eligible i CROSS JOIN LATERAL jsonb_to_recordset(i.evidence) AS m(id text,at timestamptz,sender text,text text,attachments integer,images integer)`);
   await db.query(`INSERT INTO contact_profile_snapshots(contact_id,page_id,generation,source_cutoff_at,message_count,model,payload)
    SELECT contact_id,page_id,generation,source_cutoff_at,message_count,engine,payload FROM veo_profile_eligible`);
   await db.query(`INSERT INTO contact_profile_jobs(contact_id,page_id,status,reason,requested_version,working_version,source_cutoff_at,scan_started,history_complete,message_count,analyzed_count)

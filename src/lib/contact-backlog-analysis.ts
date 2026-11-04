@@ -136,8 +136,8 @@ export function analyzeContactBacklog(input: Input) {
   .sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt) || a.messageId.localeCompare(b.messageId));
  const firstConverted = stageEvents.find(event => event.stage === 'converted') || null;
  const acknowledgment = conversation.payment_evidence.find(event => event.acknowledgment) || null;
- const deposit = conversation.payment_evidence.find(event => event.acknowledgment && /\b(?:dp|down\s*payment|deposit)\b/i.test(event.quote)) || null;
- const fullPayment = conversation.payment_evidence.find(event => event.acknowledgment && event.kind === 'full_payment_ack') || null;
+ const deposit = conversation.payment_evidence.find(event => event.acknowledgment && (event.payment_type === 'downpayment' || /\b(?:dp|down\s*payment|deposit)\b/i.test(event.quote))) || null;
+ const fullPayment = conversation.payment_evidence.find(event => event.acknowledgment && (event.payment_type === 'full_payment' || event.kind === 'full_payment_ack')) || null;
  const followUpCandidates = messages.filter(message => message.sender === 'page' && /\b(?:follow[ -]?up|following up|any update|may update|kamusta|kumusta)\b/i.test(message.text) && !administrative(message.text) &&
   conversation.first_inquiry_at && Date.parse(message.at) > Date.parse(conversation.first_inquiry_at)).map(message => ({ message_id: message.id, at: message.at, quote: message.text.slice(0, 1000), basis: 'Text pattern; delivery attribution not verified' }));
  const summary: SummaryPoint[] = [];
@@ -189,7 +189,7 @@ export function analyzeContactBacklog(input: Input) {
  const timeline = [
   ...stageEvents.map(event => ({ type: 'page_stage_notice', at: event.occurredAt, message_id: event.messageId, label: event.label, stage: event.stage })),
   ...validatedHistory.map(answer => ({ type: 'customer_answer', at: answer.at, message_id: answer.evidence[0].message_id, field: answer.field, value: answer.value })),
-  ...conversation.payment_evidence.map(event => ({ type: event.acknowledgment ? 'chat_payment_acknowledgment' : 'chat_payment_statement', at: event.at, message_id: event.message_id, kind: event.kind, amount_stated: event.amount, bank_verified: false }))
+  ...conversation.payment_evidence.map(event => ({ type: event.acknowledgment ? 'chat_payment_acknowledgment' : 'chat_payment_statement', at: event.at, message_id: event.message_id, kind: event.kind, payment_type: event.payment_type, amount_stated: event.amount, amount_basis: event.amount_basis || null, related_message_ids: event.related_message_ids, bank_verified: false }))
  ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
  const reviewReasons = [...(!messages.some(message => message.sender === 'customer') ? ['No dated customer messages were available'] : []), ...(messages.some(message => message.images) ? ['Image attachments were retained but not interpreted'] : []), ...(candidates.length ? ['Keyword-based statements need contextual review'] : []), ...(messages.some(message => message.sender === 'unknown') ? ['Some message senders are unknown'] : [])];
  return { model: BACKLOG_ANALYSIS_VERSION, messages, payload: {

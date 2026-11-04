@@ -13,6 +13,7 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
         db.from('chatbot_configs').select('*').eq('page_id', pageId).maybeSingle(),
         db.from('chatbot_contact_states').select('*').eq('page_id', pageId).eq('contact_id', contactId).maybeSingle(),
         db.from('contact_profile_snapshots').select('*').eq('page_id', pageId).eq('contact_id', contactId).order('generation', { ascending: false }).limit(1).maybeSingle(),
+        db.from('contact_conversation_metrics').select('source_cutoff_at,message_count,customer_message_count,page_message_count,customer_messages_replied,attachment_count,image_count,complete_history').eq('page_id', pageId).eq('contact_id', contactId).maybeSingle(),
         db.from('contact_profile_jobs').select(jobFields).eq('page_id', pageId).eq('contact_id', contactId).maybeSingle(),
         db.from('ad_contact_sources').select('*').eq('page_id', pageId).eq('contact_id', contactId).maybeSingle(),
         db.rpc('get_contact_finance_records', { p_page_id: pageId, p_contact_id: contactId }),
@@ -21,7 +22,7 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
         db.from('ad_referral_events').select('event_key,event_at,event_kind,ad_id').eq('page_id', pageId).eq('contact_id', contactId).order('event_at').limit(500)
     ]);
     if (results.some(result => result.error)) throw new Error('Contact profile sources are temporarily unavailable');
-    const [contactResult, pageResult, configResult, stateResult, snapshotResult, jobResult, adResult, financeResult, metaResult, stageResult, touchesResult] = results;
+    const [contactResult, pageResult, configResult, stateResult, snapshotResult, conversationMetricsResult, jobResult, adResult, financeResult, metaResult, stageResult, touchesResult] = results;
     const contact = contactResult.data;
     if (!contact || !pageResult.data) return null;
     const snapshot = snapshotResult.data, conversation = snapshot?.payload?.conversation || null;
@@ -63,7 +64,13 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     }
     for (const order of metrics.orders) events.push({ id: `purchase-${order.id}`, type: 'purchase', at: order.purchased_at, title: `Recorded order: ${order.description}`, amount_minor: order.total_minor, currency: order.currency, basis: 'Staff-entered order; payment tracked separately' });
     for (const payment of finance.payments) events.push({ id: `payment-${payment.id}`, type: 'payment', at: payment.occurred_at, title: `${payment.voided_at ? 'Voided ' : ''}${payment.kind} payment`, amount_minor: payment.amount_minor, currency: payment.currency, basis: payment.voided_at ? payment.void_reason : 'Staff verified against payment records' });
-    for (const evidence of conversation?.payment_evidence || []) events.push({ id: `evidence-${evidence.message_id}`, type: 'chat_payment', at: evidence.at, title: evidence.acknowledgment ? 'Payment acknowledged in chat' : 'Payment statement in chat', message_id: evidence.message_id, basis: 'Conversation evidence; separate from verified payments' });
+    for (const evidence of conversation?.payment_evidence || []) {
+        const label = evidence.payment_type === 'downpayment' ? 'Downpayment' : evidence.payment_type === 'full_payment' ? 'Full payment' : 'Payment';
+        events.push({ id: `evidence-${evidence.message_id}`, type: 'chat_payment', at: evidence.at,
+            title: `${label} ${evidence.acknowledgment ? 'acknowledged' : 'mentioned'} in chat`, message_id: evidence.message_id,
+            amount_minor: evidence.amount == null ? null : Math.round(evidence.amount * 100),
+            basis: evidence.amount == null ? 'Chat evidence only; amount and settlement are unverified' : 'Chat-stated amount; not staff-verified' });
+    }
     for (const invoice of conversation?.invoice_requests || []) events.push({ id: `invoice-${invoice.reference}`, type: 'invoice', at: invoice.at, title: `Invoice requested: ${invoice.reference}`, message_id: invoice.message_id, basis: 'Payment request, not proof of payment' });
     for (const followUp of followUps) events.push({ id: `followup-${followUp.message_id}`, type: 'follow_up', at: followUp.at, title: 'Follow-up sent', message_id: followUp.message_id, basis: followUp.source });
     for (const touch of touchesResult.data || []) events.push({ id: `ad-${touch.event_key}`, type: 'ad', at: touch.event_at, title: touch.ad_id ? `Ad touch: ${touch.ad_id}` : 'Referral touch', basis: touch.event_kind, source_event_key: touch.event_key });
@@ -75,7 +82,7 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     return { contact: { ...contact, tags: (contact.contact_tags || []).map((assignment: any) => assignment.tags).filter(Boolean), contact_tags: undefined },
         page: pageResult.data, state: stateResult.data, detail_progress: getChatbotDetailProgress(configResult.data, combinedDetails),
         saved_detail_keys: Object.keys(saved.collected_details), answer_conflicts: conflicts,
-        snapshot, job: jobResult.data, processing_mode: process.env.CONTACT_PROFILE_PROCESSING_MODE === 'local' ? 'local' : 'automatic', source_stale: Boolean(snapshot && [contact.last_interaction_at, contact.pipeline_stage_updated_at].some(value => value && Date.parse(value) > Date.parse(snapshot.source_cutoff_at))),
+        snapshot, conversation_metrics: conversationMetricsResult.data, job: jobResult.data, processing_mode: 'local', source_stale: Boolean(snapshot && [contact.last_interaction_at, contact.pipeline_stage_updated_at].some(value => value && Date.parse(value) > Date.parse(snapshot.source_cutoff_at))),
         first_inquiry_at: firstInquiryAt, first_recorded_conversion_at: firstConvertedAt,
         inquiry_to_conversion_hours: hoursBetween(firstInquiryAt, firstConvertedAt),
         finance: { ...finance, metrics },

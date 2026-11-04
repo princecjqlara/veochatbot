@@ -10,6 +10,7 @@ import { assertProjectCredentials, VEO_TARGET_PROJECT, digest } from './lib/data
 
 const apply = process.argv.includes('--apply');
 if (!apply && !process.argv.includes('--preflight')) throw Error('Choose --preflight or --apply');
+if (apply) throw Error('Full conversation archives are local-only. Publish analyzed profile data and compact metrics, never raw conversations.');
 const { parse } = createRequire(import.meta.url)('dotenv');
 const env = parse(fs.readFileSync('.env.local', 'utf8'));
 const endpoint = assertProjectCredentials(env, VEO_TARGET_PROJECT);

@@ -52,6 +52,11 @@ describe('conversation evidence without invented payment status', () => {
         expect(result.invoice_requests[0]).toMatchObject({ reference: '123', status: 'requested_not_payment' });
         expect(result.first_payment_ack_at).toBe(message('4', 3, 'page', '').at);
     });
+    it('uses nearby customer context to classify a Page payment acknowledgment without upgrading it to verified', () => {
+        const result = conversationEvidence([message('1', 0, 'customer', 'Payment sent na po DP PHP150', 1), message('2', 1, 'page', 'Received')]);
+        const acknowledgment = result.payment_evidence.find(item => item.message_id === '2');
+        expect(acknowledgment).toMatchObject({ acknowledgment: true, payment_type: 'downpayment', amount_basis: 'No amount stated in acknowledgement', related_message_ids: ['1'] });
+    });
     it('does not treat future promises, quotations or a non-image attachment as a receipt', () => {
         const result = conversationEvidence([message('1', 0, 'customer', 'I will send payment tomorrow PHP150'),
             { ...message('2', 1, 'customer', 'Payment sent na po'), attachments: 1, images: 0 }, message('3', 2, 'page', 'Received po')]);

@@ -48,7 +48,7 @@ describe('prepared backlog profile publication', () => {
   expect(await publishBacklogProfile(adapter, prepared, true)).toMatchObject({ status: 'already_published' });
   expect((await db.query<any>('SELECT * FROM contact_profile_jobs')).rows[0]).toMatchObject({ contact_id: contact, status: 'ready', requested_version: 1, working_version: 1, message_count: 1, analyzed_count: 1, history_complete: true });
   expect((await db.query('SELECT * FROM contact_profile_snapshots')).rows).toHaveLength(1);
-  expect((await db.query('SELECT * FROM contact_profile_messages')).rows).toHaveLength(1);
+  expect((await db.query('SELECT * FROM contact_profile_messages')).rows).toHaveLength(0);
   expect((await db.query('SELECT * FROM app_private.contact_backlog_publications')).rows).toHaveLength(1);
   expect((await db.query('SELECT * FROM contact_verified_payments')).rows).toEqual(before);
   expect((await db.query<any>('SELECT total_minor FROM contact_purchases')).rows[0].total_minor).toBe(70000);
@@ -67,11 +67,11 @@ describe('prepared backlog profile publication', () => {
   expect(await publishBacklogProfile(adapter, artifact(), true)).toMatchObject({ status: 'fresh_history_needed' });
   expect((await db.query('SELECT * FROM contact_profile_snapshots')).rows).toHaveLength(0);
  });
- it('retains existing model reviews and allocates above old partial message generations', async () => {
+ it('retains existing model reviews and allocates generations from saved profiles', async () => {
   await db.exec(`INSERT INTO contact_profile_snapshots VALUES('${contact}','${page}',4,'2026-01-01',0,'openai/gpt-6-luna','{}',now());`);
   expect(await publishBacklogProfile(adapter, artifact(), true)).toMatchObject({ status: 'existing_review_retained' });
   await db.exec(`DELETE FROM contact_profile_snapshots; INSERT INTO contact_profile_messages(contact_id,page_id,generation,message_id,sent_at,sender) VALUES('${contact}','${page}',7,'partial','2026-01-01','customer');`);
-  expect(await publishBacklogProfile(adapter, artifact(), true)).toMatchObject({ status: 'published', generation: 8 });
+  expect(await publishBacklogProfile(adapter, artifact(), true)).toMatchObject({ status: 'published', generation: 1 });
  });
  it('does not attach an unimported contact or a foreign Page history', async () => {
   expect(await publishBacklogProfile(adapter, { ...artifact(), psid: '300' }, true)).toMatchObject({ status: 'contact_not_imported' });
@@ -89,7 +89,7 @@ describe('prepared backlog profile publication', () => {
   const saved=(await db.query<any>("SELECT * FROM contacts WHERE psid='300'")).rows[0];
   expect(saved).toMatchObject({name:null,chatbot_enabled:false});
   const snapshot=(await db.query<any>('SELECT * FROM contact_profile_snapshots WHERE contact_id=$1',[saved.id])).rows[0];
-  expect(snapshot.payload).toMatchObject({raw_history_storage:'local',database_message_storage:'cited_evidence'});
+  expect(snapshot.payload).toMatchObject({raw_history_storage:'local',database_message_storage:'profile_only'});
   expect((await db.query<any>('SELECT status FROM contact_profile_jobs WHERE contact_id=$1',[saved.id])).rows[0].status).toBe('ready');
  },30000);
  it('publishes a complete profile for an existing contact whose imported interaction dates are null',async()=>{
