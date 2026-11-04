@@ -92,6 +92,12 @@ describe('prepared backlog profile publication', () => {
   expect(snapshot.payload).toMatchObject({raw_history_storage:'local',database_message_storage:'cited_evidence'});
   expect((await db.query<any>('SELECT status FROM contact_profile_jobs WHERE contact_id=$1',[saved.id])).rows[0].status).toBe('ready');
  },30000);
+ it('publishes a complete profile for an existing contact whose imported interaction dates are null',async()=>{
+  const row=localPublicationRow(artifact(),{id:contact,name:'Customer',chatbot_enabled:false},normalizeContactName)!;
+  expect(await publishLocalBatch(adapter,[row],true)).toMatchObject({published:1});
+  const saved=(await db.query<any>('SELECT first_interaction_at,last_interaction_at,last_inbound_at,interaction_count,chatbot_enabled,pipeline_stage FROM contacts WHERE id=$1',[contact])).rows[0];
+  expect(saved).toMatchObject({first_interaction_at:new Date('2026-01-01T00:00:00Z'),last_interaction_at:new Date('2026-01-01T00:00:00Z'),last_inbound_at:new Date('2026-01-01T00:00:00Z'),interaction_count:1,chatbot_enabled:false,pipeline_stage:'converted'});
+ });
  it('keeps every nested citation and excludes unrelated raw messages',()=>{
   const a:any=artifact();a.messages.push({id:'unused',at:'2026-01-02T00:00:00Z',text:'Hello',sender:'page'});
   expect(citedMessages(a).map((m:any)=>m.id)).toEqual(['answer']);

@@ -24,6 +24,14 @@ Audited and cleaned 2026-11-04. This records the workspace layout and the cleanu
 
 - The root Express prototype is not the production app: its typecheck fails because it calls Supabase query-builder methods on a PostgreSQL `Pool`, and its schema initializer is incompatible with the maintained VeoBot schema. Its local Supabase/Postgres credentials were removed and its README now marks it as archived, preventing an accidental connection to production. The production dashboard config and chatbot setup remain in `tokko-chatbot/`.
 
+## VeoBot data audit — 2026-11-04
+
+- Reprocessed 24 recent customer conversation histories locally for missing profile/projection records and published the results to VeoBot Supabase. This run made zero OpenRouter calls and sent zero customer messages. One contact still has no profile because its history contains no identifiable customer inquiry; no inquiry or conversion was fabricated.
+- Fixed local backlog publication for contacts whose imported interaction timestamps were all null. Complete Page-verified history can now publish for those contacts, while non-null interaction timestamps, chatbot controls, and pipeline stage are preserved.
+- Audited the retained migration archive before considering ad-history recovery. Its manifest identifies the old project `pnhzpeyzpwsmwcuafgpw`, so none of its ad spend, catalog, or referral rows were copied into VeoBot.
+- Current VeoBot ad data remains incomplete: no saved user `ads_read` OAuth credential or daily spend rows, two catalog rows, two referral events, no verified contact-to-ad origins, and no verified payment records. The Facebook Page webhook field subscription does not create the user ad-account OAuth credential needed for Marketing API reads. Connect read-only ad access from the calendar/dashboard to enable the existing hourly sync. Verified receipts are still needed before reporting verified revenue or profit.
+- Chatbot configuration was left unchanged (12 configs, 2 enabled). The audit found 48,232 contacts and 48,231 conversion projections across the approved Pages; the remaining no-profile contact has no identifiable inquiry history.
+
 ## Do not remove
 
 - VeoBot Supabase data, chatbot configuration, Page tokens, knowledge documents, or local conversation archives.

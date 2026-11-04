@@ -39,7 +39,7 @@ export async function publishLocalBatch(db,rows,apply){
    SELECT proposed_id,page_id,psid,name,profile_pic,chatbot_enabled,first_inquiry_at,last_interaction_at,last_inbound_at,message_count,last_interaction_at FROM veo_profile_input
    ON CONFLICT(page_id,psid) DO NOTHING`);
   await db.query(`CREATE TEMP TABLE veo_profile_locked ON COMMIT DROP AS SELECT c.id AS contact_id,i.* FROM veo_profile_input i JOIN contacts c ON c.page_id=i.page_id AND c.psid=i.psid
-   WHERE GREATEST(c.last_interaction_at,c.last_inbound_at,c.messenger_stage_event_at)<=i.source_cutoff_at FOR UPDATE OF c`);
+   WHERE COALESCE(GREATEST(c.last_interaction_at,c.last_inbound_at,c.messenger_stage_event_at),'-infinity'::timestamptz)<=i.source_cutoff_at FOR UPDATE OF c`);
   await db.query(`CREATE TEMP TABLE veo_profile_eligible ON COMMIT DROP AS
    SELECT i.*,GREATEST(1,COALESCE(j.requested_version,1),COALESCE(j.working_version,0)+1,COALESCE(s.generation,0)+1,
     COALESCE((SELECT max(generation) FROM contact_profile_messages m WHERE m.contact_id=i.contact_id),0)+1) AS generation
@@ -59,6 +59,13 @@ export async function publishLocalBatch(db,rows,apply){
    END LOOP; END $$`);
   await db.query(`UPDATE contacts c SET pipeline_stage_updated_at=c.messenger_stage_event_at FROM veo_profile_eligible i
    WHERE c.id=i.contact_id AND c.pipeline_stage_source='messenger' AND c.messenger_stage_event_at IS NOT NULL AND c.messenger_stage_event_at<=i.source_cutoff_at`);
+  // Older imports may have a contact row but no last-interaction timestamps.
+  // Fill only missing fields from complete, Page-verified history; keep newer
+  // live values and user-controlled settings intact.
+  await db.query(`UPDATE contacts c SET first_interaction_at=COALESCE(c.first_interaction_at,i.first_inquiry_at),
+   last_interaction_at=COALESCE(c.last_interaction_at,i.last_interaction_at),last_inbound_at=COALESCE(c.last_inbound_at,i.last_inbound_at),
+   interaction_count=GREATEST(COALESCE(c.interaction_count,0),i.message_count)
+   FROM veo_profile_eligible i WHERE c.id=i.contact_id AND (c.first_interaction_at IS NULL OR c.last_interaction_at IS NULL OR c.last_inbound_at IS NULL OR COALESCE(c.interaction_count,0)<i.message_count)`);
   await db.query(`INSERT INTO contact_profile_messages(contact_id,page_id,generation,message_id,sent_at,sender,text,attachment_count,image_count)
    SELECT i.contact_id,i.page_id,i.generation,m.id,m.at,m.sender,m.text,m.attachments,coalesce(m.images,0)
    FROM veo_profile_eligible i CROSS JOIN LATERAL jsonb_to_recordset(i.evidence) AS m(id text,at timestamptz,sender text,text text,attachments integer,images integer)`);
