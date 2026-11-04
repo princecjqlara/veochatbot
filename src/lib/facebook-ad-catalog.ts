@@ -12,8 +12,16 @@ export async function readMetaAds(path:string,token:string,params:Record<string,
 export async function marketingConnection(token?:string){
  if(!token)return{status:'connect_required',accounts:[],message:'Connect Facebook ad details to read your Ads Manager inventory. Recorded Messenger ads and Page previews remain available.'};
  try{
-  const result=await readMetaAds('me/permissions',token);const granted=new Set((result.data||[]).filter((p:any)=>p.status==='granted').map((p:any)=>p.permission));
-  if(!granted.has('ads_read')&&!granted.has('ads_management'))return{status:'permission_required',accounts:[],permissions:[...granted],message:'Your Facebook login has Page access but no ad-account read permission. Reconnect with ads_read to import all ads and their Ads Manager names.'};
+  let granted=new Set<string>(),permissionsUnavailable=false;
+  try{const result=await readMetaAds('me/permissions',token);granted=new Set((result.data||[]).filter((p:any)=>p.status==='granted').map((p:any)=>p.permission));}
+  catch(error){
+   // Meta may rate-limit /me/permissions while still allowing Marketing API
+   // account reads. Verify the actual capability below instead of blocking
+   // scheduled inventory and Insights sync on this secondary endpoint.
+   if((error as MetaAdAccessError).reconnect)throw error;
+   permissionsUnavailable=true;
+  }
+  if(!permissionsUnavailable&&!granted.has('ads_read')&&!granted.has('ads_management'))return{status:'permission_required',accounts:[],permissions:[...granted],message:'Your Facebook login has Page access but no ad-account read permission. Reconnect with ads_read to import all ads and their Ads Manager names.'};
   const accounts=[];let after:string|undefined;
   for(let i=0;i<4;i++){const page=await readMetaAds('me/adaccounts',token,{fields:'id,name,account_status,currency',limit:'25',...(after?{after}:{})});accounts.push(...(page.data||[]).filter((a:any)=>/^act_\d+$/.test(a.id)).map((a:any)=>({id:a.id,name:text(a.name),currency:text(a.currency,10),status:a.account_status})));if(!page.paging?.next)return{status:'ready',accounts,permissions:[...granted].filter(p=>p==='ads_read'||p==='ads_management'),message:accounts.length?'Ad-account read access is connected.':'Facebook returned no accessible ad accounts.'};after=page.paging?.cursors?.after;if(!after)break;}
   return{status:'ready',accounts,permissions:[...granted].filter(p=>p==='ads_read'||p==='ads_management'),partial:true,message:'Showing the first 100 accessible ad accounts.'};
