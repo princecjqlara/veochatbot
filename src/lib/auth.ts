@@ -20,6 +20,7 @@ export const authOptions: NextAuthOptions = {
             if (account && user) {
                 token.accessToken = account.access_token;
                 token.facebookId = account.providerAccountId;
+                if (typeof account.expires_at === 'number') token.accessTokenExpiresAt = account.expires_at * 1000;
 
                 // Sync user to Supabase to get UUID
                 try {
@@ -68,6 +69,7 @@ export const authOptions: NextAuthOptions = {
             return {
                 ...session,
                 accessToken: token.accessToken as string,
+                accessTokenExpiresAt: typeof token.accessTokenExpiresAt === 'number' ? new Date(token.accessTokenExpiresAt).toISOString() : undefined,
                 user: {
                     ...session.user,
                     id: token.id as string, // This will now be the UUID from DB
@@ -107,6 +109,7 @@ export const authOptions: NextAuthOptions = {
 declare module 'next-auth' {
     interface Session {
         accessToken?: string;
+        accessTokenExpiresAt?: string;
         user: {
             id?: string;
             name?: string | null;
@@ -121,6 +124,7 @@ declare module 'next-auth/jwt' {
     interface JWT {
         id?: string;
         accessToken?: string;
+        accessTokenExpiresAt?: number;
         facebookId?: string;
     }
 }

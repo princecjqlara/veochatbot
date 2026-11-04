@@ -13,10 +13,10 @@ export async function marketingConnection(token?:string){
  if(!token)return{status:'connect_required',accounts:[],message:'Connect Facebook ad details to read your Ads Manager inventory. Recorded Messenger ads and Page previews remain available.'};
  try{
   const result=await readMetaAds('me/permissions',token);const granted=new Set((result.data||[]).filter((p:any)=>p.status==='granted').map((p:any)=>p.permission));
-  if(!granted.has('ads_read')&&!granted.has('ads_management'))return{status:'permission_required',accounts:[],message:'Your Facebook login has Page access but no ad-account read permission. Reconnect with ads_read to import all ads and their Ads Manager names.'};
+  if(!granted.has('ads_read')&&!granted.has('ads_management'))return{status:'permission_required',accounts:[],permissions:[...granted],message:'Your Facebook login has Page access but no ad-account read permission. Reconnect with ads_read to import all ads and their Ads Manager names.'};
   const accounts=[];let after:string|undefined;
-  for(let i=0;i<4;i++){const page=await readMetaAds('me/adaccounts',token,{fields:'id,name,account_status,currency',limit:'25',...(after?{after}:{})});accounts.push(...(page.data||[]).filter((a:any)=>/^act_\d+$/.test(a.id)).map((a:any)=>({id:a.id,name:text(a.name),currency:text(a.currency,10),status:a.account_status})));if(!page.paging?.next)return{status:'ready',accounts,message:accounts.length?'Ad-account read access is connected.':'Facebook returned no accessible ad accounts.'};after=page.paging?.cursors?.after;if(!after)break;}
-  return{status:'ready',accounts,partial:true,message:'Showing the first 100 accessible ad accounts.'};
+  for(let i=0;i<4;i++){const page=await readMetaAds('me/adaccounts',token,{fields:'id,name,account_status,currency',limit:'25',...(after?{after}:{})});accounts.push(...(page.data||[]).filter((a:any)=>/^act_\d+$/.test(a.id)).map((a:any)=>({id:a.id,name:text(a.name),currency:text(a.currency,10),status:a.account_status})));if(!page.paging?.next)return{status:'ready',accounts,permissions:[...granted].filter(p=>p==='ads_read'||p==='ads_management'),message:accounts.length?'Ad-account read access is connected.':'Facebook returned no accessible ad accounts.'};after=page.paging?.cursors?.after;if(!after)break;}
+  return{status:'ready',accounts,permissions:[...granted].filter(p=>p==='ads_read'||p==='ads_management'),partial:true,message:'Showing the first 100 accessible ad accounts.'};
  }catch(e){const error=e as MetaAdAccessError;return{status:error.reconnect?'reconnect_required':'temporarily_unavailable',accounts:[],error_code:error.code,message:error.message};}
 }
 /** Only authoritative creative Page identifiers may map imported ads to a Page. */
