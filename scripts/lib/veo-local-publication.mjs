@@ -13,13 +13,22 @@ export function citedMessages(artifact){
  return artifact.messages.filter(m=>ids.has(m.id));
 }
 export function localPublicationRow(artifact,identity,normalizeName){
- if(artifact.psid===artifact.facebook_page_id||!artifact.payload.conversation?.customer_message_count)return null;
- const messages=artifact.messages,evidence=citedMessages(artifact),inbound=messages.filter(m=>m.sender==='customer');
- const name=normalizeName(identity?.name);
- return {page_id:artifact.page_id,facebook_page_id:artifact.facebook_page_id,psid:artifact.psid,proposed_id:identity?.id||randomUUID(),name,profile_pic:identity?.profile_pic||null,chatbot_enabled:identity?.chatbot_enabled!==false,
-  source_cutoff_at:artifact.source_cutoff_at,source_sha256:artifact.source_sha256,engine:artifact.engine,message_count:messages.length,
+ let removedNullCharacter=false;
+ const cleanString=value=>value.replaceAll('\u0000','').replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,'');
+ const sanitize=value=>{
+  if(typeof value==='string'){const clean=cleanString(value);if(clean!==value)removedNullCharacter=true;return clean;}
+  if(Array.isArray(value))return value.map(sanitize);
+  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[cleanString(key),sanitize(item)]));
+  return value;
+ };
+ const safe=sanitize(artifact);
+ if(safe.psid===safe.facebook_page_id||!safe.payload.conversation?.customer_message_count)return null;
+ const messages=safe.messages,evidence=citedMessages(safe),inbound=messages.filter(m=>m.sender==='customer');
+ const name=sanitize(normalizeName(identity?.name));
+ return {page_id:safe.page_id,facebook_page_id:safe.facebook_page_id,psid:safe.psid,proposed_id:identity?.id||randomUUID(),name,profile_pic:identity?.profile_pic||null,chatbot_enabled:identity?.chatbot_enabled!==false,
+  source_cutoff_at:safe.source_cutoff_at,source_sha256:safe.source_sha256,engine:safe.engine,message_count:messages.length,
   first_inquiry_at:inbound[0].at,last_interaction_at:messages.at(-1).at,last_inbound_at:inbound.at(-1).at,
-  payload:{...artifact.payload,source_sha256:artifact.source_sha256,preparation_engine:artifact.engine,raw_history_storage:'local',database_message_storage:'cited_evidence',stored_evidence_message_count:evidence.length},evidence};
+  payload:{...safe.payload,source_sha256:safe.source_sha256,preparation_engine:safe.engine,raw_history_storage:'local',database_message_storage:'cited_evidence',stored_evidence_message_count:evidence.length,...(removedNullCharacter?{source_text_cleaning:'Removed NUL or unpaired UTF-16 characters unsupported by PostgreSQL.'}:{})},evidence};
 }
 
 // Batches commit contact + source evidence + ready profile + receipt together.
