@@ -3,7 +3,7 @@ import { conversationEvidence, groundedAnalysis, hoursBetween, mergeProfileFacts
 import { parseMessengerStageEvent } from './messenger-stage-sync';
 import { administrative } from './conversion-runtime/evidence.js';
 
-export const BACKLOG_ANALYSIS_VERSION = 'local-evidence-v2';
+export const BACKLOG_ANALYSIS_VERSION = 'local-evidence-v3';
 type Input = { pageId: string; facebookPageId: string; psid: string; cutoff: string; messages: any[]; requestedFields?: string[]; commercialVideo?: boolean };
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const placeholder = /^(?:unknown|n\/?a|none|null|undefined|pending|tbd|not provided|not sure|wala(?: pa)?|[-?]+)[.!?\s]*$/i;
@@ -48,7 +48,13 @@ export function verifyBacklogArtifact(artifact: any) {
   if (!Array.isArray(item.evidence) || !item.evidence.length) throw Error('Prepared statement has no source evidence');
   for (const proof of item.evidence) {
    const message = messages.get(proof.message_id);
-   if (!message || message.sender === 'unknown' || customerOnly && message.sender !== 'customer' || typeof proof.quote !== 'string' || !proof.quote.trim() || !message.text.includes(proof.quote) || literalValue && !proof.quote.includes(item.value)) throw Error('Prepared citation does not match its source or sender');
+    const quote = typeof proof.quote === 'string' ? proof.quote.trim() : '';
+    const nonTextSummaryReference = !literalValue && (
+     quote === '[image attachment]' && (message?.images ?? 0) > 0
+     || quote === '[attachment]' && (message?.attachments ?? 0) > 0
+     || quote === '[non-text message]' && !message?.text.trim()
+    );
+    if (!message || message.sender === 'unknown' || customerOnly && message.sender !== 'customer' || !quote || !message.text.includes(quote) && !nonTextSummaryReference || literalValue && !quote.includes(item.value)) throw Error('Prepared citation does not match its source or sender');
    citations++;
   }
  };
@@ -139,8 +145,38 @@ export function analyzeContactBacklog(input: Input) {
  if (first?.text.trim()) summary.push({ text: 'Customer opening message: ' + first.text.trim().slice(0, 300), evidence: proof(first, first.text.slice(0, 1000)) });
  const priorities = ['Goal ng video', 'Purpose', 'Business Name', 'Preference', 'Preferred Video Length', 'Problem'];
  const rank = (field: string) => priorities.includes(field) ? priorities.indexOf(field) : 99;
- for (const answer of [...latestAnswers.values()].sort((a, b) => rank(a.field) - rank(b.field)).slice(0, 5))
+ for (const answer of [...latestAnswers.values()].sort((a, b) => rank(a.field) - rank(b.field)).slice(0, 3))
   summary.push({ text: `${answer.field}: ${answer.value}`, evidence: answer.evidence });
+ // Keep a useful, source-linked overview even when the conversation contains
+ // no structured form answers. Questions and short customer excerpts are
+ // quoted directly instead of being turned into unsupported AI-like claims.
+ const summarized = new Set(summary.flatMap(point => point.evidence.map(item => item.message_id)));
+ for (const question of conversation.questions.slice(0, 3)) {
+  if (summary.length >= 7) break;
+  const message = source.get(question.message_ids?.[0]);
+  if (!message || summarized.has(message.id)) continue;
+  const repeat = question.count > 1 ? ` (asked ${question.count} times)` : '';
+  summary.push({ text: `Customer asked: ${question.text.slice(0, 300)}${repeat}`, evidence: proof(message, question.text.slice(0, 1000)) });
+  summarized.add(message.id);
+ }
+ for (const message of messages.filter(item => item.sender === 'customer' && item.text.trim().length >= 20 && !administrative(item.text))) {
+  if (summary.length >= 7) break;
+  if (summarized.has(message.id)) continue;
+  const quote = message.text.trim().slice(0, 300);
+  summary.push({ text: `Customer said: ${quote}`, evidence: proof(message, quote) });
+  summarized.add(message.id);
+ }
+ for (const message of messages.filter(item => item.sender === 'customer' && !item.text.trim())) {
+  if (summary.length >= 7) break;
+  if (summarized.has(message.id)) continue;
+  const images = message.images ?? 0, attachments = message.attachments ?? 0;
+  const reference = images ? '[image attachment]' : attachments ? '[attachment]' : '[non-text message]';
+  const detail = images ? `shared ${images} image attachment${images === 1 ? '' : 's'}; image content was not interpreted`
+   : attachments ? `shared ${attachments} attachment${attachments === 1 ? '' : 's'}; attachment content was not interpreted`
+    : 'sent a non-text message; no message text was available to summarize';
+  summary.push({ text: `Customer ${detail}.`, evidence: proof(message, reference) });
+  summarized.add(message.id);
+ }
  if (acknowledgment) summary.push({ text: 'The Page acknowledged a payment in chat. Bank receipt and cash amount remain separate checks.', evidence: [{ message_id: acknowledgment.message_id, quote: acknowledgment.quote }] });
  if (stageEvents.length) { const event = stageEvents.at(-1)!, message = source.get(event.messageId); if (message?.text) summary.push({ text: `Last Page stage notice in this saved history: ${event.label}.`, evidence: proof(message) }); }
  // The shared merger groups case/whitespace variants. Keep only citations that

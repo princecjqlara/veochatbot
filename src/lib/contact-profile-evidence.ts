@@ -123,11 +123,17 @@ export function groundedAnalysis(value: unknown, messages: ProfileMessage[], req
     const source = new Map(messages.map(message => [message.id, message]));
     const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     let excluded = 0;
-    const evidence = (raw: unknown, customerOnly: boolean): ProfileEvidence[] => (Array.isArray(raw) ? raw : []).slice(0, 8).flatMap(item => {
+    const evidence = (raw: unknown, customerOnly: boolean, allowNonTextReference = false): ProfileEvidence[] => (Array.isArray(raw) ? raw : []).slice(0, 8).flatMap(item => {
         if (!item || typeof item.message_id !== 'string' || typeof item.quote !== 'string') return [];
         const message = source.get(item.message_id);
+        const quote = item.quote.trim();
+        const nonTextReference = allowNonTextReference && (
+            quote === '[image attachment]' && (message?.images ?? 0) > 0
+            || quote === '[attachment]' && (message?.attachments ?? 0) > 0
+            || quote === '[non-text message]' && !message?.text.trim()
+        );
         if (!message || message.sender === 'unknown' || customerOnly && message.sender !== 'customer' || item.quote.trim().length < 1 || item.quote.length > 1000
-            || !normalized(message.text).includes(normalized(item.quote))) return [];
+            || !normalized(message.text).includes(normalized(item.quote)) && !nonTextReference) return [];
         return [{ message_id: message.id, quote: item.quote.trim() }];
     });
     const facts = (Array.isArray(input.facts) ? input.facts : []).slice(0, 150).flatMap(raw => {
@@ -138,7 +144,7 @@ export function groundedAnalysis(value: unknown, messages: ProfileMessage[], req
     });
     const summary_points = (Array.isArray(input.summary_points) ? input.summary_points : []).slice(0, 12).flatMap(raw => {
         if (!raw || typeof raw.text !== 'string' || !raw.text.trim() || raw.text.length > 1200) { excluded++; return []; }
-        const proof = evidence(raw.evidence, false);
+        const proof = evidence(raw.evidence, false, true);
         if (!proof.length) { excluded++; return []; }
         return [{ text: raw.text.trim(), evidence: proof }];
     });
