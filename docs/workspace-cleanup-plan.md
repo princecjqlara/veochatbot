@@ -20,6 +20,10 @@ Audited and cleaned 2026-11-04. This records the workspace layout and the cleanu
 4. Kept TOKKOdev and its linked worktree in place because its checkout has uncommitted/ignored analysis work and registered worktree relationships. Its folder rename or deletion needs a separate, Git-aware archival move after its remaining consumers are accounted for.
 5. Kept historical references to the former project only in migration safety checks and the runtime guard that rejects it for VeoBot.
 
+## Follow-up health audit
+
+- The root Express prototype is not the production app: its typecheck fails because it calls Supabase query-builder methods on a PostgreSQL `Pool`, and its schema initializer is incompatible with the maintained VeoBot schema. Its local Supabase/Postgres credentials were removed and its README now marks it as archived, preventing an accidental connection to production. The production dashboard config and chatbot setup remain in `tokko-chatbot/`.
+
 ## Do not remove
 
 - VeoBot Supabase data, chatbot configuration, Page tokens, knowledge documents, or local conversation archives.

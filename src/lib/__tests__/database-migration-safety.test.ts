@@ -47,7 +47,7 @@ describe('VeoBot database migration safeguards', () => {
     CREATE TABLE pages(id text PRIMARY KEY,name text);CREATE TABLE messages(id text PRIMARY KEY,page_id text REFERENCES pages(id));`);
    await db.exec('BEGIN');
    await preserveEmptyLegacyTables(adapter(db));
-   const plan = schemaMigrationPlan(); expect(plan).toHaveLength(62);
+   const plan = schemaMigrationPlan(); expect(plan).toHaveLength(64);
    for (const migration of plan) await db.exec(migration.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- local scheduler stub'));
    const fields = (await db.query<any>("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='pages'")).rows.map(row => row.column_name);
    expect(fields).toContain('fb_page_id');
