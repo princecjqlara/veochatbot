@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import pg from 'pg';
 const {parse}=createRequire(import.meta.url)('../../node_modules/dotenv');
-const env=parse(fs.readFileSync(new URL('../.env.local',import.meta.url))),partner=parse(fs.readFileSync(new URL('../../tokkodev/.env.local',import.meta.url)));
+const env=parse(fs.readFileSync(new URL('../.env.local',import.meta.url)));
 const apply=process.argv.includes('--apply'),base='https://veochatbot.vercel.app',required=['messages','messaging_postbacks','message_echoes','messaging_referrals'];
 const ids=['656646850875530','717828411409985','725843003947429','619355471260631','781078668411527'];
 const configs=[{id:env.FACEBOOK_CLIENT_ID,secret:env.FACEBOOK_CLIENT_SECRET,path:'/api/facebook/webhook'},
- {id:'1350694239880908',secret:partner.FACEBOOK_APP_SECRET||partner.FACEBOOK_CLIENT_SECRET,path:'/api/facebook/partner-webhook'}];
+ {id:'1350694239880908',secret:env.FACEBOOK_PARTNER_APP_SECRET,path:'/api/facebook/partner-webhook'}];
 async function graph(path,token,options={}){
  const r=await fetch('https://graph.facebook.com/v24.0/'+path,{...options,headers:{Authorization:'Bearer '+token,...options.headers},signal:AbortSignal.timeout(12000)});const b=await r.json();
  if(!r.ok||b.error){const e=new Error('Meta rejected request');e.code=b.error?.code||r.status;e.subcode=b.error?.error_subcode;throw e;}return b;

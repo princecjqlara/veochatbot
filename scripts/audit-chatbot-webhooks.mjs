@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto';
 import { createRequire } from 'node:module';
 import pg from 'pg';
 const { parse } = createRequire(new URL('../../package.json', import.meta.url))('dotenv');
-const partner = parse(await readFile(new URL('../../tokkodev/.env.local', import.meta.url), 'utf8'));
+const local = parse(await readFile(new URL('../.env.local', import.meta.url), 'utf8'));
 const project = 'prj_nJDRdVj2Zm0WTLLo0xrNCHb5vsKB', team = 'team_6Ch2MHn0FBCPlVSDr5V9bsM6';
 const auth = JSON.parse(await readFile(path.join(process.env.APPDATA, 'com.vercel.cli/Data/auth.json'), 'utf8'));
 const envResponse = await fetch(`https://api.vercel.com/v10/projects/${project}/env?decrypt=true&teamId=${team}`, { headers: { Authorization: `Bearer ${auth.token}` } });
@@ -25,7 +25,7 @@ for (const item of variables.filter(item => ['FACEBOOK_CLIENT_ID','FACEBOOK_PART
 const primary = env.FACEBOOK_CLIENT_ID;
 if (!/^\d+$/.test(primary || '')) throw new Error('Primary app ID was not decrypted; refuse an inaccurate routing audit');
 const callbacks = [];
-for (const [id,secret,expectedPath] of [[primary,process.env.FACEBOOK_CLIENT_SECRET,'/api/facebook/webhook'],['1350694239880908',partner.FACEBOOK_APP_SECRET,'/api/facebook/partner-webhook']]) {
+for (const [id,secret,expectedPath] of [[primary,process.env.FACEBOOK_CLIENT_SECRET,'/api/facebook/webhook'],['1350694239880908',local.FACEBOOK_PARTNER_APP_SECRET,'/api/facebook/partner-webhook']]) {
     const response = await fetch(`https://graph.facebook.com/v24.0/${id}/subscriptions`,{headers:{Authorization:`Bearer ${id}|${secret}`},signal:AbortSignal.timeout(10000)});
     const body = await response.json();
     if(!response.ok || body.error) throw new Error(body.error?.message || 'App callback read failed');
@@ -69,7 +69,7 @@ try {
                     // actual routing with a signed entry containing NO events.
                     const payload = JSON.stringify({ object: 'page', entry: [{ id: page.fb_page_id, messaging: [] }] });
                     const probe = await fetch('https://veochatbot.vercel.app/api/facebook/partner-webhook', { method: 'POST', body: payload,
-                        headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': 'sha256=' + createHmac('sha256', partner.FACEBOOK_APP_SECRET).update(payload).digest('hex') },
+                        headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': 'sha256=' + createHmac('sha256', local.FACEBOOK_PARTNER_APP_SECRET).update(payload).digest('hex') },
                         signal: AbortSignal.timeout(30000) });
                     const result = await probe.json();
                     if (!probe.ok) throw new Error(result.error || `Empty routing probe HTTP ${probe.status}`);
