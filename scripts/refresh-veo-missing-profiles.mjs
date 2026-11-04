@@ -12,8 +12,7 @@ const db=new pg.Client({connectionString,ssl:{rejectUnauthorized:false},connecti
 const report={target_project:VEO_TARGET_PROJECT,started_at:new Date().toISOString(),reviewed:0,published:0,skipped:[],errors:[],openrouter_calls:0,customer_messages_sent:0};
 try{
  await db.connect();
- for(const item of audit.missing_profiles){
-  try{
+ const prepare=async item=>{try{
    const contact=(await db.query('SELECT c.*,p.fb_page_id,p.access_token FROM contacts c JOIN pages p ON p.id=c.page_id WHERE c.page_id=$1 AND c.psid=$2',[item.page_id,item.psid])).rows[0];
    if(!contact||!approved.has(contact.fb_page_id)||contact.fb_page_id!==item.facebook_page_id)throw Error('Contact/Page identity is unverified');
    const config=(await db.query('SELECT details_to_collect,commercial_video_intake_enabled FROM chatbot_configs WHERE page_id=$1',[item.page_id])).rows[0];
@@ -28,15 +27,25 @@ try{
    const artifact={...analysis,engine:BACKLOG_ANALYSIS_VERSION,page_id:item.page_id,facebook_page_id:contact.fb_page_id,psid:contact.psid,prepared_at:new Date().toISOString(),processing_complete:true,source_sha256:sourceHash,source_cutoff_at:cutoff,source_kind:'local_graph_refresh',source_archive:path.relative(path.resolve('..'),sourceFile)};
    verifyBacklogArtifact(artifact);const artifactFile=sourceFile.replace('.source.json.gz','.profile.json.gz');fs.writeFileSync(artifactFile,gzipSync(JSON.stringify(artifact)));report.reviewed++;
    if(digest(gunzipSync(fs.readFileSync(sourceFile)).toString('utf8'))!==sourceHash)throw Error('Saved conversation fingerprint changed');
-   const row=localPublicationRow(artifact,contact,normalizeContactName);if(!row){report.skipped.push({page_id:item.page_id,status:'no_customer_history'});continue;}
-   const result=await publishLocalBatch(db,[row],true);report.published+=result.published;if(!result.published)report.skipped.push({page_id:item.page_id,status:'newer_activity_retained'});
-   fs.appendFileSync(path.join(dir,'prepared-manifest.jsonl'),JSON.stringify({page_id:item.page_id,psid:contact.psid,artifact:artifactFile,artifact_sha256:digest(fs.readFileSync(artifactFile)),source_sha256:sourceHash,source_cutoff_at:cutoff,published:result.published===1})+'\n');
-   if(result.published){
-    const cache=projectionCacheFromMessages(messages,{contactId:contact.id,pageId:contact.page_id,facebookPageId:contact.fb_page_id,psid:contact.psid,cutoff:Date.parse(cutoff)});
-    await db.query('SELECT public.save_contact_conversion_cache($1,$2,$3::jsonb)',[contact.page_id,contact.id,JSON.stringify(cache)]);
-   }
-  }catch(e){report.errors.push({page_id:item.page_id,error:e.message,code:e.code});}
-  fs.writeFileSync(path.join(dir,'status.json'),JSON.stringify(report,null,2));
+   return{item,contact,cutoff,messages,artifact,artifactFile};
+  }catch(error){return{item,error};}};
+ for(let offset=0;offset<audit.missing_profiles.length;offset+=4){
+  // Fetch and analyze multiple independent histories at once. Database
+  // publication remains sequential so each batch uses the existing advisory
+  // lock and cannot race another local publisher.
+  const prepared=await Promise.all(audit.missing_profiles.slice(offset,offset+4).map(prepare));
+  for(const result of prepared){
+   try{
+    if(result.error)throw result.error;
+    const{item,contact,cutoff,messages,artifact,artifactFile}=result;
+    const row=localPublicationRow(artifact,contact,normalizeContactName);
+    if(!row){report.skipped.push({page_id:item.page_id,status:'no_customer_history'});continue;}
+    const published=await publishLocalBatch(db,[row],true);report.published+=published.published;if(!published.published)report.skipped.push({page_id:item.page_id,status:'newer_activity_retained'});
+    fs.appendFileSync(path.join(dir,'prepared-manifest.jsonl'),JSON.stringify({page_id:item.page_id,psid:contact.psid,artifact:artifactFile,artifact_sha256:digest(fs.readFileSync(artifactFile)),source_sha256:artifact.source_sha256,source_cutoff_at:cutoff,published:published.published===1})+'\n');
+    if(published.published){const cache=projectionCacheFromMessages(messages,{contactId:contact.id,pageId:contact.page_id,facebookPageId:contact.fb_page_id,psid:contact.psid,cutoff:Date.parse(cutoff)});await db.query('SELECT public.save_contact_conversion_cache($1,$2,$3::jsonb)',[contact.page_id,contact.id,JSON.stringify(cache)]);}
+   }catch(error){report.errors.push({page_id:result.item.page_id,error:error.message,code:error.code});}
+   fs.writeFileSync(path.join(dir,'status.json'),JSON.stringify(report,null,2));
+  }
  }
  report.finished_at=new Date().toISOString();fs.writeFileSync(path.join(dir,'status.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));if(report.errors.length)process.exitCode=1;
 }finally{await db.end();}
