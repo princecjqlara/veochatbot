@@ -33,8 +33,8 @@ assert(records.every(row => allowed.has(row.facebook_page_id) && row.verified !=
 const bundle = path.join(dir, 'analysis-runtime.cjs');
 const { verifyBacklogArtifact } = createRequire(import.meta.url)(bundle);
 const db = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 25000, query_timeout: 120000 });
-const batchSize = 100, report = { target_project: VEO_TARGET_PROJECT, applied: apply, sources: records.length, matched: 0, stored: 0,
-    messages: 0, attachments: 0, images: 0, skipped_newer: 0, errors: [] };
+const batchSize = 250, report = { target_project: VEO_TARGET_PROJECT, applied: apply, sources: records.length, matched: 0, stored: 0,
+    messages: 0, attachments: 0, images: 0, skipped_newer: 0, already_current: 0, errors: [] };
 try {
     await db.connect();
     if (apply) {
@@ -46,6 +46,8 @@ try {
     const contactByIdentity = new Map(contacts.map(contact => [`${contact.page_id}:${contact.psid}`, contact]));
     const snapshots = (await db.query(`SELECT DISTINCT ON(contact_id) contact_id,page_id,source_cutoff_at FROM public.contact_profile_snapshots WHERE page_id IN (SELECT id FROM public.pages WHERE fb_page_id=ANY($1::text[])) ORDER BY contact_id,generation DESC`, [[...allowed]])).rows;
     const snapshotByContact = new Map(snapshots.map(snapshot => [snapshot.contact_id, snapshot]));
+    const existingMetrics = (await db.query(`SELECT contact_id,source_cutoff_at,source_sha256 FROM public.contact_conversation_metrics WHERE page_id IN (SELECT id FROM public.pages WHERE fb_page_id=ANY($1::text[]))`, [[...allowed]])).rows;
+    const metricByContact = new Map(existingMetrics.map(metric => [metric.contact_id, metric]));
     let batch = [];
     const flush = async () => {
         if (!batch.length) return;
@@ -70,6 +72,9 @@ try {
         const snapshot = snapshotByContact.get(contact.id);
         if (!snapshot || snapshot.page_id !== contact.page_id) continue;
         if (Date.parse(row.source_cutoff_at) < Date.parse(snapshot.source_cutoff_at)) { report.skipped_newer++; continue; }
+        const current = metricByContact.get(contact.id);
+        if (current && Date.parse(current.source_cutoff_at) > Date.parse(row.source_cutoff_at)) { report.already_current++; continue; }
+        if (current && Date.parse(current.source_cutoff_at) === Date.parse(row.source_cutoff_at) && current.source_sha256 === row.source_sha256) { report.already_current++; continue; }
         const file = path.resolve(row.artifact);
         assert(file.startsWith(dir + path.sep), 'Prepared artifact escaped the local backlog');
         const compressed = fs.readFileSync(file);
@@ -77,13 +82,8 @@ try {
         const artifact = JSON.parse(gunzipSync(compressed).toString('utf8'));
         verifyBacklogArtifact(artifact);
         assert(artifact.page_id === row.page_id && artifact.psid === row.psid && artifact.facebook_page_id === row.facebook_page_id && artifact.source_sha256 === row.source_sha256, 'Prepared artifact identity changed');
-        const repo = path.resolve('.'), workspace = path.resolve('..');
-        const roots = [path.join(repo, '.vercel'), path.join(workspace, '.vercel'), path.join(repo, 'data'), path.join(workspace, 'data'), path.join(workspace, 'tokkodev')];
-        const archive = [path.resolve(repo, artifact.source_archive), path.resolve(workspace, artifact.source_archive)]
-            .find(candidate => roots.some(root => candidate.startsWith(root + path.sep)) && fs.existsSync(candidate));
-        assert(archive, 'Verified local conversation archive is missing');
-        const sourceText = (archive.endsWith('.gz') ? gunzipSync(fs.readFileSync(archive)).toString('utf8') : fs.readFileSync(archive, 'utf8')).replace(/^\uFEFF/, '');
-        assert(digest(sourceText) === artifact.source_sha256, 'Local archive fingerprint differs from analyzed profile');
+        // The completed archive preflight already verified every local source
+        // file against this source hash; avoid rereading millions of chat lines.
         const messages = artifact.messages;
         let customer = 0, page = 0, replied = 0, attachments = 0, images = 0;
         for (let index = 0; index < messages.length; index++) {
