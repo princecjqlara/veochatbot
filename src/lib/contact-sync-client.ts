@@ -85,6 +85,7 @@ async function postSync(
         cursor: string | null;
         syncStartedAt: string | null;
         syncRunId: string;
+        forceFullSync: boolean;
     }
 ): Promise<ContactSyncResponse> {
     try { return await requestDeadline(async signal => {
@@ -94,7 +95,7 @@ async function postSync(
         credentials: 'include',
         signal,
         body: JSON.stringify({
-            forceFullSync: true,
+            forceFullSync: options.forceFullSync,
             paged: true,
             ...(options.resumePsids.length > 0 ? { resumePsids: options.resumePsids } : {}),
             ...(options.cursor ? { cursor: options.cursor } : {}),
@@ -114,6 +115,8 @@ export async function runContactSyncToCompletion(
     pageId: string,
     options: {
         onProgress?: (progress: ContactSyncProgress) => void;
+        /** Defaults to a full scan for manual sync actions; reconnects should use the incremental checkpoint. */
+        forceFullSync?: boolean;
     } = {}
 ): Promise<ContactSyncResult> {
     let resumePsids: string[] = [];
@@ -130,7 +133,7 @@ export async function runContactSyncToCompletion(
 
         for (let retry = 1; retry <= MAX_TIMEOUT_RETRIES_PER_STEP; retry++) {
             try {
-                data = await postSync(pageId, { resumePsids, cursor, syncStartedAt, syncRunId });
+                data = await postSync(pageId, { resumePsids, cursor, syncStartedAt, syncRunId, forceFullSync: options.forceFullSync ?? true });
                 break;
             } catch (error) {
                 if (error instanceof ContactSyncRequestError && error.status >= 400 && error.status < 500) {

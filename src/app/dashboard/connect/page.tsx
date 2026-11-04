@@ -15,6 +15,7 @@ export default function ConnectPage() {
     const [loading, setLoading] = useState(true);
     const [connecting, setConnecting] = useState<string | null>(null);
     const [connectedPages, setConnectedPages] = useState<Set<string>>(new Set());
+    const [pageRecordIds, setPageRecordIds] = useState<Record<string, string>>({});
     const [error, setError] = useState<string | null>(null);
     const [requiresReauth, setRequiresReauth] = useState(false);
     const [success, setSuccess] = useState<string | null>(null);
@@ -23,6 +24,7 @@ export default function ConnectPage() {
     const [reconnectPages, setReconnectPages] = useState<Set<string>>(new Set());
     const [unverifiedPages, setUnverifiedPages] = useState<Set<string>>(new Set());
     const [syncingPages, setSyncingPages] = useState<Set<string>>(new Set());
+    const [bulkAction, setBulkAction] = useState<'reconnect' | 'sync' | null>(null);
     const [pageNotes, setPageNotes] = useState<Record<string, string>>({});
     const connectBusy = useRef(false), loadIssue = useRef(0), statusIssue = useRef(0), mounted = useRef(true);
     const userId = session?.user?.id;
@@ -64,6 +66,9 @@ export default function ConnectPage() {
             if (!res.ok || !Array.isArray(data.pages)) throw Error(data.error || 'Connection status unavailable');
             if (!mounted.current || issue !== statusIssue.current) return;
             const fbPageIds = new Set(data.pages?.map((p: { fb_page_id: string }) => p.fb_page_id) || []);
+            setPageRecordIds(Object.fromEntries([...(data.pages || []), ...(data.reconnectRequiredPages || [])]
+                .filter((page: { fb_page_id?: string; id?: string }) => page.fb_page_id && page.id)
+                .map((page: { fb_page_id: string; id: string }) => [page.fb_page_id, page.id])));
             setConnectedPages(fbPageIds as Set<string>);
             setUnverifiedPages(new Set(data.pages.filter((page: { connectionStatus?: string }) => page.connectionStatus === 'unknown').map((page: { fb_page_id: string }) => page.fb_page_id)));
             setReconnectPages(new Set((data.reconnectRequiredPages || []).map((page: { fb_page_id: string }) => page.fb_page_id)));
@@ -93,18 +98,64 @@ export default function ConnectPage() {
     const syncContacts = async (page: FacebookPage, pageId: string) => {
         setSyncingPages(previous => new Set(previous).add(page.id));
         const note = (message: string) => { if (mounted.current) setPageNotes(previous => ({ ...previous, [page.id]: message })); };
-        note('Connected. Initial contact sync is running.');
+        note('Connected. Resuming contact sync from the saved checkpoint.');
         try {
-            const result = await runContactSyncToCompletion(pageId, { onProgress: ({ totalSynced }) => note(`Connected. Initial contact sync: ${totalSynced} contacts saved.`) });
+            const result = await runContactSyncToCompletion(pageId, { forceFullSync: false, onProgress: ({ totalSynced }) => note(`Connected. Contact sync: ${totalSynced} contacts saved.`) });
             if (!result.completed) throw Error('Contact sync incomplete');
             note(`Connected. Synced ${result.totalSynced} contacts${result.totalFailed ? `; ${result.totalFailed} need retry` : ''}.`);
-        } catch { note('Connected. Initial contact sync needs a retry from Contacts.'); }
+        } catch { note('Connected. Contact sync needs a retry from Contacts.'); }
         finally { if (mounted.current) setSyncingPages(previous => { const next = new Set(previous); next.delete(page.id); return next; }); }
     };
 
-    const handleConnect = async (page: FacebookPage) => {
-        if (connectBusy.current || syncingPages.has(page.id)) return;
-        if (!page.access_token) { setError('Facebook did not return a Page token. Refresh Permissions and select this Page again.'); setRequiresReauth(true); return; }
+    const reconnectAllPages = async () => {
+        if (bulkAction || connecting) return;
+        const savedPageIds = new Set([...connectedPages, ...reconnectPages]);
+        const targets = facebookPages.filter(page => savedPageIds.has(page.id) && Boolean(page.access_token));
+        if (!targets.length) { setError('No saved Pages are available to reconnect. Refresh Permissions and retry.'); return; }
+        setBulkAction('reconnect'); setError(null); setSuccess(null);
+        let done = 0, failed = 0;
+        for (const page of targets) {
+            if (!mounted.current) break;
+            const recordId = await handleConnect(page, false);
+            if (!recordId) { failed++; continue; }
+            done++;
+            await syncContacts(page, recordId);
+        }
+        if (mounted.current) {
+            setSuccess(`Reconnect checked ${targets.length} saved Pages: ${done} reconnected and synced${failed ? `, ${failed} need attention` : ''}. Contact sync resumes from each Page's saved checkpoint.`);
+            setBulkAction(null);
+            void fetchConnectedPages();
+        }
+    };
+
+    const syncAllConnectedPages = async () => {
+        if (bulkAction || connecting) return;
+        const targets = facebookPages.filter(page => connectedPages.has(page.id) && pageRecordIds[page.id] && !unverifiedPages.has(page.id));
+        if (!targets.length) { setError('No verified connected Pages are ready to sync.'); return; }
+        setBulkAction('sync'); setError(null); let completed = 0, failed = 0;
+        for (const page of targets) {
+            if (!mounted.current) break;
+            const recordId = pageRecordIds[page.id];
+            setSyncingPages(previous => new Set(previous).add(page.id));
+            setPageNotes(previous => ({ ...previous, [page.id]: 'Resuming contact sync from the saved Page checkpoint.' }));
+            try {
+                const result = await runContactSyncToCompletion(recordId, { forceFullSync: false });
+                if (!result.completed) throw Error('Incomplete sync');
+                completed++;
+                setPageNotes(previous => ({ ...previous, [page.id]: `Synced ${result.totalSynced} new or updated contacts${result.totalFailed ? `; ${result.totalFailed} need retry` : ''}.` }));
+            } catch (syncError) {
+                failed++;
+                setPageNotes(previous => ({ ...previous, [page.id]: `Sync needs retry: ${(syncError as Error).message}` }));
+            } finally {
+                setSyncingPages(previous => { const next = new Set(previous); next.delete(page.id); return next; });
+            }
+        }
+        if (mounted.current) { setSuccess(`Bulk sync finished: ${completed} Pages synced${failed ? `, ${failed} need retry` : ''}.`); setBulkAction(null); }
+    };
+
+    const handleConnect = async (page: FacebookPage, startContactSync = true): Promise<string | null> => {
+        if (connectBusy.current || syncingPages.has(page.id)) return null;
+        if (!page.access_token) { setError('Facebook did not return a Page token. Refresh Permissions and select this Page again.'); setRequiresReauth(true); return null; }
         connectBusy.current = true;
         setConnecting(page.id);
         setError(null);
@@ -125,7 +176,7 @@ export default function ConnectPage() {
                 try { data = JSON.parse(text); } catch { throw Error('Connection did not return a valid response. Retry Connect to verify the saved state.'); }
                 return { res, data };
             }, 75000);
-            if (!mounted.current) return;
+            if (!mounted.current) return null;
             if (data.success || data.saved) statusIssue.current++;
 
             if (res.ok && data.success && data.pageId && data.webhookSubscribed !== false) {
@@ -135,7 +186,8 @@ export default function ConnectPage() {
                 setRequiresReauth(false);
                 const connectedMessage = data.warning?.message || `Successfully connected "${page.name}".`;
                 setSuccess(connectedMessage);
-                void syncContacts(page, data.pageId);
+                if (startContactSync) void syncContacts(page, data.pageId);
+                return data.pageId;
             } else {
                 if (data.saved) {
                     setReconnectPages(previous => new Set(previous).add(page.id));
@@ -145,8 +197,10 @@ export default function ConnectPage() {
                 setError(getFacebookConnectErrorMessage(data.message || data.error));
                 setRequiresReauth(Boolean(data.requiresReauth) || isFacebookReauthMessage(data.message || data.error || ''));
             }
+            return null;
         } catch (error) {
             if (mounted.current) setError(error instanceof DatabaseReadTimeout ? 'The connection request timed out. Retry Connect to verify whether the Page was saved.' : (error as Error).message || 'Failed to connect page');
+            return null;
         } finally {
             connectBusy.current = false;
             if (mounted.current) setConnecting(null);
@@ -208,6 +262,8 @@ export default function ConnectPage() {
                     Refresh Permissions
                 </button>
                 <button onClick={() => { void fetchFacebookPages(); void fetchConnectedPages(); }} disabled={loading || connecting !== null} className="btn-wireframe text-xs bg-white h-9">Retry loading Pages</button>
+                <button onClick={() => void reconnectAllPages()} disabled={loading || facebookPages.length === 0 || bulkAction !== null || connecting !== null} className="btn-wireframe text-xs bg-white h-9">{bulkAction === 'reconnect' ? 'Reconnecting saved Pages…' : 'Reconnect all saved Pages'}</button>
+                <button onClick={() => void syncAllConnectedPages()} disabled={loading || connectedPages.size === 0 || bulkAction !== null || connecting !== null} className="btn-wireframe text-xs bg-white h-9">{bulkAction === 'sync' ? 'Syncing connected Pages…' : 'Sync all connected Pages'}</button>
             </div>
 
             {/* Messages */}

@@ -37,6 +37,13 @@ describe('runContactSyncToCompletion', () => {
         }));
     });
 
+    it('uses the saved incremental checkpoint when reconnect asks to resume sync', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, partial: false, synced: 2 }), { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        await runContactSyncToCompletion('page_1', { forceFullSync: false });
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ forceFullSync: false, paged: true });
+    });
+
     it('retries the same remaining psids after a transient timeout', async () => {
         const fetchMock = vi.fn()
             .mockResolvedValueOnce(new Response(JSON.stringify({

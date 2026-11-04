@@ -37,7 +37,17 @@ describe('Connect Page actions', () => {
   await act(async () => { await buttons('Connect')[0].props.onClick(); });
   expect(text(view!.root)).toContain('Successfully connected "Page A".'); expect(text(view!.root)).not.toContain('Connecting...');
   expect(buttons('Syncing contacts...')).toHaveLength(1); expect(buttons('Connect')[0].props.disabled).toBe(false);
-  expect(m.sync).toHaveBeenCalledWith('page-row', expect.any(Object));
+  expect(m.sync).toHaveBeenCalledWith('page-row', expect.objectContaining({ forceFullSync: false }));
+ });
+ it('bulk syncs only verified saved Pages and resumes incrementally', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/facebook/pages' ? json({ pages }) : json({ pages: [
+   { id: 'page-row-a', fb_page_id: '100', connectionStatus: 'ready' },
+   { id: 'page-row-b', fb_page_id: '200', connectionStatus: 'ready' }
+  ] })));
+  await act(async () => { view = create(createElement(ConnectPage)); });
+  await act(async () => { await buttons('Sync all connected Pages')[0].props.onClick(); });
+  expect(m.sync).toHaveBeenNthCalledWith(1, 'page-row-a', { forceFullSync: false });
+  expect(m.sync).toHaveBeenNthCalledWith(2, 'page-row-b', { forceFullSync: false });
  });
  it('requires a reconnect after partial webhook setup and does not start sync or show success', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/facebook/pages' ? json({ pages }) : url.startsWith('/api/pages?') ? json({ pages: [] }) : json({ success: false, saved: true, requiresReauth: true, message: 'Refresh Permissions to finish setup' }, 409)));
