@@ -33,6 +33,7 @@ export async function refreshContactProjection(db:Db,pageId:string,contactId:str
  const contact=contactResult.data,page=pageResult.data,previous=cacheResult.data as ForecastCache|null;
  if(!contact||!page)throw Error('Contact not found');
  const pageName=forecastPageName(page.fb_page_id),cached=scoreContactForecast(previous,pageName);
+ if(contact.pipeline_stage==='order_created')return{...cached,status:'order_created_paid',scores:null,close_window:null,close_windows:{},message:'Order Created is a paid conversion in this workflow. Receipt amounts are tracked separately.'};
  if(cached.status==='unsupported_page')return cached;
  if(previous&&!cached.needs_refresh&&!force)return{...cached,...(contact.pipeline_stage==='converted'&&!previous.payment_at?{status:'payment_verification_needed',scores:null,close_window:null,close_windows:{}}:{}),from_cache:true};
  const cutoff=Date.now(),fields='id,messages.limit(100){id,message,from,created_time,attachments{mime_type,image_data}}';

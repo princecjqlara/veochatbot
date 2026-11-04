@@ -17,18 +17,21 @@ const key = (page: string, ad: string | null) => JSON.stringify([page, ad]);
 const count = (value: any) => { const n = Number(value || 0); if (!Number.isSafeInteger(n) || n < 0) throw Error('Invalid or unsafe report counts'); return n; };
 const numeric = (value: any) => { const n = Number(value); if (!Number.isFinite(n) || n < 0 || n > Number.MAX_SAFE_INTEGER) throw Error('Invalid or unsafe delivery values'); return n; };
 const ratio = (a: number | null, b: number | null) => a != null && b != null && b > 0 ? a / b : null;
-const fields = ['inquiries', 'converted', 'converted_later', 'conversion_time_unknown', 'orders', 'payers', 'payers_later', 'confirmed_payers', 'confirmed_payers_later', 'chat_confirmed_payers', 'reviewed_conversations', 'confirmation_stale', 'legacy_dates', 'pre_inquiry_payments'] as const;
+const fields = ['inquiries', 'converted', 'converted_later', 'conversion_time_unknown', 'orders', 'not_qualified', 'became_not_qualified', 'customers_with_downpayment_ack', 'customers_with_full_payment_ack', 'downpayment_acknowledgments', 'full_payment_acknowledgments', 'conversations_with_full_archive', 'attachment_references', 'image_references', 'customer_messages', 'page_messages', 'customer_messages_replied', 'payers', 'payers_later', 'confirmed_payers', 'confirmed_payers_later', 'chat_confirmed_payers', 'reviewed_conversations', 'confirmation_stale', 'legacy_dates', 'pre_inquiry_payments'] as const;
 const delivery = ['impressions', 'clicks', 'link_clicks', 'messaging_started', 'video_plays', 'video_thruplays', 'video_complete'] as const;
 function bucket() {
- return { inquiries: 0, converted: 0, converted_later: 0, conversion_time_unknown: 0, orders: 0, payers: 0, payers_later: 0, confirmed_payers: 0, confirmed_payers_later: 0, chat_confirmed_payers: 0, reviewed_conversations: 0, confirmation_stale: 0, legacy_dates: 0, pre_inquiry_payments: 0,
-  stage_lags: [0, 0, 0, 0, 0], paid_lags: [0, 0, 0, 0, 0], confirmed_paid_lags: [0, 0, 0, 0, 0], finance: new Map<string, any>(),
+ return { inquiries: 0, converted: 0, converted_later: 0, conversion_time_unknown: 0, orders: 0, not_qualified: 0, became_not_qualified: 0,
+  customers_with_downpayment_ack: 0, customers_with_full_payment_ack: 0, downpayment_acknowledgments: 0, full_payment_acknowledgments: 0,
+  conversations_with_full_archive: 0, attachment_references: 0, image_references: 0, customer_messages: 0, page_messages: 0, customer_messages_replied: 0,
+  payers: 0, payers_later: 0, confirmed_payers: 0, confirmed_payers_later: 0, chat_confirmed_payers: 0, reviewed_conversations: 0, confirmation_stale: 0, legacy_dates: 0, pre_inquiry_payments: 0,
+  stage_lags: [0, 0, 0, 0, 0], order_lags: [0, 0, 0, 0, 0], downpayment_lags: [0, 0, 0, 0, 0], full_payment_lags: [0, 0, 0, 0, 0], paid_lags: [0, 0, 0, 0, 0], confirmed_paid_lags: [0, 0, 0, 0, 0], finance: new Map<string, any>(),
   expected: 0, covered: 0, known: new Map<string, number>(), mismatched: 0, conflicting: 0, checked: [] as string[], timezones: new Set<string>(), reach: null as number | null,
   delivery: Object.fromEntries(delivery.map(field => [field, { known: 0, total: 0 }])) as Record<(typeof delivery)[number], { known: number; total: number }> };
 }
 type Bucket = ReturnType<typeof bucket>;
 function addGroup(target: Bucket, group: any) {
  for (const field of fields) target[field] += count(group[field]);
- for (let index = 0; index < 5; index++) { target.stage_lags[index] += count(group.stage_lags?.[index]); target.paid_lags[index] += count(group.paid_lags?.[index]); }
+ for (let index = 0; index < 5; index++) { target.stage_lags[index] += count(group.stage_lags?.[index]); target.order_lags[index] += count(group.order_lags?.[index]); target.downpayment_lags[index] += count(group.downpayment_lags?.[index]); target.full_payment_lags[index] += count(group.full_payment_lags?.[index]); target.paid_lags[index] += count(group.paid_lags?.[index]); }
  for (let index = 0; index < 5; index++) target.confirmed_paid_lags[index] += count(group.confirmed_paid_lags?.[index]);
  for (const row of group.finance || []) {
   if (!/^[A-Z]{3}$/.test(row.currency)) throw Error('Invalid payment currency');
@@ -63,20 +66,25 @@ function finish(value: Bucket) {
  const metrics = Object.fromEntries(delivery.map(field => [field, value.expected > 0 && value.delivery[field].known === value.expected ? value.delivery[field].total : null])) as Record<(typeof delivery)[number], number | null>;
  const finance = [...value.finance.values()].map(row => {
   const gross = (row.received_minor - row.refunded_minor) / 100;
-  return { ...row, gross, after_salary: gross - row.salary, refunds_exceed_receipts: row.refunded_minor > row.received_minor };
+  return { ...row, gross, after_salary: gross - row.salary,
+   average_order_value: row.paid_orders > 0 ? gross / row.paid_orders : null,
+   refunds_exceed_receipts: row.refunded_minor > row.received_minor };
  });
  const missingPaymentAmounts = Math.max(0, value.confirmed_payers - value.payers);
  const comparable = !missingPaymentAmounts && finance.length === 1 && finance[0].currency === currency && spend != null ? finance[0] : null;
  const profit = comparable ? comparable.after_salary - spend! : null;
  const totals = Object.fromEntries(fields.map(field => [field, value[field]])) as Record<(typeof fields)[number], number>;
- return { ...totals, conversion_rate: ratio(value.converted, value.inquiries), payer_rate: ratio(value.payers, value.inquiries), confirmed_payer_rate: ratio(value.confirmed_payers, value.inquiries),
-  stage_lags: value.stage_lags, paid_lags: value.paid_lags, confirmed_paid_lags: value.confirmed_paid_lags, finance,
+ const replyRate = value.inquiries > 0 && value.conversations_with_full_archive === value.inquiries && value.customer_messages > 0
+  ? value.customer_messages_replied / value.customer_messages : null;
+ return { ...totals, conversion_rate: ratio(value.converted, value.inquiries), payer_rate: ratio(value.payers, value.inquiries), confirmed_payer_rate: ratio(value.confirmed_payers, value.inquiries), reply_rate: replyRate,
+  stage_lags: value.stage_lags, order_lags: value.order_lags, downpayment_lags: value.downpayment_lags, full_payment_lags: value.full_payment_lags,
+  paid_lags: value.paid_lags, confirmed_paid_lags: value.confirmed_paid_lags, finance,
   spend: { amount: spend, currency, complete, expected_ad_days: value.expected, covered_ad_days: value.covered, timezone_mismatch: value.mismatched, account_conflicts: value.conflicting, account_timezones: [...value.timezones],
    recorded: [...value.known].map(([currency, amount]) => ({ currency, amount })), oldest_check: value.checked.slice().sort()[0] || null, newest_check: value.checked.slice().sort().at(-1) || null },
   ...metrics, reach: value.expected === 1 ? value.reach : null,
   frequency: value.expected === 1 ? ratio(metrics.impressions, value.reach) : null,
   ctr: ratio(metrics.clicks, metrics.impressions), link_ctr: ratio(metrics.link_clicks, metrics.impressions), cpc: ratio(spend, metrics.clicks), cpm: metrics.impressions ? ratio(spend, metrics.impressions / 1000) : null,
-  cost_per_messaging: ratio(spend, metrics.messaging_started), cost_per_inquiry: ratio(spend, value.inquiries), cpa: ratio(spend, value.payers), confirmed_cpa: ratio(spend, value.confirmed_payers), cost_per_stage_conversion: ratio(spend, value.converted),
+  cost_per_messaging: ratio(spend, metrics.messaging_started), cost_per_inquiry: ratio(spend, value.inquiries), cpa: ratio(spend, value.confirmed_payers), confirmed_cpa: ratio(spend, value.confirmed_payers), ledger_cpa: ratio(spend, value.payers), cost_per_stage_conversion: ratio(spend, value.converted),
   profit, gross_roas: comparable ? ratio(comparable.gross, spend) : null, after_salary_roas: comparable ? ratio(comparable.after_salary, spend) : null, net_roas: ratio(profit, spend),
   confirmed_customers_without_receipts: missingPaymentAmounts,
   financial_currency_mismatch: finance.length > 0 && currency != null && (finance.length !== 1 || finance[0].currency !== currency), financial_verified: finance.length > 0 };
@@ -112,10 +120,10 @@ export function buildAdCalendar(input: { month: string; now?: number; groups: an
   inventory: [...ads.values()],
   definitions: { attribution: 'First verified originating ad and inquiry date. Later conversions, deposits, balances and refunds update that original cohort. Unknown sources receive no ad-spend allocation.',
    overall: 'The overall calendar includes unknown-source customers and their recorded receipts, deducting total imported Page ad spend once. Creative-specific returns include only that verified originating ad; unknown-source receipts are never allocated to a creative.',
-   confirmations: 'Confirmed customers combine unique ledger payers and documented Page payment acknowledgements, counting an overlap once. Cached conversation evidence is dated at its source cutoff; newer activity is flagged. A chat acknowledgement does not create a verified cash amount or bank confirmation.',
+  confirmations: 'Order Created is a paid conversion in the Veo workflow. Paid customers also include documented Page payment acknowledgements and ledger receipts, counting each person once. Order Created and chat acknowledgements do not create a receipt amount.',
    revenue: 'Verified receipts including deposits, minus refunds, from this cohort through the report time. Missing financial records are not assumed unpaid. Repeat receipts remain credited to the first origin.',
    salary: '40% of positive recorded revenue after refunds per acquisition-day/creative cohort, then added across cohorts. Refunds do not create negative payroll credits. This is a modeled allowance, not payroll verification; other expenses and taxes are excluded.',
-   payers: 'Unique customers with a non-void verified receipt. Deposits and balances do not count as separate acquisitions. Refunds reduce revenue while retaining the acquisition history.',
+  payers: 'Unique customers with a non-void verified receipt. Deposits and balances do not count as separate acquisitions. Refunds reduce revenue while retaining the acquisition history. This count is separate from Order Created, which is treated as paid but has no verified amount unless a receipt is recorded.',
    gross_roas: 'Recorded revenue after refunds / ad spend', after_salary_roas: '(Recorded revenue - 40% salary) / ad spend', net_roas: '(Recorded revenue - 40% salary - ad spend) / ad spend',
    messaging: 'Meta messaging conversations started, reported by conversion time using ad-set attribution. This is separate from unique VeoBot inquiry cohorts.',
    coverage: 'Calendar totals cover the recorded, verified Page ad inventory, not proof of complete Ads Manager inventory. Contacts without a known inquiry date are excluded from date cohorts. Missing ad-days, currency conflicts, account-timezone mismatches or confirmed customers without recorded receipt amounts prevent complete profit and return ratios. Even with receipts, missing balances or unreviewed histories may understate revenue. Today is provisional.' } };
