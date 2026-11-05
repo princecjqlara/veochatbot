@@ -15,12 +15,13 @@ const dateTime = (value: string | null) => value ? new Date(value).toLocaleStrin
 const fieldStyle = 'max-w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
 const heatMetrics: Record<string, { label: string; value: (row: any) => number | null; format: string }> = {
  total_inquiries: { label: 'Total inquiries', value: row => row.inquiries, format: 'count' },
+ unknown_inquiries: { label: 'Inquiries without verified ad attribution', value: row => row.unattributed_inquiries, format: 'count' },
  conversions: { label: 'Paid conversions (Order Created or Converted)', value: row => row.converted, format: 'count' },
  confirmed: { label: 'Paid customers (Order Created or payment evidence)', value: row => row.confirmed_payers, format: 'count' },
  confirmed_rate: { label: 'Paid conversion rate', value: row => row.confirmed_payer_rate, format: 'percent' },
  confirmed_cpa: { label: 'Cost per paid conversion', value: row => row.confirmed_cpa, format: 'money' },
  orders: { label: 'Total paid orders (Order Created stage)', value: row => row.orders, format: 'count' },
- profit: { label: 'Profit after salary and ads', value: row => row.profit, format: 'money' },
+ profit: { label: 'Recorded net after salary and ads', value: row => row.profit, format: 'money' },
  spend: { label: 'Total ad spend (imported records)', value: row => row.spend.amount, format: 'money' },
  inquiries: { label: 'Total inquiries linked to ads', value: row => row.inquiries, format: 'count' },
  conversion: { label: 'Stage conversion rate', value: row => row.conversion_rate, format: 'percent' },
@@ -61,10 +62,12 @@ function CalendarTotals({ row, inquiryNote }: { row: any; inquiryNote?: string }
   ]} /></Card>
   <Card label="Total recorded revenue after refunds" note="Includes recorded later deposits and balances. Missing amounts and unpaid balances are not assumed to be zero."><Revenue rows={row.finance} /></Card>
   <Card label="Average verified order value" note="Recorded revenue after refunds divided by distinct verified paid orders. Order Created alone does not supply an amount."><Revenue rows={row.finance} field="average_order_value" /></Card>
-  <Card label="Total salary allowance (40%)" note="40% of positive recorded revenue after refunds, calculated per acquisition day and creative. Actual payroll is not verified."><Revenue rows={row.finance} field="salary" /></Card>
-  <Card label="Recorded profit after salary and ad spend" note="Unavailable when known confirmed customers lack receipts. Other expenses and taxes are excluded; unrecorded balances can understate returns.">{money(row.profit, row.spend.currency)}</Card>
+  <Card label="Total salary allowance (40%)" note="40% of positive recorded revenue after refunds, calculated per acquisition day and creative. Actual payroll is not verified; missing receipt amounts make this a lower bound.">{row.finance.length ? <Revenue rows={row.finance} field="salary" /> : money(0, row.spend.currency)}</Card>
+  <Card label="Recorded net after salary and ad spend" note={`Negative values are recorded losses; positive values are recorded gains. The amount uses saved receipt values and Meta spend. ${row.profit_is_partial ? 'This is provisional because spend or payment evidence is incomplete.' : 'Other expenses, taxes, and unrecorded balances are excluded.'}`}>{money(row.profit, row.spend.currency)}</Card>
   <Card label="Return on ad spend" note="Gross: recorded revenue after refunds divided by ad spend. Net: recorded profit divided by ad spend."><ReturnValues row={row} /></Card>
-  <Card label="Conversation and payment outcomes" note={`${number(row.conversations_with_full_archive)} of ${number(row.inquiries)} inquiry histories have full archived text for reply-rate calculation. Age and gender are not available in this Page data.`}>{pct(row.reply_rate)} reply rate<MetricDetails values={[
+  <Card label="Conversation and payment outcomes" note={`${number(row.conversations_with_archived_history ?? row.conversations_with_full_archive)} of ${number(row.inquiries)} inquiry histories have a local message archive (${pct(row.reply_rate_coverage)} coverage); ${number(row.conversations_with_stale_archive)} archives predate the latest contact snapshot. Reply rate uses available archived messages and may be understated for stale histories. Age and gender are not available in this Page data.`}>{pct(row.reply_rate)} archived-message reply rate<MetricDetails values={[
+   ['Current archive coverage', pct(row.current_archive_coverage)], ['Older archive records', number(row.conversations_with_stale_archive)],
+   ['No local conversation archive', number(Math.max(0, row.inquiries - (row.conversations_with_archived_history ?? row.conversations_with_full_archive)))],
    ['Customer messages answered by the Page', `${number(row.customer_messages_replied)} / ${number(row.customer_messages)}`],
    ['Currently Not Qualified', number(row.not_qualified)], ['Marked Not Qualified after inquiry', number(row.became_not_qualified)],
    ['Customers with downpayment acknowledgments', number(row.customers_with_downpayment_ack)],
@@ -77,7 +80,7 @@ const definitionLabels: Record<string, string> = { attribution: 'Inquiry source 
 
 export default function AdCalendar() {
  const today = phtDay(Date.now()), [month, setMonth] = useState(today.slice(0, 7)), [pageId, setPageId] = useState(''), [adId, setAdId] = useState(''), [day, setDay] = useState(today);
- const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('total_inquiries');
+ const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('profit');
  const [pages, setPages] = useState<any[]>([]);
  const [pagesLoading, setPagesLoading] = useState(true), [pagesError, setPagesError] = useState(''), [pagesAttempt, setPagesAttempt] = useState(0);
  useEffect(() => {
@@ -191,7 +194,7 @@ export default function AdCalendar() {
  }
  const summary = data?.overall || data?.summary, selectedRow = data?.days?.find((row: any) => row.day === day), selected = selectedRow ? { ...selectedRow, ...selectedRow.overall } : null, heat = heatMetrics[metric];
  const currencies = new Set<string>((data?.days || []).flatMap((row: any) => row.spend.recorded.map((entry: any) => entry.currency))), mixedMoney = currencies.size > 1;
- const heatValue = (row: any) => mixedMoney && ['money', 'roas'].includes(heat.format) ? null : heat.value(metric === 'inquiries' ? row : row.overall || row);
+ const heatValue = (row: any) => mixedMoney && ['money', 'roas'].includes(heat.format) ? null : heat.value(metric === 'inquiries' || metric === 'unknown_inquiries' ? row : row.overall || row);
  const scale = Math.max(1, ...(data?.days || []).filter((row: any) => !row.future).map((row: any) => Math.abs(heatValue(row) || 0)));
  const creativeRows = creativeMode === 'day' ? data?.day_ads || [] : data?.ads || [];
  const formatCell = (value: number | null) => {
@@ -239,10 +242,10 @@ export default function AdCalendar() {
      <span className="flex items-center gap-1.5"><i aria-hidden="true" className="h-3 w-3 rounded border border-slate-300 bg-white" />Zero</span>
      <span className="flex items-center gap-1.5"><i aria-hidden="true" className="h-3 w-3 rounded border border-slate-300 bg-slate-100" />Unavailable</span>
     </div>
-    <p className="mb-3 text-xs text-slate-500">Scroll across the calendar on smaller screens to read every daily total.</p>
+    <p className="mb-3 text-xs text-slate-500">Scroll across the calendar on smaller screens to read every daily total. Red is a recorded loss; green is a recorded gain. Provisional values use the spend and receipts currently saved.</p>
     <div className="overflow-x-auto p-1"><div className="grid min-w-[60rem] grid-cols-7 gap-2 text-center text-xs text-slate-500">{['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(label => <span key={label} className="pb-2">{label}</span>)}
      {Array.from({ length: blank }, (_, index) => <div key={`blank-${index}`} />)}
-     {range.days.map(date => { const row = data?.days.find((entry: any) => entry.day === date), value = row && !row.future ? heatValue(row) : null; return <button key={date} aria-label={`Inquiry cohort ${date}`} aria-describedby={`day-values-${date}`} aria-pressed={day === date} disabled={!row || row.future} onClick={() => { setDay(date); setPeopleOffset(0); }}
+     {range.days.map(date => { const row = data?.days.find((entry: any) => entry.day === date), financialRow = row?.overall || row, value = row && !row.future ? heatValue(row) : null; return <button key={date} aria-label={`Inquiry cohort ${date}`} aria-describedby={`day-values-${date}`} aria-pressed={day === date} disabled={!row || row.future} onClick={() => { setDay(date); setPeopleOffset(0); }}
       style={calendarHeat(value, scale)} className={`min-w-0 rounded-lg border p-3 text-left disabled:opacity-60 ${day === date ? 'ring-2 ring-slate-900 ring-offset-1' : ''}`}>
       <span className="block text-xs font-semibold">{Number(date.slice(-2))}{row?.partial && <span className="hidden text-[10px] font-normal md:inline"> · today</span>}</span>
       <span className="mt-2 block text-[11px] leading-4">{heat.label}</span>
@@ -251,6 +254,9 @@ export default function AdCalendar() {
       <MetricDetails values={[
        ...(metric !== 'total_inquiries' ? [['Total inquiries', number((row.overall || row).inquiries)] as [string, React.ReactNode]] : []),
        ...(metric !== 'spend' ? [['Total ad spend', money(row.spend.amount, row.spend.currency)] as [string, React.ReactNode]] : []),
+       ['Recorded revenue after refunds', financialRow.finance.length ? financialRow.finance.map((entry: any) => money(entry.gross, entry.currency)).join(', ') : money(0, financialRow.spend.currency)],
+       ['40% salary allowance', financialRow.finance.length ? financialRow.finance.map((entry: any) => money(entry.salary, entry.currency)).join(', ') : money(0, financialRow.spend.currency)],
+       ['Recorded net after salary and ads', money(financialRow.profit, financialRow.spend.currency)],
        ['Paid conversions (Order Created or Converted)', number((row.overall || row).converted)],
        ['Paid customers (Order Created or payment evidence)', number((row.overall || row).confirmed_payers)],
        [adId === 'unknown' ? 'Total unknown-source inquiries' : 'Total inquiries linked to ads', number(row.inquiries)]
@@ -275,10 +281,11 @@ export default function AdCalendar() {
     </dl>
     <p className="mt-3 text-xs">A history check uses recorded conversation evidence; it does not verify a bank transfer or guarantee every attachment was reviewed. The most recent individual check does not mean all contacts are current. Unchecked or stale histories can change these totals.</p>
     {!data.coverage?.available && <p className="mt-2 text-xs">Page-wide coverage counts could not be verified. Missing counts are unavailable, not zero.</p>}
-    {!!summary.confirmed_customers_without_receipts && <p className="mt-2 text-xs">Some confirmed customers have no verified receipt amounts. Recorded revenue remains visible; profit and return on ad spend remain unavailable for affected cohorts.</p>}
-    {!summary.spend.complete && <p className="mt-2 text-xs">Ad spend and cost metrics need actual Meta reports. {connection?.accounts?.length ? 'Missing dates are imported automatically; you can also use Import actual spend and metrics.' : 'Use Connect read-only ad access with the Facebook account that manages the ads.'}</p>}
-    {!summary.financial_verified && <p className="mt-2 text-xs">Revenue, the 40% salary allowance, profit and ROAS need recorded receipt amounts. No verified amounts are saved for this cohort yet.</p>}
+    {!!summary.confirmed_customers_without_receipts && <p className="mt-2 text-xs">{number(summary.confirmed_customers_without_receipts)} confirmed customers have no verified receipt amount. Recorded net and ROAS use known receipts only and can understate actual revenue.</p>}
+    {!summary.spend.complete && <p className="mt-2 text-xs">The visible spend total includes reported amounts, but {number(summary.spend.expected_ad_days - summary.spend.covered_ad_days)} ad-day records are missing, provisional, or not aligned to Philippine time. Net, CPA, and ROAS are estimates until reports finalize. {connection?.accounts?.length ? 'Meta spend syncs automatically; use Import actual spend and metrics to refresh now.' : 'Connect read-only ad access to refresh Meta spend.'}</p>}
+    {!summary.financial_verified && <p className="mt-2 text-xs">No receipt amount is saved for this cohort. Any displayed net treats recorded revenue and the 40% allowance as zero, so it is a spend-floor estimate rather than confirmed business profit or loss.</p>}
    </section>
+   {!!data.unattributed.inquiries && adId !== 'unknown' && <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{number(data.unattributed.inquiries)} inquiries in this month have no verified originating ad. Historical message archives contain no ad ID/referral evidence for these contacts, so Page-level net includes their recorded payments but creative-level revenue and ROAS exclude them. Use “Unknown / unattributed inquiries” to review those cohorts.</p>}
    <p className="text-xs text-slate-500">Report calculated at {dateTime(data.outcome_as_of || data.generated_at)}. This is the calculation time, not the time every source was last checked. Revenue is credited to the first verified ad origin.</p>
    {data.pages.some((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error) && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{data.pages.filter((page: any) => (!pageId || page.id === pageId) && page.messaging_auto_tag_last_error).length} Page(s) have synchronization errors. Their recorded stage outcomes may be stale until access is restored. <a href="/dashboard/connect" className="underline">Review Page connections</a></p>}
    {!!summary.legacy_dates && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">{summary.legacy_dates} inquiries use older CRM dates that have not been verified against the original conversation. These remain marked as legacy dates.</p>}
@@ -310,6 +317,7 @@ export default function AdCalendar() {
     </aside>}
    </section>}
    <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 md:p-5"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Creative performance</h2><select aria-label="Creative metrics period" value={creativeMode} onChange={e => setCreativeMode(e.target.value)} className={fieldStyle}><option value="day">Selected inquiry day</option><option value="month">Entire inquiry month</option></select></div>
+    {!!data.unattributed.inquiries && adId !== 'unknown' && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Creative rows use only contacts with verified ad IDs. {number(data.unattributed.inquiries)} month inquiries have no ad attribution, so creative revenue, profit, and ROAS may be understated. The all-source monthly totals include them.</p>}
     <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['Ad creative', 'Total ad spend', 'Messaging conversations', 'Total inquiries linked to ads', 'Paid conversions', 'Paid customers', 'Total recorded revenue after refunds', 'Recorded profit after salary and ad spend', 'Return on ad spend', 'Ad delivery metrics'].map(label => <th key={label} className="p-2 text-left text-xs">{label}</th>)}</tr></thead><tbody>{creativeRows.slice((creativePage - 1) * 25, creativePage * 25).map((row: any) => <tr key={row.ad.page_id + ':' + row.ad.ad_id} className="border-t align-top">
      <td className="min-w-[200px] p-2"><b>{row.ad.ad_name || row.ad.ad_title || row.ad.ad_id}</b><p className="mt-1 text-xs text-slate-500">Campaign: {row.ad.campaign_name || 'Not available'}<br />Ad set: {row.ad.adset_name || 'Not available'}</p><AdCreativePreview ad={row.ad} /></td>
      <td className="whitespace-nowrap p-2">{money(row.spend.amount, row.spend.currency)}</td>

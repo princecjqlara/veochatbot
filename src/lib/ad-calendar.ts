@@ -14,15 +14,16 @@ export function calendarInquiryCount(row: { inquiries: number; unattributed_inqu
  return row.inquiries + (adId ? 0 : row.unattributed_inquiries);
 }
 const key = (page: string, ad: string | null) => JSON.stringify([page, ad]);
+const spendDay = (value: unknown) => value instanceof Date ? new Date(value.getTime() + 8 * 3600000).toISOString().slice(0, 10) : String(value ?? '').slice(0, 10);
 const count = (value: any) => { const n = Number(value || 0); if (!Number.isSafeInteger(n) || n < 0) throw Error('Invalid or unsafe report counts'); return n; };
 const numeric = (value: any) => { const n = Number(value); if (!Number.isFinite(n) || n < 0 || n > Number.MAX_SAFE_INTEGER) throw Error('Invalid or unsafe delivery values'); return n; };
 const ratio = (a: number | null, b: number | null) => a != null && b != null && b > 0 ? a / b : null;
-const fields = ['inquiries', 'converted', 'converted_later', 'conversion_time_unknown', 'orders', 'not_qualified', 'became_not_qualified', 'customers_with_downpayment_ack', 'customers_with_full_payment_ack', 'downpayment_acknowledgments', 'full_payment_acknowledgments', 'conversations_with_full_archive', 'attachment_references', 'image_references', 'customer_messages', 'page_messages', 'customer_messages_replied', 'payers', 'payers_later', 'confirmed_payers', 'confirmed_payers_later', 'chat_confirmed_payers', 'reviewed_conversations', 'confirmation_stale', 'legacy_dates', 'pre_inquiry_payments'] as const;
+const fields = ['inquiries', 'converted', 'converted_later', 'conversion_time_unknown', 'orders', 'not_qualified', 'became_not_qualified', 'customers_with_downpayment_ack', 'customers_with_full_payment_ack', 'downpayment_acknowledgments', 'full_payment_acknowledgments', 'conversations_with_full_archive', 'conversations_with_archived_history', 'conversations_with_stale_archive', 'attachment_references', 'image_references', 'customer_messages', 'page_messages', 'customer_messages_replied', 'payers', 'payers_later', 'confirmed_payers', 'confirmed_payers_later', 'chat_confirmed_payers', 'reviewed_conversations', 'confirmation_stale', 'legacy_dates', 'pre_inquiry_payments'] as const;
 const delivery = ['impressions', 'clicks', 'link_clicks', 'messaging_started', 'video_plays', 'video_thruplays', 'video_complete'] as const;
 function bucket() {
  return { inquiries: 0, converted: 0, converted_later: 0, conversion_time_unknown: 0, orders: 0, not_qualified: 0, became_not_qualified: 0,
   customers_with_downpayment_ack: 0, customers_with_full_payment_ack: 0, downpayment_acknowledgments: 0, full_payment_acknowledgments: 0,
-  conversations_with_full_archive: 0, attachment_references: 0, image_references: 0, customer_messages: 0, page_messages: 0, customer_messages_replied: 0,
+  conversations_with_full_archive: 0, conversations_with_archived_history: 0, conversations_with_stale_archive: 0, attachment_references: 0, image_references: 0, customer_messages: 0, page_messages: 0, customer_messages_replied: 0,
   payers: 0, payers_later: 0, confirmed_payers: 0, confirmed_payers_later: 0, chat_confirmed_payers: 0, reviewed_conversations: 0, confirmation_stale: 0, legacy_dates: 0, pre_inquiry_payments: 0,
   stage_lags: [0, 0, 0, 0, 0], order_lags: [0, 0, 0, 0, 0], downpayment_lags: [0, 0, 0, 0, 0], full_payment_lags: [0, 0, 0, 0, 0], paid_lags: [0, 0, 0, 0, 0], confirmed_paid_lags: [0, 0, 0, 0, 0], finance: new Map<string, any>(),
   expected: 0, covered: 0, known: new Map<string, number>(), mismatched: 0, conflicting: 0, checked: [] as string[], timezones: new Set<string>(), reach: null as number | null,
@@ -47,13 +48,16 @@ function addSpend(target: Bucket, rows: any[], ad: any) {
  target.expected++;
  if (!rows.length) return;
  for (const row of rows) if (typeof row.account_timezone === 'string') target.timezones.add(row.account_timezone);
- if (rows.some(row => !row.pht_aligned)) { target.mismatched++; return; }
  const accounts = new Set(rows.map(row => row.account_id)), currencies = new Set(rows.map(row => row.currency));
  if (accounts.size !== 1 || currencies.size !== 1 || (ad.ad_account_id && !accounts.has(ad.ad_account_id))) { target.conflicting++; return; }
  const currency = rows[0].currency;
  if (!/^[A-Z]{3}$/.test(currency)) throw Error('Invalid ad-spend currency');
  const amount = rows.reduce((sum, row) => sum + numeric(row.amount), 0);
- target.covered++; target.known.set(currency, (target.known.get(currency) || 0) + amount);
+ // Show the Meta amount while a day is still provisional. Only finalized,
+ // Philippine-time-aligned rows count toward complete spend coverage.
+ target.known.set(currency, (target.known.get(currency) || 0) + amount);
+ if (rows.some(row => !row.pht_aligned)) target.mismatched++;
+ else if (rows.every(row => row.report_complete === true)) target.covered++;
  target.checked.push(...rows.map(row => row.checked_at).filter(Boolean));
  for (const field of delivery) if (rows.every(row => row[field] != null && (field !== 'messaging_started' || row.action_report_time === 'conversion' && row.attribution_setting === 'adset_unified'))) {
   target.delivery[field].known++; target.delivery[field].total += rows.reduce((sum, row) => sum + numeric(row[field]), 0);
@@ -62,7 +66,7 @@ function addSpend(target: Bucket, rows: any[], ad: any) {
 }
 function finish(value: Bucket) {
  const currencies = [...value.known.keys()], complete = value.expected > 0 && value.covered === value.expected && currencies.length === 1 && !value.mismatched && !value.conflicting;
- const spend = complete ? value.known.get(currencies[0])! : null, currency = currencies.length === 1 ? currencies[0] : null;
+ const spend = value.expected > 0 && currencies.length === 1 && !value.conflicting ? value.known.get(currencies[0])! : null, currency = currencies.length === 1 ? currencies[0] : null;
  const metrics = Object.fromEntries(delivery.map(field => [field, value.expected > 0 && value.delivery[field].known === value.expected ? value.delivery[field].total : null])) as Record<(typeof delivery)[number], number | null>;
  const finance = [...value.finance.values()].map(row => {
   const gross = (row.received_minor - row.refunded_minor) / 100;
@@ -71,12 +75,15 @@ function finish(value: Bucket) {
    refunds_exceed_receipts: row.refunded_minor > row.received_minor };
  });
  const missingPaymentAmounts = Math.max(0, value.confirmed_payers - value.payers);
- const comparable = !missingPaymentAmounts && finance.length === 1 && finance[0].currency === currency && spend != null ? finance[0] : null;
+ const comparable = finance.length <= 1 && (!finance.length || finance[0].currency === currency) && spend != null && !value.mismatched && !value.conflicting
+  ? finance[0] || { gross: 0, after_salary: 0 } : null;
  const profit = comparable ? comparable.after_salary - spend! : null;
+ const profit_is_partial = profit != null && (!complete || missingPaymentAmounts > 0 || !finance.length);
  const totals = Object.fromEntries(fields.map(field => [field, value[field]])) as Record<(typeof fields)[number], number>;
- const replyRate = value.inquiries > 0 && value.conversations_with_full_archive === value.inquiries && value.customer_messages > 0
+ const replyRate = value.conversations_with_archived_history > 0 && value.customer_messages > 0
   ? value.customer_messages_replied / value.customer_messages : null;
  return { ...totals, conversion_rate: ratio(value.converted, value.inquiries), payer_rate: ratio(value.payers, value.inquiries), confirmed_payer_rate: ratio(value.confirmed_payers, value.inquiries), reply_rate: replyRate,
+  reply_rate_coverage: ratio(value.conversations_with_archived_history, value.inquiries), current_archive_coverage: ratio(value.conversations_with_full_archive, value.inquiries),
   stage_lags: value.stage_lags, order_lags: value.order_lags, downpayment_lags: value.downpayment_lags, full_payment_lags: value.full_payment_lags,
   paid_lags: value.paid_lags, confirmed_paid_lags: value.confirmed_paid_lags, finance,
   spend: { amount: spend, currency, complete, expected_ad_days: value.expected, covered_ad_days: value.covered, timezone_mismatch: value.mismatched, account_conflicts: value.conflicting, account_timezones: [...value.timezones],
@@ -85,7 +92,7 @@ function finish(value: Bucket) {
   frequency: value.expected === 1 ? ratio(metrics.impressions, value.reach) : null,
   ctr: ratio(metrics.clicks, metrics.impressions), link_ctr: ratio(metrics.link_clicks, metrics.impressions), cpc: ratio(spend, metrics.clicks), cpm: metrics.impressions ? ratio(spend, metrics.impressions / 1000) : null,
   cost_per_messaging: ratio(spend, metrics.messaging_started), cost_per_inquiry: ratio(spend, value.inquiries), cpa: ratio(spend, value.confirmed_payers), confirmed_cpa: ratio(spend, value.confirmed_payers), ledger_cpa: ratio(spend, value.payers), cost_per_stage_conversion: ratio(spend, value.converted),
-  profit, gross_roas: comparable ? ratio(comparable.gross, spend) : null, after_salary_roas: comparable ? ratio(comparable.after_salary, spend) : null, net_roas: ratio(profit, spend),
+  profit, profit_is_partial, gross_roas: comparable ? ratio(comparable.gross, spend) : null, after_salary_roas: comparable ? ratio(comparable.after_salary, spend) : null, net_roas: ratio(profit, spend),
   confirmed_customers_without_receipts: missingPaymentAmounts,
   financial_currency_mismatch: finance.length > 0 && currency != null && (finance.length !== 1 || finance[0].currency !== currency), financial_verified: finance.length > 0 };
 }
@@ -108,7 +115,7 @@ export function buildAdCalendar(input: { month: string; now?: number; groups: an
   if (group.ad_id) { const id = key(group.page_id, group.ad_id); if (adTotals.has(id)) { addGroup(adTotals.get(id)!, group); if (group.day === selectedDay) addGroup(adDays.get(id)!, group); } }
  }
  const spendRows = new Map<string, any[]>();
- for (const row of input.spend) { const id = JSON.stringify([row.page_id, row.ad_id, row.spend_date]); if (!spendRows.has(id)) spendRows.set(id, []); spendRows.get(id)!.push(row); }
+ for (const row of input.spend) { const id = JSON.stringify([row.page_id, row.ad_id, spendDay(row.spend_date)]); if (!spendRows.has(id)) spendRows.set(id, []); spendRows.get(id)!.push(row); }
  for (const ad of selected) for (const day of range.days) if (day <= range.today) {
   const rows = spendRows.get(JSON.stringify([ad.page_id, ad.ad_id, day])) || [], id = key(ad.page_id, ad.ad_id);
   addSpend(daily.get(day)!, rows, ad); addSpend(total, rows, ad); addSpend(overallDays.get(day)!, rows, ad); addSpend(overall, rows, ad); addSpend(adTotals.get(id)!, rows, ad); if (day === selectedDay) addSpend(adDays.get(id)!, rows, ad);

@@ -9,6 +9,7 @@ import pg from 'pg';
 import { assertProjectCredentials, VEO_TARGET_PROJECT, digest } from './lib/database-migration-safety.mjs';
 
 const apply = process.argv.includes('--apply');
+const allowOlderArchives = process.argv.includes('--allow-archive-older-than-profile');
 if (!apply && !process.argv.includes('--preflight')) throw Error('Choose --preflight or --apply');
 const { parse } = createRequire(import.meta.url)('dotenv');
 const env = parse(fs.readFileSync('.env.local', 'utf8'));
@@ -34,7 +35,7 @@ const bundle = path.join(dir, 'analysis-runtime.cjs');
 const { verifyBacklogArtifact } = createRequire(import.meta.url)(bundle);
 const db = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 25000, query_timeout: 120000 });
 const batchSize = 250, report = { target_project: VEO_TARGET_PROJECT, applied: apply, sources: records.length, matched: 0, stored: 0,
-    messages: 0, attachments: 0, images: 0, skipped_newer: 0, already_current: 0, errors: [] };
+    messages: 0, attachments: 0, images: 0, skipped_newer: 0, stale_archives_included: 0, already_current: 0, errors: [] };
 try {
     await db.connect();
     if (apply) {
@@ -55,10 +56,10 @@ try {
             await db.query('BEGIN');
             try {
                 await db.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='90s'");
-                await db.query(`INSERT INTO public.contact_conversation_metrics(contact_id,page_id,source_cutoff_at,source_sha256,message_count,customer_message_count,page_message_count,customer_messages_replied,attachment_count,image_count)
-                    SELECT r.contact_id,r.page_id,r.source_cutoff_at,r.source_sha256,r.message_count,r.customer_message_count,r.page_message_count,r.customer_messages_replied,r.attachment_count,r.image_count
-                    FROM jsonb_to_recordset($1::jsonb) AS r(contact_id uuid,page_id uuid,source_cutoff_at timestamptz,source_sha256 text,message_count integer,customer_message_count integer,page_message_count integer,customer_messages_replied integer,attachment_count bigint,image_count bigint)
-                    ON CONFLICT(contact_id) DO UPDATE SET page_id=EXCLUDED.page_id,source_cutoff_at=EXCLUDED.source_cutoff_at,source_sha256=EXCLUDED.source_sha256,message_count=EXCLUDED.message_count,customer_message_count=EXCLUDED.customer_message_count,page_message_count=EXCLUDED.page_message_count,customer_messages_replied=EXCLUDED.customer_messages_replied,attachment_count=EXCLUDED.attachment_count,image_count=EXCLUDED.image_count,derived_at=clock_timestamp()
+                await db.query(`INSERT INTO public.contact_conversation_metrics(contact_id,page_id,source_cutoff_at,source_sha256,message_count,customer_message_count,page_message_count,customer_messages_replied,attachment_count,image_count,complete_history)
+                    SELECT r.contact_id,r.page_id,r.source_cutoff_at,r.source_sha256,r.message_count,r.customer_message_count,r.page_message_count,r.customer_messages_replied,r.attachment_count,r.image_count,r.complete_history
+                    FROM jsonb_to_recordset($1::jsonb) AS r(contact_id uuid,page_id uuid,source_cutoff_at timestamptz,source_sha256 text,message_count integer,customer_message_count integer,page_message_count integer,customer_messages_replied integer,attachment_count bigint,image_count bigint,complete_history boolean)
+                    ON CONFLICT(contact_id) DO UPDATE SET page_id=EXCLUDED.page_id,source_cutoff_at=EXCLUDED.source_cutoff_at,source_sha256=EXCLUDED.source_sha256,message_count=EXCLUDED.message_count,customer_message_count=EXCLUDED.customer_message_count,page_message_count=EXCLUDED.page_message_count,customer_messages_replied=EXCLUDED.customer_messages_replied,attachment_count=EXCLUDED.attachment_count,image_count=EXCLUDED.image_count,complete_history=EXCLUDED.complete_history,derived_at=clock_timestamp()
                     WHERE EXCLUDED.source_cutoff_at>=contact_conversation_metrics.source_cutoff_at`, [JSON.stringify(batch)]);
                 await db.query('COMMIT');
             } catch (error) { await db.query('ROLLBACK').catch(() => {}); throw error; }
@@ -71,7 +72,8 @@ try {
         assert(contact.fb_page_id === row.facebook_page_id && allowed.has(contact.fb_page_id), 'Contact Page differs from approved local archive');
         const snapshot = snapshotByContact.get(contact.id);
         if (!snapshot || snapshot.page_id !== contact.page_id) continue;
-        if (Date.parse(row.source_cutoff_at) < Date.parse(snapshot.source_cutoff_at)) { report.skipped_newer++; continue; }
+        const archiveCurrent = Date.parse(row.source_cutoff_at) >= Date.parse(snapshot.source_cutoff_at);
+        if (!archiveCurrent && !allowOlderArchives) { report.skipped_newer++; continue; }
         const current = metricByContact.get(contact.id);
         if (current && Date.parse(current.source_cutoff_at) > Date.parse(row.source_cutoff_at)) { report.already_current++; continue; }
         if (current && Date.parse(current.source_cutoff_at) === Date.parse(row.source_cutoff_at) && current.source_sha256 === row.source_sha256) { report.already_current++; continue; }
@@ -97,8 +99,9 @@ try {
             }
         }
         batch.push({ contact_id: contact.id, page_id: contact.page_id, source_cutoff_at: artifact.source_cutoff_at, source_sha256: artifact.source_sha256,
-            message_count: messages.length, customer_message_count: customer, page_message_count: page, customer_messages_replied: replied, attachment_count: attachments, image_count: images });
+            message_count: messages.length, customer_message_count: customer, page_message_count: page, customer_messages_replied: replied, attachment_count: attachments, image_count: images, complete_history: archiveCurrent });
         report.matched++; report.messages += messages.length; report.attachments += attachments; report.images += images;
+        if (!archiveCurrent) report.stale_archives_included++;
         if (batch.length >= batchSize) await flush();
     }
     await flush();
