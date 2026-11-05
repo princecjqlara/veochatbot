@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   if (ids.some(id => !allowed.has(id))) return NextResponse.json({ error: 'One or more ads do not belong to the authorized Pages and ad account' }, { status: 403 });
   const account = await readMetaAds(body.accountId, session.accessToken, { fields: 'id,currency,timezone_name' });
   if (account.id !== body.accountId || !/^[A-Z]{3}$/.test(account.currency || '') || typeof account.timezone_name !== 'string') throw Error('Ad-account currency or timezone could not be verified');
-  const records = new Map<string, any>(), seen = new Set<string>(); let after: string | undefined, complete = false;
+  const records = new Map<string, any>(), seen = new Set<string>(), today = phtDate(Date.now()); let after: string | undefined, complete = false;
   const deadline = Date.now() + 35000;
   for (let batch = 0; batch < 10 && Date.now() < deadline; batch++) {
    const result = await readMetaAds(body.accountId + '/insights', session.accessToken, { fields: DAILY_INSIGHT_FIELDS, level: 'ad', time_increment: '1',
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     if (!value) throw Error('Facebook returned an ad outside the requested scope');
     const key = `${value.ad_id}:${value.spend_date}`;
     if (records.has(key)) throw Error('Facebook returned duplicate daily ad rows');
-    records.set(key, { ...value, ...dailyDeliveryMetrics(row), report_complete: true, reported_zero: false });
+    records.set(key, { ...value, ...dailyDeliveryMetrics(row), report_complete: value.spend_date < today, reported_zero: false });
    }
    if (!result.paging?.next) { complete = true; break; }
    after = result.paging.cursors?.after;
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
    for (const id of ids) if (!records.has(`${id}:${day}`)) records.set(`${id}:${day}`, {
     page_id: allowed.get(id), ad_id: id, account_id: body.accountId.slice(4), spend_date: day, currency: account.currency, account_timezone: account.timezone_name,
     pht_aligned: alignedWithPht(day, account.timezone_name), amount: 0, impressions: 0, clicks: 0, reach: 0, link_clicks: 0, messaging_started: 0,
-    video_plays: 0, video_thruplays: 0, video_complete: 0, action_report_time: 'conversion', attribution_setting: 'adset_unified', report_complete: true, reported_zero: true, checked_at: checkedAt
+    video_plays: 0, video_thruplays: 0, video_complete: 0, action_report_time: 'conversion', attribution_setting: 'adset_unified', report_complete: day < today, reported_zero: day < today, checked_at: checkedAt
    });
   }
   const saved = await db.from('ad_daily_spend').upsert([...records.values()], { onConflict: 'page_id,ad_id,spend_date,account_id' });

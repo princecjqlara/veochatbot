@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
       const value = normalizeDailySpend(source, metaAccount, allowed, start, end);
       if (!value) continue;
       const key = `${value.ad_id}:${value.spend_date}`; if (rows.has(key)) throw Error('Facebook returned duplicate daily ad rows.');
-      rows.set(key, { ...value, ...dailyDeliveryMetrics(source), report_complete: true, reported_zero: false });
+      rows.set(key, { ...value, ...dailyDeliveryMetrics(source), report_complete: value.spend_date < today, reported_zero: false });
      }
      if (!result.paging?.next) { complete = true; break; }
      after = result.paging.cursors?.after; if (!after || seen.has(after)) throw Error('Facebook omitted or repeated an Insights cursor.'); seen.add(after);
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
     if (!complete) continue;
     for (let ms = Date.parse(start + 'T00:00:00Z'); ms <= Date.parse(end + 'T00:00:00Z'); ms += DAY) {
      const day = new Date(ms).toISOString().slice(0, 10);
-     for (const [adId, pageId] of allowed) if (!rows.has(`${adId}:${day}`)) rows.set(`${adId}:${day}`, { page_id: pageId, ad_id: adId, account_id: accountKey, spend_date: day, currency: metaAccount.currency, account_timezone: metaAccount.timezone_name, pht_aligned: alignedWithPht(day, metaAccount.timezone_name), amount: 0, impressions: 0, clicks: 0, reach: 0, link_clicks: 0, messaging_started: 0, video_plays: 0, video_thruplays: 0, video_complete: 0, action_report_time: 'conversion', attribution_setting: 'adset_unified', report_complete: true, reported_zero: true, checked_at: new Date().toISOString() });
+     for (const [adId, pageId] of allowed) if (!rows.has(`${adId}:${day}`)) rows.set(`${adId}:${day}`, { page_id: pageId, ad_id: adId, account_id: accountKey, spend_date: day, currency: metaAccount.currency, account_timezone: metaAccount.timezone_name, pht_aligned: alignedWithPht(day, metaAccount.timezone_name), amount: 0, impressions: 0, clicks: 0, reach: 0, link_clicks: 0, messaging_started: 0, video_plays: 0, video_thruplays: 0, video_complete: 0, action_report_time: 'conversion', attribution_setting: 'adset_unified', report_complete: day < today, reported_zero: day < today, checked_at: new Date().toISOString() });
     }
     for (let offset = 0; offset < rows.size; offset += 500) { const result = await db.from('ad_daily_spend').upsert([...rows.values()].slice(offset, offset + 500), { onConflict: 'page_id,ad_id,spend_date,account_id' }); if (result.error) throw Error('Could not save completed daily ad spend.'); }
     report.spend_rows_saved += rows.size; report.ads_read++;
