@@ -20,3 +20,13 @@ it('gives CJ the calendar, ads performance and capacity links while keeping thos
         expect(links()).not.toContain('/dashboard/ad-calendar'); expect(links()).not.toContain('/dashboard/ad-quality'); expect(links()).toContain('/dashboard/workspace?view=capacity');
     } finally { await act(async () => view.unmount()); }
 });
+
+it.each(['owner', 'team_leader'])('keeps %s Contacts and tag management available alongside the Teams Dashboard', async role => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ pages: [] }))));
+    m.session.mockReturnValue({ status: 'authenticated', data: { user: { id: 'head', role, telegramProfileConfirmed: true } } });
+    let view: any; await act(async () => { view = create(createElement(Layout, null, 'Workspace')); });
+    try {
+        const links = view.root.findAllByType('a').map((a: any) => a.props.href);
+        expect(links).toContain('/dashboard/contacts'); expect(links).toContain('/dashboard/tags'); expect(links).toContain('/dashboard/workspace');
+    } finally { await act(async () => view.unmount()); }
+});

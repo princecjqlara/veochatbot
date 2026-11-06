@@ -1,3 +1,6 @@
+import { workspaceManualTags } from '@/lib/veo-tag-access';
+import { workspaceEnabled } from '@/lib/veo-workspace';
+import { userHasPageAccess } from '@/lib/page-access';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
@@ -41,6 +44,8 @@ export async function POST(
         }
 
         const supabase = getSupabaseAdmin();
+        if (workspaceEnabled() && !await userHasPageAccess(session.user.id, pageId)) return NextResponse.json({ error: 'Page access denied' }, { status: 403 });
+        if (!await workspaceManualTags(supabase, session.user.id, pageId, tagIds)) return NextResponse.json({ error: 'Only available manual Page tags can be edited' }, { status: 403 });
 
         // Verify user has access to page
         const { data: userPage } = await supabase

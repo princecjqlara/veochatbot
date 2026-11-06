@@ -92,3 +92,28 @@ it('requires full source coverage for spend, including zero-ad Pages and newer l
     expect((await db.query<any>('SELECT veo_calendar_spend($1,$2,$2) AS r', [[foreign], earlier])).rows[0].r[0]).toMatchObject({ amount_minor: 0, complete: true });
     expect((await db.query<any>("SELECT has_table_privilege('authenticated','veo_ad_spend_coverage','SELECT') AS allowed")).rows[0].allowed).toBe(false);
 });
+it('extracts from retained launch messages with leases and preserves manual demographic corrections', async () => {
+    const payload = { entry: [{ id: '111', messaging: [{ sender: { id: 'client' }, recipient: { id: '111' }, message: { mid: 'demographic-source', text: 'Age: 34\nCity: Manila' } }] }] };
+    await db.query("INSERT INTO veo_event_inbox(event_key,page_id,occurred_at,payload) VALUES('demo-event',$1,now(),$2)", [page, JSON.stringify(payload)]);
+    await db.query("UPDATE veo_event_inbox SET status='done' WHERE event_key='demo-event'");
+    await db.query("SELECT veo_demographic_action($1,$2,'refresh')", [owner, client]);
+    const job = (await db.query<any>('SELECT * FROM veo_demographic_claim(1)')).rows[0]; expect(job.contact_id).toBe(client);
+    const sources = (await db.query<any>('SELECT veo_demographic_sources($1,$2) r', [client, job.claim_token])).rows[0].r;
+    expect(sources.messages[0]).toMatchObject({ id: 'demographic-source', text: 'Age: 34\nCity: Manila', sender: 'customer' });
+    await db.query("SELECT veo_demographic_action($1,$2,'refresh')", [owner, client]); // A newer request must survive this lease.
+    const facts = [{ field: 'age', value: '34', evidence: [{ message_id: 'demographic-source', quote: 'Age: 34', at: new Date().toISOString() }] }, { field: 'city', value: 'Manila', evidence: [{ message_id: 'demographic-source', quote: 'City: Manila', at: new Date().toISOString() }] }];
+    expect((await db.query<any>('SELECT veo_demographic_finish($1,$2,$3,$4) r', [client, job.claim_token, JSON.stringify(facts), 'a'.repeat(64)])).rows[0].r).toBe(true);
+    expect((await db.query<any>('SELECT status FROM veo_contact_demographics WHERE contact_id=$1', [client])).rows[0].status).toBe('queued');
+    await db.query("SELECT veo_demographic_action($1,$2,'correct',$3)", [manager, client, JSON.stringify({ city: 'Cebu', gender: '' })]);
+    const data = (await db.query<any>('SELECT veo_demographic_access($1,$2) r', [owner, client])).rows[0].r;
+    expect(data.manual_fields).toMatchObject({ city: 'Cebu', gender: '' }); expect(data.ai_demographics.city).toBe('Manila');
+    const calendar = (await db.query<any>('SELECT veo_calendar_inputs($1,$2,$3,$2) r', [owner, earlier, today])).rows[0].r;
+    expect(calendar.selected_clients[0].ai_demographics.age).toBe('34');
+    expect((await db.query<any>("SELECT count(*)::int n FROM veo_audit WHERE action='demographics_corrected'")).rows[0].n).toBe(1);
+});
+it('blocks demographic access outside current Pages and keeps demographic tables private', async () => {
+    await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2', [manager, page]);
+    await expect(db.query('SELECT veo_demographic_access($1,$2)', [manager, client])).rejects.toThrow(/denied/);
+    expect((await db.query<any>("SELECT has_function_privilege('anon','veo_demographic_action(uuid,uuid,text,jsonb)','EXECUTE') f,has_table_privilege('authenticated','veo_contact_demographics','SELECT') t")).rows[0]).toEqual({ f: false, t: false });
+    await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [manager, page]);
+});

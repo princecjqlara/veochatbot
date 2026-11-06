@@ -1,3 +1,4 @@
+import { workspaceTagAllowed } from '@/lib/veo-tag-access';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
@@ -41,6 +42,8 @@ export async function DELETE(request: NextRequest) {
                 { status: 404 }
             );
         }
+
+        if ((await Promise.all(tags.map(tag => workspaceTagAllowed(userId, tag)))).some(allowed => !allowed)) return NextResponse.json({ error: 'Page access denied' }, { status: 403 });
 
         // Get user's accessible pages and businesses
         const { data: userPages } = await supabase

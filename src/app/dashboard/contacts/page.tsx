@@ -1352,7 +1352,7 @@ export default function ContactsPage() {
         try {
             const contactIds = await getSelectedContactIds();
 
-            await fetch(`/api/pages/${selectedPageId}/contacts/bulk-add-tags`, {
+            const response = await fetch(`/api/pages/${selectedPageId}/contacts/bulk-add-tags`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1360,6 +1360,8 @@ export default function ContactsPage() {
                     tagIds: Array.from(selectedTagIds)
                 })
             });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.message || result.error || 'Contact tag update failed');
 
             setShowAddTagsModal(false);
             setSelectedTagIds(new Set());
@@ -1367,6 +1369,7 @@ export default function ContactsPage() {
             await fetchContacts();
         } catch (error) {
             console.error('Error adding tags:', error);
+            alert((error as Error).message || 'Contact tag update failed');
         } finally {
             setActionLoading(false);
         }
@@ -1379,7 +1382,7 @@ export default function ContactsPage() {
         try {
             const contactIds = await getSelectedContactIds();
 
-            await fetch(`/api/pages/${selectedPageId}/contacts/bulk-remove-tags`, {
+            const response = await fetch(`/api/pages/${selectedPageId}/contacts/bulk-remove-tags`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1387,6 +1390,8 @@ export default function ContactsPage() {
                     tagIds: Array.from(selectedTagIds)
                 })
             });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.message || result.error || 'Contact tag update failed');
 
             setShowRemoveTagsModal(false);
             setSelectedTagIds(new Set());
@@ -1394,6 +1399,7 @@ export default function ContactsPage() {
             await fetchContacts();
         } catch (error) {
             console.error('Error removing tags:', error);
+            alert((error as Error).message || 'Contact tag update failed');
         } finally {
             setActionLoading(false);
         }
@@ -2630,7 +2636,7 @@ export default function ContactsPage() {
                         Select tags to add to <span className="font-bold text-black">{getSelectionCount()}</span> contacts.
                     </p>
                     <div className="max-h-64 overflow-y-auto border border-black p-2 space-y-1">
-                        {tags.map((tag) => (
+                        {tags.filter(tag => !session?.user.role || !tag.is_default && !tag.system_key).map((tag) => (
                             <button
                                 key={tag.id}
                                 onClick={() => toggleTagSelection(tag.id)}
@@ -2684,7 +2690,7 @@ export default function ContactsPage() {
                         Select tags to remove from <span className="font-bold text-black">{getSelectionCount()}</span> contacts.
                     </p>
                     <div className="max-h-64 overflow-y-auto border border-black p-2 space-y-1">
-                        {tags.map((tag) => (
+                        {tags.filter(tag => !session?.user.role || !tag.is_default && !tag.system_key).map((tag) => (
                             <button
                                 key={tag.id}
                                 onClick={() => toggleTagSelection(tag.id)}

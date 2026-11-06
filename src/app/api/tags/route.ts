@@ -1,3 +1,5 @@
+import { workspaceEnabled } from '@/lib/veo-workspace';
+import { workspaceTagAllowed, workspaceTagList } from '@/lib/veo-tag-access';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
@@ -35,6 +37,7 @@ export async function GET(request: NextRequest) {
         }
 
         const currentUserId = session.user.id;
+        if (workspaceEnabled()) return workspaceTagList(request, currentUserId, getSupabaseAdmin());
 
         const searchParams = request.nextUrl.searchParams;
         const page = parseInt(searchParams.get('page') || '1');
@@ -318,6 +321,7 @@ export async function POST(request: NextRequest) {
         }
 
         const supabase = getSupabaseAdmin();
+        if (!await workspaceTagAllowed(currentUserId, { owner_type: ownerType, owner_id: ownerId, page_id: pageId })) return NextResponse.json({ error: 'Page access denied' }, { status: 403 });
 
         if (!['user', 'page', 'business'].includes(ownerType)) {
             return NextResponse.json(
@@ -510,6 +514,7 @@ export async function PUT(request: NextRequest) {
             );
         }
 
+        if (!await workspaceTagAllowed(currentUserId, existingTag)) return NextResponse.json({ error: 'Page access denied' }, { status: 403 });
         // Verify permission based on owner_type
         let hasPermission = false;
         if (existingTag.owner_type === 'user' && existingTag.owner_id === currentUserId) {
@@ -742,6 +747,7 @@ export async function DELETE(request: NextRequest) {
             );
         }
 
+        if (!await workspaceTagAllowed(currentUserId, existingTag)) return NextResponse.json({ error: 'Page access denied' }, { status: 403 });
         // Same permission check as PUT
         let hasPermission = false;
         if (existingTag.owner_type === 'user' && existingTag.owner_id === currentUserId) {

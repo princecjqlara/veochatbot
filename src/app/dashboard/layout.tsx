@@ -96,6 +96,8 @@ export default function DashboardLayout({
 
     const navItems = session.user.role ? ['owner', 'team_leader'].includes(session.user.role) ? [
         { href: '/dashboard/workspace', icon: LayoutDashboard, label: 'Teams Dashboard' },
+        { href: '/dashboard/contacts', icon: Users, label: 'Contacts & Bulk Tools' },
+        { href: '/dashboard/tags', icon: Tag, label: 'Contact Tags' },
         { href: '/dashboard/workspace?view=capacity', icon: BarChart3, label: 'Capacity & Quotas' },
         { href: '/dashboard/ad-calendar', icon: BarChart3, label: 'Calendar & Analytics' },
         { href: '/dashboard/ad-quality', icon: BarChart3, label: 'Ads Performance' },
@@ -114,6 +116,7 @@ export default function DashboardLayout({
         { href: '/dashboard/workspace?view=capacity', icon: BarChart3, label: 'Capacity & Quotas' },
         ...(session.user.role !== 'member' ? [{ href: '/dashboard/workspace?view=performance', icon: Users, label: 'Employee Performance' }, { href: '/dashboard/workspace?view=rankings', icon: BarChart3, label: 'Rankings' }, { href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' }] : []),
         { href: '/dashboard/contacts', icon: Users, label: 'Contacts & Bulk Tools' },
+        { href: '/dashboard/tags', icon: Tag, label: 'Contact Tags' },
         { href: '/dashboard/pipeline', icon: GitBranch, label: 'Pipeline' },
         { href: '/dashboard/campaigns', icon: MessageSquare, label: 'Campaigns' },
         { href: '/dashboard/exports', icon: Download, label: 'Exports' },

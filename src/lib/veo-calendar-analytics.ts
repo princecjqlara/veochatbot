@@ -1,3 +1,4 @@
+import { recordedDemographics, demographicSubgroups } from './veo-demographics';
 import { calendarRange } from './ad-calendar';
 
 const DAY = 86400000;
@@ -7,12 +8,9 @@ const ratio = (a: number, b: number) => b > 0 ? a / b : null;
 const mean = (a: number[]) => a.length ? a.reduce((s, n) => s + n, 0) / a.length : null;
 const median = (a: number[]) => { const s = [...a].sort((a, b) => a - b); return s.length ? (s[Math.floor((s.length - 1) / 2)] + s[Math.floor(s.length / 2)]) / 2 : null; };
 const text = (v: unknown) => typeof v === 'string' || typeof v === 'number' ? String(v).trim().replace(/\s+/g, ' ').slice(0, 160) : '';
-const normalized = (v: string) => v.toLowerCase().replace(/[\s_-]+/g, '');
 function field(c: any, aliases: string[]) {
-    for (const layer of [c.manual_fields, c.saved_fields, Object.fromEntries((Array.isArray(c.extracted_answers) ? c.extracted_answers : []).filter((a: any) => a.evidence?.length).map((a: any) => [a.field, a.value]))]) {
-        const entry = Object.entries(layer || {}).find(([key]) => aliases.map(normalized).includes(normalized(key)));
-        if (entry) return text(entry[1]) || 'Unknown'; // An explicit manual clearing takes precedence.
-    }
+    const records = recordedDemographics(c);
+    for (const alias of aliases) { const found = records.find(r => r.key === alias); if (found && found.source !== 'unknown') return found.value; }
     return 'Unknown';
 }
 export function demographics(clients: any[]) {
@@ -134,7 +132,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
     const selectedRow = days.find(d => d.work_date === selectedDay);
     if (!selectedRow) throw new Error('Choose a date inside the calendar month');
     return { month, selected_day: selectedDay, generated_at: input.as_of, scope: { role: input.scope.role, launch_at: input.scope.launch_at }, pages: input.pages, days,
-        selected: { ...selectedRow, cohort: cohortTotals, clients, touchpoints, timing, demographics: demographics(rawClients), objections: objections(rawClients), projection: { ...projection,
+        selected: { ...selectedRow, cohort: cohortTotals, clients, touchpoints, timing, demographics: demographics(rawClients), subdemographics: demographicSubgroups(rawClients), objections: objections(rawClients), projection: { ...projection,
             revenue: selected.finance.map((f: any) => ({ currency: f.currency, expected_minor: projection.additional != null && f.mean_order_minor != null ? projection.additional * f.mean_order_minor : null })) },
             top_members: topMembers, salary_days: salaryDays, cohort_response: { clients_with_history: historyClients.length, clients_total: selected.inquiries, rate: ratio(sum(historyClients, 'customer_messages_replied'), sum(historyClients, 'customer_message_count')), latest_source: historyClients.map((c: any) => c.message_history_as_of).filter(Boolean).sort().at(-1) || null } },
         coverage: { missing_inquiry_dates: Number(input.missing_inquiry_dates), financial_scope: 'Verified retained records and new VEO ledger in your seller branch. Historical analytics never create salary or quota entitlements.',
