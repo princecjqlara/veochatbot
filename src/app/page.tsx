@@ -2,11 +2,16 @@
 
 import { useSession, signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { Square, ArrowRight, LayoutGrid, Users, MessageSquare, X } from 'lucide-react';
 import { FACEBOOK_PERMISSION_SCOPE } from '@/lib/facebook-permissions';
+import VeoSignIn from '@/components/VeoSignIn';
 
 export default function HomePage() {
+  return <Suspense fallback={<p>Loading VEO…</p>}><VeoSignIn /></Suspense>;
+}
+
+function LegacyHomePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 

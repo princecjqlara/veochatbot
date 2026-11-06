@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { mediaToken } from './veo-media-token';
 
 export const CHATBOT_MEDIA_BUCKET = 'chatbot-media';
 export const MAX_CHATBOT_MEDIA_BYTES = 50 * 1024 * 1024;
@@ -182,6 +183,8 @@ export function normalizeChatbotMediaSourcePath(relativePath: string, fileName: 
 }
 
 export function createChatbotMediaPublicViewUrl(assetId: string) {
+    const expires = Math.floor(Date.now() / 1000) + 3600;
+    const suffix = process.env.VEO_WORKSPACE_ENABLED === 'true' ? `?expires=${expires}&token=${mediaToken(assetId, expires)}` : '';
     const candidates = [
         process.env.PUBLIC_APP_URL,
         process.env.NEXTAUTH_URL,
@@ -191,12 +194,12 @@ export function createChatbotMediaPublicViewUrl(assetId: string) {
         if (!candidate) continue;
         try {
             const url = new URL(candidate);
-            return `${url.origin}/api/chatbot-media/${encodeURIComponent(assetId)}`;
+            return `${url.origin}/api/chatbot-media/${encodeURIComponent(assetId)}${suffix}`;
         } catch {
             // Try the next configured public URL.
         }
     }
-    return `/api/chatbot-media/${encodeURIComponent(assetId)}`;
+    return `/api/chatbot-media/${encodeURIComponent(assetId)}${suffix}`;
 }
 
 export async function analyzeChatbotMedia(input: {

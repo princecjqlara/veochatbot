@@ -35,6 +35,7 @@ async function dispatchRecoveredMessage(payload: unknown): Promise<Response> {
 export async function recoverMissingChatbotMessages(input: {
     supabase?: Db; now?: Date; dispatch?: (payload: unknown) => Promise<Response>;
 } = {}) {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') return { pages: 0, scanned: 0, recovered: 0, failed: 0 };
     const db = input.supabase || getSupabaseAdmin();
     const now = input.now || new Date();
     const result = { pages: 0, scanned: 0, recovered: 0, failed: 0 };

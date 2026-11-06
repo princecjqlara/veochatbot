@@ -7,6 +7,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { SUPABASE_IN_FILTER_BATCH_SIZE } from '@/lib/supabase-pagination';
 import { PaginatedResponse, Campaign } from '@/types';
 import { recordPageActivity } from '@/lib/activity-history';
+import { workspaceEnabled, workspaceScope } from '@/lib/veo-workspace';
 
 function normalizeStringArray(value: unknown): string[] {
     if (!Array.isArray(value)) {
@@ -68,7 +69,8 @@ export async function GET(request: NextRequest) {
             .select('page_id')
             .eq('user_id', session.user.id);
 
-        const accessiblePageIds = userPages?.map(up => up.page_id) || [];
+        const scope = workspaceEnabled() ? await workspaceScope(session.user.id) : null;
+        const accessiblePageIds = workspaceEnabled() ? scope?.page_ids || [] : userPages?.map(up => up.page_id) || [];
 
         if (accessiblePageIds.length === 0) {
             return NextResponse.json({
@@ -84,6 +86,8 @@ export async function GET(request: NextRequest) {
             .select('*, pages(name)', { count: 'exact' })
             .in('page_id', accessiblePageIds)
             .order('created_at', { ascending: false });
+
+        if (scope?.launch_at) query = query.gte('created_at', scope.launch_at);
 
         if (pageId && accessiblePageIds.includes(pageId)) {
             query = query.eq('page_id', pageId);

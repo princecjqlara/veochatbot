@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { workspaceEnabled, workspaceScope } from '@/lib/veo-workspace';
 
 type ActivityActor = {
     id: string;
@@ -105,6 +106,13 @@ export async function GET(
             .eq('page_id', pageId)
             .order('created_at', { ascending: false })
             .limit(candidateLimit);
+
+        if (workspaceEnabled()) {
+            const scope = await workspaceScope(session.user.id);
+            if (!scope?.launch_at || !scope.page_ids.includes(pageId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+            campaignQuery = campaignQuery.gte('created_at', scope.launch_at);
+            auditQuery = auditQuery.gte('created_at', scope.launch_at);
+        }
 
         if (search) {
             const safeSearch = search.replace(/[%_,()]/g, ' ').trim();

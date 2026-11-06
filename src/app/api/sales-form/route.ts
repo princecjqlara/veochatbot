@@ -13,6 +13,11 @@ async function context(request: NextRequest) {
     const identity = verifySalesFormToken(request.nextUrl.searchParams.get('token') || '');
     if (!identity) return { error: NextResponse.json({ error: 'This form link has expired or is invalid. Request the form again in chat.' }, { status: 401, headers }) };
     const db = getSupabaseAdmin();
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+        const active = await db.rpc('veo_active_pages');
+        if (active.error) throw new Error('Page permissions unavailable');
+        if (!active.data?.includes(identity.pageId)) return { error: NextResponse.json({ error: 'This form is unavailable.' }, { status: 404, headers }) };
+    }
     const [config, contact, state] = await Promise.all([
         db.from('chatbot_configs').select('*').eq('page_id', identity.pageId).maybeSingle(),
         db.from('contacts').select('id,last_inbound_at,chatbot_enabled,pipeline_stage,pipeline_stage_source').eq('id', identity.contactId).eq('page_id', identity.pageId).maybeSingle(),

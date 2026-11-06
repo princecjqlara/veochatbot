@@ -7,6 +7,7 @@ import { ArrowLeft, CheckCircle2, Clock3, RefreshCw } from 'lucide-react';
 import LeadQualityBadge from '@/components/LeadQualityBadge';
 import ContactBotProjection from '@/components/ContactBotProjection';
 import ContactSources from '@/components/ContactSources';
+import VeoContactDetails from '@/components/VeoContactDetails';
 
 const date = (value?: string | null) => value ? new Date(value).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'Not known';
 const duration = (hours: number | null | undefined) => hours == null ? 'Not known' : hours < 24 ? `${hours.toFixed(1)} hours` : `${(hours / 24).toFixed(1)} days`;
@@ -113,6 +114,7 @@ function ContactProfile() {
         <nav className="flex gap-1 overflow-x-auto border-b border-slate-200" aria-label="Contact profile sections">{['Overview', 'Conversation', 'Sources', 'Payments', 'Timeline', 'Projection'].map(name => <button key={name} onClick={() => setTab(name)} aria-current={tab === name ? 'page' : undefined} className={`whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium ${tab === name ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'}`}>{name}</button>)}</nav>
 
         {tab === 'Overview' && <>
+            <VeoContactDetails contactId={contactId} name={contact.name} />
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[
                 ['Data collected', `${details.collected_count} / ${details.required_count} required answers`],
                 ['Verified purchases', String(metrics.purchase_count)],

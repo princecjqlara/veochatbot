@@ -2,6 +2,17 @@ type ScopeDb={from?:unknown;rpc?:(name:string,args:Record<string,unknown>)=>any}
 /** Only enabled on the separated database. An unavailable ownership read must
  * never release historical automation belonging to another Facebook app. */
 export async function getAutomationPageScope(db:ScopeDb):Promise<string[]|null>{
+ if(process.env.VEO_WORKSPACE_ENABLED==='true'){
+  if(!db.rpc)throw new Error('Workspace page scope unavailable');
+  const {data,error}=await db.rpc('veo_active_pages',{});
+  if(error||!Array.isArray(data))throw new Error('Workspace page scope unavailable');
+  if(process.env.VEO_ENFORCE_PAGE_RUNTIME_SCOPE==='true'){
+   const owned=await db.rpc('get_automation_page_scope',{});
+   if(owned.error||!Array.isArray(owned.data))throw new Error('Page automation ownership is temporarily unavailable');
+   return data.filter(id=>owned.data.includes(id));
+  }
+  return data;
+ }
  if(process.env.VEO_ENFORCE_PAGE_RUNTIME_SCOPE!=='true')return null;
  if(!db.rpc)throw new Error('Page automation ownership cannot be checked');
  const {data,error}=await db.rpc('get_automation_page_scope',{});

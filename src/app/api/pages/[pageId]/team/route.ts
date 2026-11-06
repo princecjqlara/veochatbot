@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { workspaceEnabled, workspaceScope } from '@/lib/veo-workspace';
 
 interface TeamMember {
     id: string;
@@ -64,9 +65,11 @@ export async function GET(
             })
             .filter((member): member is TeamMember => member !== null);
 
+        const scope = workspaceEnabled() ? await workspaceScope(session.user.id) : null;
+        const visible = scope ? normalizedMembers.filter(m => scope.worker_ids.includes(m.id)) : normalizedMembers;
         return NextResponse.json({
-            members: normalizedMembers,
-            total: normalizedMembers.length
+            members: visible,
+            total: visible.length
         });
     } catch (error) {
         console.error('Error fetching page team members:', error);

@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') return NextResponse.json({ error: 'Use the retained VEO primary page connection' }, { status: 410 });
     const partnerSecret = process.env.FACEBOOK_PARTNER_APP_SECRET;
     const primarySecret = process.env.FACEBOOK_APP_SECRET;
     const legacyCallback = process.env.FACEBOOK_PARTNER_LEGACY_WEBHOOK_URL;

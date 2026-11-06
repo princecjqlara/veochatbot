@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { ingestTelegramMedia, type TelegramMessage } from '@/lib/telegram-media';
 import { parseTelegramMediaRoutes } from '@/lib/telegram-config';
+import { getSupabaseAdmin } from '@/lib/supabase';
 
 export const maxDuration = 300;
 
@@ -42,6 +43,11 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ ok: true, status: 'ignored', reason: 'Telegram chat is not mapped' });
         }
 
+        if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+            const active = await getSupabaseAdmin().rpc('veo_active_pages');
+            if (active.error) return NextResponse.json({ error: 'Page scope unavailable' }, { status: 503 });
+            if (!active.data?.includes(pageId)) return NextResponse.json({ ok: true, status: 'ignored', reason: 'Page is disabled in this workspace' });
+        }
         const result = await ingestTelegramMedia({ botToken, pageId, message });
         return NextResponse.json({ ok: true, ...result });
     } catch (error) {

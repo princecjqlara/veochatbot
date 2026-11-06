@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { receiveWorkspaceEvents } from '@/lib/veo-events';
+import { veoEventReplay } from '@/lib/veo-event-context';
 import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
 import { messengerTimestamp } from '@/lib/messenger-timestamp';
 import { getSupabaseAdmin } from '@/lib/supabase';
@@ -136,6 +138,13 @@ export async function GET(request: NextRequest) {
 
 // POST /api/facebook/webhook - Receive webhook events
 export async function POST(request: NextRequest) {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true' && !veoEventReplay.getStore()) return receiveWorkspaceEvents(request);
+    // Compatible deployments journal post-cutoff events before workspace mode is enabled.
+    // The database rejects pre-launch events, closing the deployment-to-launch collection gap.
+    if (process.env.VEO_WORKSPACE_ENABLED !== 'true' && process.env.VEO_JAUCIAN_SECRET) {
+        const recorded = await receiveWorkspaceEvents(request.clone());
+        if (!recorded.ok) return recorded;
+    }
     const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

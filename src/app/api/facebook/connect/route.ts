@@ -8,6 +8,7 @@ import { isFacebookReauthRequired } from '@/lib/facebook';
 import { DatabaseReadTimeout, requestDeadline } from '@/lib/request-deadline';
 import { FacebookPageConnectionError, verifyFacebookPageConnection, facebookWebhookConnectionStatus } from '@/lib/facebook-page-connection';
 import { isApprovedVeoPage } from '@/lib/veo-page-scope';
+import { workspaceEnabled, workspaceScope } from '@/lib/veo-workspace';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
@@ -61,12 +62,17 @@ export async function POST(request: NextRequest) {
         // Check if page already exists
         const { data: existingPage, error: lookupError } = await requestDeadline(signal => supabase
             .from('pages')
-            .select('id')
+            .select('id,veo_tenant_id')
             .eq('fb_page_id', fbPageId)
             .abortSignal(signal).maybeSingle(), 10000);
         if (lookupError) throw lookupError;
+        if (workspaceEnabled()) {
+            const scope = await workspaceScope(userId);
+            if (scope?.role !== 'owner' || (existingPage?.veo_tenant_id && existingPage.veo_tenant_id !== scope.tenant_id))
+                return NextResponse.json({ error: 'This Page cannot be connected to your workspace' }, { status: 403 });
+        }
         const verified = await verifyFacebookPageConnection(fbPageId, accessToken);
-        if(process.env.VEO_PAGE_SCOPE_ENFORCED==='true'&&!isApprovedVeoPage(fbPageId,verified.name||''))return NextResponse.json({success:false,error:'Page outside VeoBot scope',message:'Choose one of the 15 VeoBot Pages configured for this workspace.'},{status:403});
+        if((workspaceEnabled()||process.env.VEO_PAGE_SCOPE_ENFORCED==='true')&&!isApprovedVeoPage(fbPageId,verified.name||''))return NextResponse.json({success:false,error:'Page outside VeoBot scope',message:'Choose one of the 15 VeoBot Pages configured for this workspace.'},{status:403});
 
         let pageId: string;
 
@@ -113,6 +119,12 @@ export async function POST(request: NextRequest) {
 
         if (linkError) throw linkError;
         if (linkedPage?.page_id !== pageId) throw new Error('Page membership could not be verified after saving');
+        if (workspaceEnabled()) {
+            const scope = await workspaceScope(userId);
+            if (scope?.role !== 'owner') return NextResponse.json({ error: 'Owner required' }, { status: 403 });
+            const saved = await supabase.from('pages').update({ veo_tenant_id: scope.tenant_id, veo_enabled: true }).eq('id', pageId);
+            if (saved.error) throw new Error('Workspace page connection could not be saved');
+        }
 
         let warning: WebhookRefreshWarning | null = null;
         try {

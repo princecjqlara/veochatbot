@@ -230,6 +230,7 @@ async function processJob(db: Db, job: ProfileJob, budgetMs: number) {
 }
 
 export async function processContactProfiles(input: { contactId?: string; limit?: number; budgetMs?: number } = {}) {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') return { processed: 0, failed: 0, mode: 'launch_events_only' };
     // Historical analysis is performed from the verified local archive. Do not
     // refetch full histories from Meta or send them to OpenRouter from a request.
     void input;

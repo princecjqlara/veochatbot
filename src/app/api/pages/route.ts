@@ -3,6 +3,7 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { DatabaseReadTimeout, requestDeadline } from '@/lib/request-deadline';
 import { facebookWebhookConnectionStatus } from '@/lib/facebook-page-connection';
+import { workspaceEnabled, workspaceScope } from '@/lib/veo-workspace';
 
 export const dynamic = 'force-dynamic';
 
@@ -124,9 +125,10 @@ export async function GET(request: NextRequest) {
 
         if (error) throw error;
 
+        const scope = workspaceEnabled() ? await workspaceScope(userId) : null;
         const pageRecords = (userPages
             ?.map((up) => Array.isArray(up.pages) ? up.pages[0] : up.pages)
-            .filter(Boolean) || []) as PageRecord[];
+            .filter(p => p && (!workspaceEnabled() || scope?.page_ids.includes(p.id))) || []) as PageRecord[];
 
         const connectionDetails = request.nextUrl?.searchParams.get('connectionDetails') === '1';
         const checkWebhook = connectionDetails || process.env.VEO_ENFORCE_PAGE_RUNTIME_SCOPE === 'true';

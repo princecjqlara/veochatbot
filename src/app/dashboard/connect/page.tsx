@@ -211,6 +211,7 @@ export default function ConnectPage() {
         setLoading(true);
         setError(null);
         setRequiresReauth(false);
+        if (session?.user.role === 'owner' && typeof document !== 'undefined') document.cookie = `veo-login-role=owner; Path=/; SameSite=Lax; Max-Age=600${location.protocol === 'https:' ? '; Secure' : ''}`;
         try { await requestDeadline(() => signIn(
             'facebook',
             { callbackUrl: '/dashboard/connect' },

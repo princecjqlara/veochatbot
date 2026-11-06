@@ -47,11 +47,13 @@ describe('VeoBot database migration safeguards', () => {
     CREATE TABLE pages(id text PRIMARY KEY,name text);CREATE TABLE messages(id text PRIMARY KEY,page_id text REFERENCES pages(id));`);
    await db.exec('BEGIN');
    await preserveEmptyLegacyTables(adapter(db));
-   const plan = schemaMigrationPlan(); expect(plan).toHaveLength(64);
+   const plan = schemaMigrationPlan();
+   expect(plan.length).toBeGreaterThanOrEqual(64);
+   expect(plan.some(m => m.sql.includes('CREATE TABLE public.veo_tenants'))).toBe(true);
    for (const migration of plan) await db.exec(migration.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- local scheduler stub'));
    const fields = (await db.query<any>("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='pages'")).rows.map(row => row.column_name);
    expect(fields).toContain('fb_page_id');
-   const required = ['pages', 'contacts', 'user_pages', 'contact_verified_payments', 'ad_daily_spend', 'contact_profile_snapshots'];
+   const required = ['pages', 'contacts', 'user_pages', 'contact_verified_payments', 'ad_daily_spend', 'contact_profile_snapshots', 'veo_accounts', 'veo_orders', 'veo_payments', 'veo_photo_objects'];
    expect((await db.query<any>("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public' AND tablename=ANY($1::text[])", [required])).rows[0].n).toBe(required.length);
    expect((await db.query<any>("SELECT has_function_privilege('anon','public.get_ad_calendar_report(uuid[],timestamptz,timestamptz,text)','EXECUTE') AS allowed")).rows[0].allowed).toBe(false);
    expect((await db.query<any>("SELECT has_function_privilege('anon','public.get_contact_finance_records(uuid,uuid)','EXECUTE') AS allowed")).rows[0].allowed).toBe(false);

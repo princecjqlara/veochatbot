@@ -9,7 +9,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const scope = await authorizeContactProfile(request, params);
     if ('error' in scope) return scope.error;
     try {
-        const profile = await getContactProfile(getSupabaseAdmin(), scope.pageId, scope.contactId);
+        const profile = await getContactProfile(getSupabaseAdmin(), scope.pageId, scope.contactId, scope.actorId);
         return profile ? NextResponse.json(profile, { headers: { 'Cache-Control': 'no-store' } }) : NextResponse.json({ error: 'Contact not found' }, { status: 404 });
     } catch { return NextResponse.json({ error: 'Contact profile is temporarily unavailable' }, { status: 503 }); }
 }

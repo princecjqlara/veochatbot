@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { assertVeoJobAllowed } from './veo-delivery';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import {
     getConversationForPsid,
@@ -41,6 +42,7 @@ type ExportJob = {
     id: string;
     page_id: string;
     created_by: string;
+    created_at?: string;
     scope: 'all' | 'selected';
     contact_ids: unknown;
     next_contact_index: number;
@@ -435,6 +437,7 @@ export async function processOneConversationExportBatch(
 
     try {
         await ensureExportBucket();
+        await assertVeoJobAllowed(job.page_id, job.created_by, job.created_at);
         const page = await loadPageOnce(job.page_id, context);
         const contactIds = normalizeContactIds(job.contact_ids);
         let rows: ExportedMessage[];
@@ -444,7 +447,31 @@ export async function processOneConversationExportBatch(
         let complete: boolean;
         let nextContactIndex = job.next_contact_index;
 
-        if (job.scope === 'selected') {
+        if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+            const offset = job.next_cursor?.startsWith('veo-events:') ? Number(job.next_cursor.slice(11)) : 0;
+            const events = await supabase.from('veo_event_inbox').select('event_key,occurred_at,payload').eq('page_id', job.page_id)
+                .order('occurred_at').order('event_key').range(offset, offset + 249);
+            if (events.error) throw new Error('Launch-period event export unavailable');
+            const selectedContacts = job.scope === 'selected' ? await loadContacts(job.page_id, contactIds) : [];
+            const allowedPsids = new Set(selectedContacts.map(c => c.psid));
+            rows = [];
+            for (const item of events.data || []) for (const entry of item.payload.entry || []) for (const event of [...(entry.messaging || []), ...(entry.standby || [])]) {
+                if (!event.message) continue;
+                const incoming = event.sender?.id !== page.fb_page_id;
+                const psid = incoming ? event.sender?.id : event.recipient?.id;
+                if (!psid || (job.scope === 'selected' && !allowedPsids.has(psid))) continue;
+                rows.push({ pageId: job.page_id, pageName: page.name, fbPageId: page.fb_page_id, conversationId: '', conversationUpdatedTime: item.occurred_at,
+                    contactPsid: psid, contactName: selectedContacts.find(c => c.psid === psid)?.name || 'Unknown',
+                    messageId: event.message.mid || item.event_key, senderId: event.sender?.id || '', senderName: '', senderType: incoming ? 'contact' : 'page',
+                    sentBy: incoming ? 'Contact' : 'Page', direction: incoming ? 'incoming' : 'outgoing', messageSource: incoming ? 'contact' : 'unknown',
+                    sourceName: 'Recorded since VEO launch; earlier history unavailable', sourceId: '', actorUserId: '', actorName: '',
+                    messageKind: event.message.attachments?.length ? 'attachment' : 'text', message: event.message.text || '[Attachment; contents unavailable in text export]', sentAt: item.occurred_at, createdTime: item.occurred_at });
+            }
+            conversations = new Set(rows.map(r => r.contactPsid)).size;
+            processedItems = events.data?.length || 0;
+            complete = processedItems < 250;
+            nextCursor = complete ? null : `veo-events:${offset + processedItems}`;
+        } else if (job.scope === 'selected') {
             const ids = contactIds.slice(job.next_contact_index, job.next_contact_index + CONVERSATION_EXPORT_BATCH_SIZE);
             const result = await exportSelectedBatch(job.page_id, page, await loadContacts(job.page_id, ids));
             rows = result.rows;
@@ -465,6 +492,7 @@ export async function processOneConversationExportBatch(
         }
 
         rows = await addOutboundAttribution(job.page_id, rows);
+        await assertVeoJobAllowed(job.page_id, job.created_by, job.created_at);
         const rawCsv = toCsv(rows);
         const newlineIndex = rawCsv.indexOf('\n');
         const chunkBody = job.chunk_count === 0

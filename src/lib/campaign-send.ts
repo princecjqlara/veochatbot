@@ -1,4 +1,5 @@
 import { generatePersonalizedMessage } from './ai';
+import { assertVeoSendAllowed } from './veo-delivery';
 import { parseCampaignMessageParts } from './campaign-message-sequence';
 import { getConversationIdForPsid, getConversationMessages, sendMessage, getPageTemplates, takeThreadControl } from './facebook';
 import { getBaseTemplateName, UTILITY_TEMPLATES as TEMPLATE_DEFS } from './facebook-templates';
@@ -521,6 +522,7 @@ export async function sendCampaignById({
                                     sendArgs.push(undefined, messageMediaHeader);
                                 }
 
+                                await assertVeoSendAllowed(page.fb_page_id, campaign.created_by, campaign.id);
                                 const sendResult = await sendMessage(...sendArgs);
                                 await recordOutboundMessageEvent(supabase, {
                                     pageId: campaign.page_id,

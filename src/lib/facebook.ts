@@ -1,4 +1,5 @@
 import { FacebookPage, FacebookConversation } from '@/types';
+import { assertVeoSendAllowed } from './veo-delivery';
 import { FACEBOOK_REAUTH_MESSAGE } from './facebook-permissions';
 import { isFacebookReauthMessage } from './facebook-errors';
 import type { TemplateMediaType } from './facebook-templates';
@@ -174,6 +175,7 @@ export async function getPageConversations(
     fetchAll: boolean = true, // Set to true to fetch ALL conversations
     sinceTimestamp?: string // ISO timestamp - only fetch conversations updated after this
 ): Promise<FacebookConversation[]> {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') throw new Error('Historical conversation imports are disabled; new events arrive through webhooks');
     const allConversations: FacebookConversation[] = [];
 
     // Build initial URL with optional since parameter
@@ -263,6 +265,7 @@ export async function getPageConversationsBatch(
         includeMessages?: boolean;
     } = {}
 ): Promise<PageConversationBatch> {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') throw new Error('Historical conversation imports are disabled');
     const limit = options.limit || 100;
     const fields = options.includeMessages
         ? 'id,participants,updated_time,messages.limit(100){id,message,from,created_time}'
@@ -447,6 +450,7 @@ export async function sendMessage(
     templateMediaHeader?: { type: TemplateMediaType; url: string },
     quickReplies?: Array<{ title: string; payload: string }>
 ): Promise<{ message_id: string }> {
+    await assertVeoSendAllowed(pageId);
     // Build the request payload based on messaging type
     let bodyPayload: Record<string, unknown>;
 
@@ -636,6 +640,7 @@ export async function sendMessengerMediaAttachment(
     media: { type: 'image' | 'video' | 'audio' | 'file'; url: string },
     messagingType: 'RESPONSE' | 'HUMAN_AGENT' = 'RESPONSE'
 ): Promise<{ message_id: string; attachment_id?: string }> {
+    await assertVeoSendAllowed(pageId);
     const bodyPayload: Record<string, unknown> = {
         recipient: { id: recipientPsid },
         message: {
@@ -711,6 +716,7 @@ export async function sendMessengerGenericCarousel(
     cards: MessengerCarouselCard[],
     messagingType: 'RESPONSE' | 'HUMAN_AGENT' = 'RESPONSE'
 ): Promise<{ message_id: string }> {
+    await assertVeoSendAllowed(pageId);
     const normalizedCards = cards
         .filter((card) => card.title.trim() && /^https:\/\//i.test(card.url.trim()))
         .slice(0, 10)
@@ -807,6 +813,7 @@ export async function getConversationMessages(
     maxMessages: number = 500, // Safety limit to prevent infinite loops
     options: { throwOnError?: boolean; initialPage?: ConversationMessagePage } = {}
 ): Promise<ConversationMessage[]> {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') return []; // Coverage remains explicitly unavailable; do not backfill.
     const allMessages: ConversationMessage[] = options.initialPage?.data
         ? [...options.initialPage.data]
         : [];
@@ -1094,6 +1101,7 @@ export async function sendUtilityMessage(
     bodyTexts: string | string[],
     mediaHeader?: { type: TemplateMediaType; url: string }
 ): Promise<{ message_id: string; recipient_id: string }> {
+    await assertVeoSendAllowed(pageId);
     const textsArray = Array.isArray(bodyTexts) ? bodyTexts : [bodyTexts];
     const invalidParameter = textsArray
         .map(getUtilityTemplateParameterValidationError)

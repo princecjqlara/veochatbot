@@ -69,6 +69,7 @@ async function getMessagesSince(conversationId: string, token: string, since: st
 }
 
 export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: boolean; pageId?: string; claimedPage?: Page } = {}) {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') return { pages: 0, conversations: 0, tagged: 0, pipelineMoved: 0 };
     const db = getSupabaseAdmin();
     const fields = input.chatbotOnly
         ? 'id,fb_page_id,access_token,automation_app_id,messaging_auto_tag_checked_at,messaging_auto_tag_cursor,messaging_auto_tag_scan_started_at,chatbot_configs!chatbot_configs_page_id_fkey!inner(enabled)'

@@ -2,11 +2,12 @@ import { getChatbotDetailProgress } from '@/lib/chatbot-form-progress';
 import { contactControls } from '@/lib/contact-controls';
 import { hoursBetween, purchaseMetrics, type PurchaseRecord, type VerifiedPayment } from '@/lib/contact-profile-evidence';
 import { profileAdFields } from '@/lib/contact-profile-sources';
+import { workspaceEnabled, workspaceScope } from './veo-workspace';
 
 type Db = { from: (table: string) => any; rpc: (name: string, args: Record<string, unknown>) => any };
 const jobFields = 'status,reason,requested_version,working_version,scan_started,history_complete,message_count,analyzed_count,error_message,requested_at,updated_at';
 
-export async function getContactProfile(db: Db, pageId: string, contactId: string) {
+export async function getContactProfile(db: Db, pageId: string, contactId: string, actorId?: string) {
     const results = await Promise.all([
         db.from('contacts').select('*,contact_tags(tags(id,name,color,system_key,is_default))').eq('id', contactId).eq('page_id', pageId).maybeSingle(),
         db.from('pages').select('id,name,fb_page_id,messaging_auto_tag_checked_at,messaging_auto_tag_last_error').eq('id', pageId).maybeSingle(),
@@ -27,6 +28,26 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     if (!contact || !pageResult.data) return null;
     const snapshot = snapshotResult.data, conversation = snapshot?.payload?.conversation || null;
     const finance = financeResult.data || { purchases: [], payments: [] };
+    let manual: Record<string, string> = {};
+    if (workspaceEnabled()) {
+        const scope = actorId ? await workspaceScope(actorId) : null;
+        if (!scope?.page_ids.includes(pageId)) throw new Error('Contact access is unavailable');
+        if (scope.role !== 'owner') {
+            finance.purchases = finance.purchases.filter((o: any) => scope.worker_ids.includes(o.recorded_by));
+            finance.payments = finance.payments.filter((p: any) => scope.worker_ids.includes(p.verified_by));
+        }
+        const [details, orders] = await Promise.all([
+            db.from('veo_contact_details').select('fields').eq('contact_id', contactId).maybeSingle(),
+            db.from('veo_orders').select('*').eq('page_id', pageId).eq('contact_id', contactId).in('seller_id', scope.worker_ids)
+        ]);
+        if (details.error || orders.error) throw new Error('Workspace contact history unavailable');
+        manual = details.data?.fields || {};
+        const payments = orders.data?.length ? await db.from('veo_payments').select('*').in('order_id', orders.data.map((o: any) => o.id)) : { data: [], error: null };
+        if (payments.error) throw new Error('Workspace payment history unavailable');
+        finance.purchases = [...finance.purchases, ...(orders.data || []).map((o: any) => ({ ...o, purchased_at: o.created_at, recorded_by: o.created_by }))];
+        const currencies = new Map((orders.data || []).map((o: any) => [o.id, o.currency]));
+        finance.payments = [...finance.payments, ...(payments.data || []).map((p: any) => ({ ...p, purchase_id: p.order_id, currency: currencies.get(p.order_id), verified_at: p.created_at }))];
+    }
     const verifiedOriginAt = /^(?:live_|audited_|verified_)/.test(adResult.data?.inquiry_basis || '') ? adResult.data.first_inquiry_at : null;
     const firstCandidates = [conversation?.first_inquiry_at, verifiedOriginAt].filter((value): value is string => Boolean(value) && Number.isFinite(Date.parse(value)));
     const firstInquiryAt = firstCandidates.sort((a, b) => Date.parse(a) - Date.parse(b))[0] || null;
@@ -77,11 +98,11 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     const extracted = Object.fromEntries((snapshot?.payload?.extracted_answers || []).map((answer: any) => [answer.field, answer.value]));
     const saved = getChatbotDetailProgress(configResult.data, stateResult.data?.collected_details);
-    const combinedDetails = { ...extracted, ...saved.collected_details };
+    const combinedDetails = { ...extracted, ...saved.collected_details, ...manual };
     const conflicts = (snapshot?.payload?.extracted_answers || []).filter((answer: any) => saved.collected_details[answer.field] && saved.collected_details[answer.field] !== answer.value);
     return { contact: { ...contact, tags: (contact.contact_tags || []).map((assignment: any) => assignment.tags).filter(Boolean), contact_tags: undefined },
         page: pageResult.data, state: stateResult.data, detail_progress: getChatbotDetailProgress(configResult.data, combinedDetails),
-        saved_detail_keys: Object.keys(saved.collected_details), answer_conflicts: conflicts,
+        saved_detail_keys: [...new Set([...Object.keys(saved.collected_details), ...Object.keys(manual)])], manual_detail_keys: Object.keys(manual), answer_conflicts: conflicts,
         snapshot, conversation_metrics: conversationMetricsResult.data, job: jobResult.data, processing_mode: 'local', source_stale: Boolean(snapshot && [contact.last_interaction_at, contact.pipeline_stage_updated_at].some(value => value && Date.parse(value) > Date.parse(snapshot.source_cutoff_at))),
         first_inquiry_at: firstInquiryAt, first_recorded_conversion_at: firstConvertedAt,
         inquiry_to_conversion_hours: hoursBetween(firstInquiryAt, firstConvertedAt),

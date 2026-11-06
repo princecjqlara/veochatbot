@@ -26,6 +26,7 @@ import {
     BarChart3
 } from 'lucide-react';
 import { Page } from '@/types';
+import VeoTelegramProfile from '@/components/VeoTelegramProfile';
 
 export default function DashboardLayout({
     children,
@@ -87,7 +88,34 @@ export default function DashboardLayout({
         );
     }
 
-    const navItems = [
+    if (session.user.role && !session.user.telegramProfileConfirmed) return <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6"><section className="w-full max-w-lg"><VeoTelegramProfile confirmation /><button className="block mx-auto mt-4 text-sm underline text-slate-600" onClick={() => void signOut({ callbackUrl: '/' })}>Sign out</button></section></main>;
+
+    const navItems = session.user.role ? session.user.role === 'owner' ? [
+        { href: '/dashboard/workspace', icon: LayoutDashboard, label: 'Teams Dashboard' },
+        { href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' },
+        { href: '/dashboard/workspace?view=sync', icon: History, label: 'Collection Health' },
+        { href: '/dashboard/connect', icon: Plus, label: 'Page Connections' },
+        { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
+        { href: '/dashboard/workspace?view=profile', icon: User, label: 'My Profile' },
+    ] : [
+        { href: '/dashboard/workspace', icon: LayoutDashboard, label: 'Dashboard' },
+        { href: '/dashboard/workspace?view=clients', icon: Users, label: 'Clients' },
+        { href: '/dashboard/workspace?view=deals', icon: BarChart3, label: 'Deals' },
+        { href: '/dashboard/workspace?view=salary', icon: BarChart3, label: 'Salary' },
+        ...(session.user.role !== 'member' ? [{ href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' }] : []),
+        { href: '/dashboard/contacts', icon: Users, label: 'Contacts & Bulk Tools' },
+        { href: '/dashboard/pipeline', icon: GitBranch, label: 'Pipeline' },
+        { href: '/dashboard/campaigns', icon: MessageSquare, label: 'Campaigns' },
+        { href: '/dashboard/exports', icon: Download, label: 'Exports' },
+        { href: '/dashboard/workspace?view=sync', icon: History, label: 'Collection Health' },
+        { href: '/dashboard/workspace?view=profile', icon: User, label: 'My Profile' },
+    ] : [
+        { href: '/dashboard/workspace', icon: LayoutDashboard, label: 'VEO Workspace' },
+        { href: '/dashboard/workspace?view=clients', icon: Users, label: 'My Clients' },
+        { href: '/dashboard/workspace?view=closed', icon: BarChart3, label: 'Closed Deals' },
+        { href: '/dashboard/workspace?view=done', icon: BarChart3, label: 'Done Deals' },
+        { href: '/dashboard/workspace?view=salary', icon: BarChart3, label: 'Salary' },
+        ...(session.user.role && session.user.role !== 'member' ? [{ href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' }] : []),
         { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
         { href: '/dashboard/contacts', icon: Users, label: 'Contacts' },
         { href: '/dashboard/pipeline', icon: GitBranch, label: 'Pipeline' },
@@ -104,7 +132,7 @@ export default function DashboardLayout({
         { href: '/dashboard/history', icon: History, label: 'History' },
         { href: '/dashboard/welcome', icon: Hand, label: 'Welcome' },
         { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
-    ];
+    ].filter(item => !session.user.role || (session.user.role === 'owner' && !['/dashboard', '/dashboard/ad-calendar', '/dashboard/ad-quality'].includes(item.href)) || item.href.startsWith('/dashboard/workspace') || ['/dashboard/contacts', '/dashboard/pipeline', '/dashboard/tags', '/dashboard/campaigns', '/dashboard/exports', '/dashboard/history', '/dashboard/templates'].includes(item.href));
 
     // Add admin nav item if user is admin
     // const isAdmin = (session?.user as any)?.role === 'admin';

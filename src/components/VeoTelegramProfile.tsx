@@ -1,0 +1,28 @@
+'use client';
+import { useSession } from 'next-auth/react';
+import { useState } from 'react';
+
+export default function VeoTelegramProfile({ confirmation = false }: { confirmation?: boolean }) {
+    const { data: session, update } = useSession();
+    const [username, setUsername] = useState(session?.user.telegramUsername || '');
+    const [noUsername, setNoUsername] = useState(Boolean(session?.user.telegramProfileCompleted && !session?.user.telegramUsername));
+    const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
+    return <form className="rounded-xl border bg-white p-6 space-y-4 text-slate-900" onSubmit={async e => {
+        e.preventDefault(); setBusy(true); setMessage('');
+        try {
+            const r = await fetch('/api/workspace/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: noUsername ? '' : username, no_username: noUsername }) });
+            const body = await r.json(); if (!r.ok) throw new Error(body.error);
+            await update(); setMessage('Telegram profile saved.');
+        } catch (error: any) { setMessage(error.message || 'Please retry.'); } finally { setBusy(false); }
+    }}>
+        <h1 className="text-2xl font-bold">{confirmation ? 'Confirm your Telegram username' : 'Your Telegram profile'}</h1>
+        <p className="text-sm text-slate-600">Use the username shown in Telegram Settings so your supervisor can identify you.</p>
+        <label className="block text-sm font-semibold">Telegram username
+            <input className="block w-full border rounded p-3 mt-2 disabled:bg-slate-100" name="telegram_username" placeholder="@your_username" value={username} onChange={e => setUsername(e.target.value)} required={!noUsername} disabled={noUsername || busy} maxLength={33} pattern="@?[A-Za-z0-9_]{1,32}" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+        </label>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={noUsername} disabled={busy} onChange={e => setNoUsername(e.target.checked)} />I do not have a Telegram username</label>
+        <p className="text-xs text-slate-500">Your supervisor will confirm the Telegram account used for team reports.</p>
+        {message && <p role="status" className="text-sm">{message}</p>}
+        <button className="rounded bg-slate-900 text-white px-4 py-3 disabled:opacity-40" disabled={busy}>{busy ? 'Saving…' : confirmation ? 'Continue to VEO' : 'Save Telegram profile'}</button>
+    </form>;
+}

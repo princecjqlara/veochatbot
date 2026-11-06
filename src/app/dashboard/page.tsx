@@ -2,6 +2,7 @@
 
 import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Users, Tag, MessageSquare, RefreshCw, Clock, ArrowUpRight } from 'lucide-react';
 import { Page } from '@/types';
 import { runContactSyncToCompletion } from '@/lib/contact-sync-client';
@@ -16,6 +17,8 @@ interface Stats {
 
 export default function DashboardPage() {
     const { data: session } = useSession();
+    const router = useRouter();
+    useEffect(() => { if (session?.user.role) router.replace('/dashboard/workspace'); }, [session?.user.role, router]);
     const [pages, setPages] = useState<Page[]>([]);
     const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
     const [stats, setStats] = useState<Stats>({
