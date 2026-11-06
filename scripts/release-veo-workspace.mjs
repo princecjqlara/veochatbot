@@ -43,7 +43,7 @@ try {
             console.log(JSON.stringify(receipt, null, 2));
         } else {
             const before = (await db.query('SELECT count(*)::int AS users,(SELECT count(*)::int FROM user_pages) AS connections,(SELECT count(*)::int FROM contact_verified_payments) AS payments FROM users')).rows[0];
-            for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql']) {
+            for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql', '202611050019_veo_conversation_event_leases.sql']) {
                 const version = file.split('_')[0];
                 const installed = await db.query('SELECT EXISTS(SELECT 1 FROM app_private.schema_migrations WHERE version=$1) AS done', [version]);
                 if (installed.rows[0].done) continue;

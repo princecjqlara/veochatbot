@@ -28,7 +28,7 @@ describe('durable launch-period webhook processing', () => {
         expect(predicates).toContainEqual(['attempts', 1]); expect(predicates).toContainEqual(['attempts', 2]);
         expect(veoEventReplay.getStore()).toBeUndefined();
     });
-    it('drains successive leases serially instead of leaving fast events behind the first batch', async () => {
+    it('drains successive leases with at most four separate conversations in flight', async () => {
         vi.stubEnv('FACEBOOK_APP_SECRET', 'test-secret');
         const events = Array.from({ length: 45 }, (_, i) => ({ event_key: String(i), attempts: 1, payload: { object: 'page', entry: [] } }));
         mocks.rpc.mockResolvedValueOnce({ data: events.slice(0,20) }).mockResolvedValueOnce({ data: events.slice(20,40) }).mockResolvedValueOnce({ data: events.slice(40) }).mockResolvedValue({ data: [] });
@@ -36,12 +36,27 @@ describe('durable launch-period webhook processing', () => {
         let inFlight = 0, maximum = 0;
         const handler = vi.fn(async () => { inFlight++; maximum = Math.max(maximum, inFlight); await Promise.resolve(); inFlight--; return new Response(''); });
         expect(await processWorkspaceEvents(handler, 'https://veo.test')).toBe(45);
-        expect(maximum).toBe(1); expect(handler).toHaveBeenCalledTimes(45); expect(mocks.rpc).toHaveBeenCalledTimes(4);
+        expect(maximum).toBe(4); expect(handler).toHaveBeenCalledTimes(45); expect(mocks.rpc).toHaveBeenCalledTimes(4);
+    });
+    it('keeps a conversation serial even if a lease unexpectedly contains more than one of its events', async () => {
+        vi.stubEnv('FACEBOOK_APP_SECRET', 'test-secret');
+        const events = Array.from({ length: 6 }, (_, i) => ({ event_key: String(i), conversation_key: i < 4 ? 'same-client' : String(i), attempts: 1, payload: { id: i } }));
+        mocks.rpc.mockResolvedValueOnce({ data: events }).mockResolvedValue({ data: [] });
+        mocks.from.mockImplementation(() => { const q: any = { update: () => q, eq: () => q, then: (done: any) => Promise.resolve({ error: null }).then(done) }; return q; });
+        const order: number[] = []; let active = 0, max = 0;
+        expect(await processWorkspaceEvents(async request => {
+            const { id } = await request.json();
+            if (id < 4) { active++; max = Math.max(max, active); }
+            await Promise.resolve();
+            if (id < 4) { order.push(id); active--; }
+            return new Response('');
+        }, 'https://veo.test')).toBe(6);
+        expect(order).toEqual([0,1,2,3]); expect(max).toBe(1);
     });
     it('releases the rest of a lease at the time limit without invoking their handler', async () => {
         vi.stubEnv('FACEBOOK_APP_SECRET', 'test-secret');
         let now = 0; vi.spyOn(Date, 'now').mockImplementation(() => now);
-        mocks.rpc.mockResolvedValue({ data: [{ event_key: 'first', attempts: 2, payload: {} }, { event_key: 'release', attempts: 3, payload: {} }] });
+        mocks.rpc.mockResolvedValue({ data: [{ event_key: 'first', conversation_key: 'same', attempts: 2, payload: {} }, { event_key: 'release', conversation_key: 'same', attempts: 3, payload: {} }] });
         const writes: any[] = [];
         mocks.from.mockImplementation(() => { const q: any = { update: (value: any) => { writes.push(value); return q; }, eq: () => q, then: (done: any) => Promise.resolve({ error: null }).then(done) }; return q; });
         const handler = vi.fn(async () => { now = 210001; return new Response(''); });

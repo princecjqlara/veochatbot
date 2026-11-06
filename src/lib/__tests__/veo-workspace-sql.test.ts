@@ -22,7 +22,7 @@ async function setup() {
       INSERT INTO pages VALUES('${page}','veo-page','VEO'),('${foreignPage}','suno-page','Suno');
       INSERT INTO contacts(id,page_id,name,pipeline_stage) VALUES('${contact}','${page}','Client','converted');
       INSERT INTO user_pages VALUES('${owner}','${page}'),('${owner}','${foreignPage}');`);
-    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
+    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql', '202611050019_veo_conversation_event_leases.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
     await db.query('SELECT veo_launch($1,$2)', [owner, [page]]);
     await db.exec("UPDATE veo_tenants SET launch_at=now()-interval '30 days'");
     const create = (actor: string, user: string, parent: string, role: string) => action(db, actor, 'create_account', { user_id: user, parent_id: parent, role, name: role, email: `${user}@example.org`, password_hash: 'x'.repeat(40), page_ids: [page] });
@@ -40,6 +40,27 @@ async function payment(db: PGlite, orderId: string, amount: number, days = 0, ki
 }
 
 describe('VEO authoritative workspace', () => {
+    it('leases different conversations together while fencing later inbound, echo and standby events for a busy or retrying client', async () => {
+        const db = await setup();
+        try {
+            const event = (person: string, outbound = false, standby = false) => ({ object: 'page', entry: [{ id: 'veo-page', [standby ? 'standby' : 'messaging']: [{ sender: { id: outbound ? 'veo-page' : person }, recipient: { id: outbound ? person : 'veo-page' }, message: { mid: Math.random().toString() } }] }] });
+            for (const [key, payload] of [['e1', event('client-a')], ['e2', event('client-a', true)], ['e3', event('client-b')], ['e4', event('client-a', false, true)]] as const)
+                await db.query('SELECT veo_ingest_event($1,$2,now(),$3)', ['veo-page', key, JSON.stringify(payload)]);
+            const rows = (await db.query<any>('SELECT * FROM veo_claim_events(20)')).rows;
+            expect(rows.map(r => r.event_key).sort()).toEqual(['e1','e3']);
+            const lane = rows.find(r => r.event_key === 'e1').conversation_key;
+            expect((await db.query<any>("SELECT conversation_key FROM veo_event_inbox WHERE event_key IN('e1','e2','e4')")).rows.every(r => r.conversation_key === lane)).toBe(true);
+            expect((await db.query('SELECT * FROM veo_claim_events(20)')).rows).toHaveLength(0);
+            await db.exec("UPDATE veo_event_inbox SET status='queued',next_attempt_at=now()+interval '1 hour' WHERE event_key='e1'");
+            expect((await db.query('SELECT * FROM veo_claim_events(20)')).rows).toHaveLength(0);
+            await db.exec("UPDATE veo_event_inbox SET status='done' WHERE event_key='e1'");
+            expect((await db.query<any>('SELECT * FROM veo_claim_events(20)')).rows.map(r => r.event_key)).toEqual(['e2']);
+            await db.exec("UPDATE veo_event_inbox SET lease_until=now()-interval '1 second' WHERE event_key='e2'");
+            expect((await db.query<any>('SELECT * FROM veo_claim_events(20)')).rows[0]).toMatchObject({ event_key: 'e2', attempts: 2 });
+            expect((await db.query("SELECT * FROM veo_claim_events(0)")).rows).toHaveLength(0);
+            expect((await db.query<any>("SELECT has_function_privilege('anon','veo_claim_events(integer)','EXECUTE') AS allowed")).rows[0].allowed).toBe(false);
+        } finally { await db.close(); }
+    }, 60000);
     it('keeps 35% until BOTH personal quotas are met, then applies 40% to the whole fully paid day', async () => {
         const db = await setup();
         try {
