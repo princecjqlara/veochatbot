@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { calendarHeat, calendarRange, phtDay, shiftCalendarMonth } from '@/lib/ad-calendar';
 import AdCreativePreview from '@/components/AdCreativePreview';
 import { requestDeadline } from '@/lib/request-deadline';
+import { useSession } from 'next-auth/react';
+import VeoWorkCalendar from '@/components/VeoWorkCalendar';
 
 const number = (value: number | null | undefined) => value == null ? 'Not available' : new Intl.NumberFormat('en-PH', { maximumFractionDigits: 2 }).format(value);
 const money = (value: number | null | undefined, currency?: string | null) => value == null || !currency ? 'Not available' : new Intl.NumberFormat('en-PH', { style: 'currency', currency, currencyDisplay: 'code' }).format(value);
@@ -77,6 +79,21 @@ function CalendarTotals({ row, inquiryNote }: { row: any; inquiryNote?: string }
 const definitionLabels: Record<string, string> = { attribution: 'Inquiry source attribution', overall: 'All-source totals', confirmations: 'Paid customers', revenue: 'Recorded revenue', salary: 'Salary allowance', payers: 'Customers with verified receipts', gross_roas: 'Gross return on ad spend', after_salary_roas: 'Return on ad spend after salary', net_roas: 'Net return on ad spend', messaging: 'Meta messaging conversations', coverage: 'Data completeness' };
 
 export default function AdCalendar() {
+ const {data:session,status}=useSession();
+ const [pages,setPages]=useState<any[]>([]),[accessError,setAccessError]=useState('');
+ const role=session?.user.role;
+ useEffect(()=>{
+  if(!role||!['owner','team_leader'].includes(role))return;
+  const controller=new AbortController();
+  fetch('/api/pages',{signal:controller.signal}).then(async r=>{const b=await r.json();if(!r.ok)throw new Error(b.error||'Page access unavailable');setPages(b.pages||[]);}).catch(e=>{if(e.name!=='AbortError')setAccessError(e.message);});
+  return()=>controller.abort();
+ },[role]);
+ if(status==='loading')return <p className="p-6" role="status">Loading calendar access…</p>;
+ if(role&&['owner','team_leader'].includes(role))return <main className="max-w-7xl mx-auto p-4 md:p-6">{accessError&&<p role="alert">{accessError}</p>}<VeoWorkCalendar scope={{role}} pages={pages}/></main>;
+ if(role)return <p className="p-6" role="alert">Calendar access requires Owner or Team Leader.</p>;
+ return <LegacyAdCalendar/>;
+}
+function LegacyAdCalendar() {
  const today = phtDay(Date.now()), [month, setMonth] = useState(today.slice(0, 7)), [pageId, setPageId] = useState(''), [adId, setAdId] = useState(''), [day, setDay] = useState(today);
  const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [metric, setMetric] = useState('profit');
  const [pages, setPages] = useState<any[]>([]);

@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
         if (day < philippineDate(new Date(scope.launch_at!)) || day > philippineDate()) throw new Error('Choose a Philippine work date from launch through today');
         const contactId = request.nextUrl.searchParams.get('contact_id');
         if (contactId) {
-            const contact = await db.from('contacts').select('id,page_id').eq('id', contactId).maybeSingle();
+            const contact = await db.from('contacts').select('id,page_id,name,psid,pipeline_stage').eq('id', contactId).maybeSingle();
             if (contact.error || !contact.data || !scope.page_ids.includes(contact.data.page_id)) throw Object.assign(new Error('Forbidden'), { status: 403 });
             const [details, orders, legacy] = await Promise.all([
                 db.from('veo_contact_details').select('*').eq('contact_id', contactId).maybeSingle(),
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
             for (const p of retainedPayments) if (!p.voided_at) ltv[p.currency] = (ltv[p.currency] || 0) + Number(p.amount_minor) * (p.kind === 'refund' ? -1 : 1);
             for (const o of orders.data || []) ltv[o.currency] = (ltv[o.currency] || 0) + Number(o.paid_minor);
             // Shared-page contacts are shared; personal order attribution stays visible on the contact profile.
-            return NextResponse.json({ details: details.data, orders: (orders.data || []).map(o => ({ ...o, seller_name: names.get(o.seller_id) || null })), payments: payments.data, lifetime_value: ltv,
+            return NextResponse.json({ contact: contact.data, details: details.data, orders: (orders.data || []).map(o => ({ ...o, seller_name: names.get(o.seller_id) || null })), payments: payments.data, lifetime_value: ltv,
                 coverage: (retainedPayments.length ? 'Verified retained payments plus payments recorded since launch' : `Recorded since launch (${scope.launch_at}); earlier financial history is unavailable`) + (scope.role === 'owner' ? '' : '. Financial history is limited to your seller branch; other branches are excluded.') }, { headers: { 'Cache-Control': 'no-store' } });
         }
         const params = request.nextUrl.searchParams, page = params.get('page_id');
@@ -91,10 +91,15 @@ export async function POST(request: NextRequest) {
             const directory = await jaucianRead(scope.tenant_id);
             if (!directory.groups?.some((g: any) => String(g.chat_id) === String(body.chat_id))) throw new Error('Choose a currently approved active Jaucian VEO group');
         }
-        if (action === 'mapping' && !body.team_id) await verifyWorkerMapping(scope.tenant_id, body.user_id, body.telegram_user_id);
+        if (action === 'mapping' && !body.team_id) {
+            const verified = await verifyWorkerMapping(scope.tenant_id, body.user_id, body.telegram_user_id, body.chat_id);
+            const r = await db.rpc('veo_map_staff_telegram', { p_actor: scope.user_id, p_user: body.user_id, p_telegram: Number(verified.user_id), p_chat: Number(verified.chat_id) });
+            if (r.error) throw Object.assign(new Error(r.error.message), { status: r.error.code === '42501' ? 403 : 400 });
+            return NextResponse.json({ saved: r.data });
+        }
         if (action === 'order') body.total_minor = parseMoneyMinor(body.amount);
         if (action === 'payment') body.amount_minor = parseMoneyMinor(body.amount);
-        if (!['assign_pages', 'order', 'payment', 'attribution', 'attendance', 'contact', 'mapping'].includes(action)) throw new Error('Unknown action');
+        if (!['assign_pages', 'order', 'payment', 'attribution', 'attendance', 'contact', 'mapping', 'staff_delete', 'claim_client', 'fulfillment', 'client_assignment', 'attendance_today'].includes(action)) throw new Error('Unknown action');
         const saved = await workspaceAction(scope.user_id, action, body);
         return NextResponse.json({ saved });
     } catch (error) {

@@ -17,9 +17,9 @@ describe('workspace work-date boundaries', () => {
         m.verifyMapping.mockRejectedValue(Object.assign(new Error('Not a current human member'), { status: 400 }));
         expect((await POST(request())).status).toBe(400);
         expect(m.rpc.mock.calls.every(([name]) => name === 'veo_scope')).toBe(true);
-        m.verifyMapping.mockResolvedValue({ verified: true });
+        m.verifyMapping.mockResolvedValue({ verified: true, user_id: 42, chat_id: -123 });
         expect((await POST(request())).status).toBe(200);
-        expect(m.rpc).toHaveBeenCalledWith('veo_action', expect.objectContaining({ p_action: 'mapping' }));
+        expect(m.rpc).toHaveBeenCalledWith('veo_map_staff_telegram', expect.objectContaining({ p_user: 'worker', p_telegram: 42, p_chat: -123 }));
     });
     it('rejects future target freezing and dates before launch without calculating a salary', async () => {
         const launch = new Date(Date.now() - 86400000).toISOString();

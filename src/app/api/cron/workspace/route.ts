@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { processWorkspaceEvents } from '@/lib/veo-events';
 import { POST as processFacebookWebhook } from '@/app/api/facebook/webhook/route';
+import { syncTelegramWorkforce } from '@/lib/veo-telegram-sync';
+import { refreshPageBudgets } from '@/lib/veo-budget';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -9,6 +11,7 @@ export async function GET(request: NextRequest) {
     if (!process.env.CRON_SECRET || request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (process.env.VEO_WORKSPACE_ENABLED !== 'true') return NextResponse.json({ enabled: false });
     const db = getSupabaseAdmin();
+    const startedAt = Date.now();
     try {
         // Expiry is enforced independently of delivery. A failed deletion remains visible and retries.
         const cleanup = await db.from('veo_submissions').select('id,object_path,expires_at,status').is('deleted_at', null)
@@ -33,7 +36,12 @@ export async function GET(request: NextRequest) {
 
         const maintained = await db.rpc('veo_maintenance');
         if (maintained.error) throw new Error('Salary finalization unavailable');
-        const processed = await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin);
+        let integration: any = { retry: true }, operations: any = { error: true };
+        try { integration = await syncTelegramWorkforce(); } catch { /* Retry independently of new-event collection. */ }
+        try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
+        let budgetRetry = false;
+        try { await refreshPageBudgets(); } catch { budgetRetry = true; }
+        const processed = await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin, Math.max(0, 210000 - (Date.now() - startedAt)));
         const claimed = await db.rpc('veo_claim_submissions');
         if (claimed.error) throw new Error('Delivery queue unavailable');
         for (const s of claimed.data || []) {
@@ -56,6 +64,6 @@ export async function GET(request: NextRequest) {
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
         }
-        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0 });
+        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, budget_retry: budgetRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }

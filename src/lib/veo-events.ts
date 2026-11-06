@@ -25,9 +25,9 @@ export async function receiveWorkspaceEvents(request: Request) {
         return NextResponse.json({ received: true }, { status: 200 });
     } catch { return NextResponse.json({ error: 'Event persistence failed; retry required' }, { status: 503 }); }
 }
-export async function processWorkspaceEvents(handler: (request: NextRequest) => Promise<Response>, origin: string) {
+export async function processWorkspaceEvents(handler: (request: NextRequest) => Promise<Response>, origin: string, processingBudgetMs = 210000) {
     const db = getSupabaseAdmin();
-    const deadline = Date.now() + 210000;
+    const deadline = Date.now() + Math.max(0, Math.min(210000, processingBudgetMs));
     let processed = 0;
     // Drain successive small leases while there is time. A single 20-event
     // lease per minute fell behind real Page traffic. The DB leases only the

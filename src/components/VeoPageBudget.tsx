@@ -1,0 +1,63 @@
+'use client';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+const field = 'w-full rounded border bg-white px-3 py-2';
+const button = 'rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40';
+const pht = (extra = 0) => new Date(Date.now() + 8 * 3600000 + extra * 86400000).toISOString().slice(0, 10);
+const money = (value: number, currency: string) => /^[A-Z]{3}$/.test(currency) ? new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(value) : 'Choose a currency';
+export default function VeoPageBudget({ scope, compact = false, submit, refreshToken }: { scope: any; compact?: boolean; submit: (body: any) => Promise<any>; refreshToken?: any }) {
+    const [day, setDay] = useState(pht(compact ? 0 : 1)), [data, setData] = useState<any>(null), [error, setError] = useState(''), [message, setMessage] = useState('');
+    const [key, setKey] = useState(''), [inputs, setInputs] = useState<any>({}), [currency, setCurrency] = useState('PHP'), [preview, setPreview] = useState<any>(null), [busy, setBusy] = useState(false), [version, setVersion] = useState(0);
+    useEffect(() => {
+        if (!['owner', 'team_leader'].includes(scope.role)) return;
+        const controller = new AbortController(); setError('');
+        fetch('/api/workspace/budget?date=' + day, { signal: controller.signal, cache: 'no-store' }).then(async r => { const b = await r.json(); if (!r.ok) throw new Error(b.error); if (!Array.isArray(b.plans)) throw new Error('Page planning data is unavailable'); setData(b); setKey(k => b.plans.some((p: any) => `${p.team_id}:${p.page_id}` === k) ? k : b.plans.length ? `${b.plans[0].team_id}:${b.plans[0].page_id}` : ''); }).catch(e => { if (e.name !== 'AbortError') setError(e.message); });
+        return () => controller.abort();
+    }, [day, version, refreshToken, scope.role]);
+    const plan = data?.plans.find((p: any) => `${p.team_id}:${p.page_id}` === key);
+    useEffect(() => {
+        if (!data || !plan) return;
+        const saved = data.saved.find((b: any) => b.team_id === plan.team_id && b.page_id === plan.page_id);
+        setInputs(saved?.inputs || data.defaults); setCurrency(saved?.currency || 'PHP'); setPreview(saved?.result_current || saved?.result || null);
+    }, [key, day, !!data]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { if (plan) setPreview(null); }, [plan?.quota, plan?.active_workers]); // eslint-disable-line react-hooks/exhaustive-deps
+    async function post(body: any) {
+        setBusy(true); setError(''); setMessage('');
+        try { const r = await fetch('/api/workspace/budget', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const b = await r.json(); if (!r.ok) throw new Error(b.error); return b.saved; }
+        catch (e: any) { setError(e.message); return null; } finally { setBusy(false); }
+    }
+    async function calculate(action: string) {
+        if (!plan) return;
+        const saved = await post({ action, work_date: day, team_id: plan.team_id, page_id: plan.page_id, currency, inputs });
+        if (saved) { setPreview(action === 'calculate' ? saved.result : saved.result); if (action === 'budget_save') { setVersion(v => v + 1); setMessage('Page budget plan saved. Attendance and capacity changes will automatically reconcile the recommendation.'); } }
+    }
+    if (!['owner', 'team_leader'].includes(scope.role)) return null;
+    const pageTotals = new Map<string, { name: string; quota: number; capacity: number; money: Record<string, number> }>();
+    for (const p of data?.plans || []) {
+        const t = pageTotals.get(p.page_id) || { name: p.page_name, quota: 0, capacity: 0, money: {} as Record<string, number> };
+        t.quota += p.quota; t.capacity += p.full_capacity;
+        const saved = data.saved.find((b: any) => b.team_id === p.team_id && b.page_id === p.page_id);
+        if (saved && !saved.calculation_unavailable) t.money[saved.currency] = (t.money[saved.currency] || 0) + Number((saved.result_current || saved.result).budget);
+        pageTotals.set(p.page_id, t);
+    }
+    return <section className="rounded border bg-white p-4 space-y-4" aria-label="VEO Page ad budget and quotas"><div className="flex flex-wrap justify-between gap-3"><div><h2 className="font-bold text-xl">Page ad budget · shared capacity and quotas</h2><p className="text-xs text-slate-500">The VEO ad-budget model uses the same workforce and targets as VEO and Jaucian.</p></div><label className="text-sm">Planning date<input type="date" className={field} value={day} min={new Date(new Date(scope.launch_at).getTime() + 8 * 3600000).toISOString().slice(0, 10)} max={pht(1)} onChange={e => { setDay(e.target.value); setPreview(null); }} /></label></div>
+        {error && <p role="alert" className="text-red-700">{error}</p>}{message && <p role="status">{message}</p>}
+        {!data && !error && <p role="status">Loading Page planning…</p>}
+        {data && <><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{['Page', 'Closed / Done quota', 'Full capacity', 'Planned ad budget'].map(h => <th key={h} className="border-b p-2">{h}</th>)}</tr></thead><tbody>{[...pageTotals].filter(([, p]) => !compact || p.capacity || Object.keys(p.money).length).map(([id, p]) => <tr key={id}><td className="p-2 border-b">{p.name}</td><td className="p-2 border-b">{p.quota} each</td><td className="p-2 border-b">{p.capacity} deals / day</td><td className="p-2 border-b">{Object.keys(p.money).length ? Object.entries(p.money).map(([c, n]) => <p key={c}>{money(n, c)}</p>) : 'No saved plan'}</td></tr>)}</tbody></table></div>
+            <p className="text-xs text-slate-600">Quota adds declared active workers’ allocated targets. A worker assigned to multiple Pages is counted once across those Pages. Individual salary targets remain frozen and unchanged. The planner’s expected ad acquisitions can be lower than the sales target; they never increase worker capacity.</p>
+            {compact ? <Link className="inline-block underline" href="/dashboard/workspace?view=budget">Open Page budget planner and worker allocations</Link> : <>
+                {!data.plans.length && <p>{data.historical ? 'No Page planning snapshot is available for this historical date.' : 'Create selling teams with assigned Pages to plan ad budgets.'}</p>}
+                {plan && <><label className="block text-sm">Team / Page<select className={field} value={key} onChange={e => setKey(e.target.value)}>{data.plans.map((p: any) => <option key={`${p.team_id}:${p.page_id}`} value={`${p.team_id}:${p.page_id}`}>{p.team_name} · {p.page_name}</option>)}</select></label>
+                    <div className="grid gap-3 md:grid-cols-3 text-sm"><p>Participating workers: <strong>{plan.active_workers}</strong></p><p>Page quota: <strong>{plan.quota} Closed and {plan.quota} Done</strong></p><p>Awaiting declaration: <strong>{plan.attendance_unknown}</strong></p></div>
+                    <form className="space-y-3" onSubmit={async e => { e.preventDefault(); await calculate('budget_save'); }}><label className="block max-w-sm text-sm">VEO ad-budget strategy<select className={field} value={inputs.profile || 'aggressive'} onChange={e => setInputs({ ...inputs, ...data.presets[e.target.value], profile: e.target.value })}><option value="aggressive">VEO aggressive growth</option><option value="conservative">VEO conservative growth</option></select></label><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{[['startingBudget', 'Starting budget'], ['currentBudget', 'Current budget / reference'], ['yesterdayCPA', 'Estimated cost per acquisition'], ['day', 'Campaign day']].map(([k, title]) => <label className="text-sm" key={k}>{title}<input required type="number" step={k === 'day' ? 1 : .01} min={k === 'currentBudget' ? 0 : .01} className={field} value={inputs[k] ?? ''} onChange={e => setInputs({ ...inputs, [k]: e.target.value === '' ? '' : Number(e.target.value) })} /></label>)}<label className="text-sm">Previous result<select className={field} value={inputs.yesterdayResult || 'PROFIT'} onChange={e => setInputs({ ...inputs, yesterdayResult: e.target.value })}><option value="PROFIT">Profit</option><option value="BREAK-EVEN">Break-even</option><option value="LOSS">Loss</option></select></label><label className="text-sm">Currency<input required pattern="[A-Za-z]{3}" className={field} value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())} /></label></div>
+                        <details className="rounded border p-3"><summary className="cursor-pointer font-semibold">VEO planner growth and reserve settings</summary><div className="grid gap-3 mt-3 sm:grid-cols-3">{[['baseStepPct', 'Base step %'], ['minStepPct', 'Minimum step %'], ['maxStepPct', 'Maximum step %'], ['taperBudget', 'Taper scale'], ['peopleBoostPct', 'Boost per extra worker %'], ['maxPeopleBoostPct', 'Maximum worker boost %'], ['profitLiftPct', 'Profit step lift %'], ['dayBoostPct', 'Campaign day boost %'], ['maxDayBoostPct', 'Maximum day boost %'], ['capacityFillPct', 'Unused capacity growth %'], ['reservePct', 'Planner reserve %'], ['headroomPct', 'Workload buffer %'], ['rampPerPerson', 'Starting projects per worker'], ['rampDays', 'Starting period days'], ['rounding', 'Budget rounding unit']].map(([k, title]) => <label className="text-xs" key={k}>{title}<input type="number" min="0" step="any" className={field} value={inputs[k] ?? ''} onChange={e => setInputs({ ...inputs, [k]: Number(e.target.value) })} /></label>)}</div></details>
+                        <p className="text-xs text-slate-500">Headcount and capacity come from actual attendance and worker targets. The historical 80% capacity buffer is preserved; the planner’s reserve does not reduce a default target of one to zero. Enter known budget/CPA estimates; saved figures are planning recommendations.</p>
+                        <div className="flex gap-3"><button type="button" className="underline disabled:opacity-40" disabled={busy || data.historical} onClick={() => calculate('calculate')}>Calculate recommendation</button><button className={button} disabled={busy || data.historical}>Save Page budget plan</button></div>
+                    </form>
+                    {preview && <div className="rounded bg-slate-50 p-4 text-sm"><p className="text-xl font-bold">Recommended ad budget: {money(preview.budget, currency)}</p><p>VEO / Jaucian sales quota: {preview.quota} Closed and {preview.quota} Done Deals</p><p>Expected ad acquisitions: {Number(preview.expected_ad_workload).toFixed(2)} · budget-supported deals: {preview.ad_supported_deals}</p><p>Capacity ceiling: {money(preview.budgetLimit, currency)} · growth candidate: {money(preview.candidate, currency)}</p></div>}
+                    <details open className="rounded border p-3"><summary className="font-semibold cursor-pointer">Worker Page allocation and participation</summary><p className="text-xs text-slate-500 my-2">Weights divide each worker’s integer target across their authorized Pages. Increase the priority weight on their main Page. Removing a Page redistributes capacity across remaining assigned Pages; completed daily snapshots remain fixed.</p><div className="space-y-3">{plan.workers.map((w: any) => <div className="grid gap-2 border-t py-3 sm:grid-cols-3 text-sm" key={w.user_id}><p><strong>{w.name}</strong><br />{w.page_target} on this Page / {w.target} individual target<br />{w.active === true ? 'Active' : w.active === false ? 'Inactive' : 'Participation unknown'}</p><form className="flex items-end gap-2" onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); if (await post({ action: 'page_weight', user_id: w.user_id, page_id: plan.page_id, weight: Number(f.get('weight')) })) setVersion(v => v + 1); }}><label>Priority weight<input type="number" name="weight" required min="0" max="1000" defaultValue={w.weight} className={field} /></label><button className="underline" disabled={busy || data.historical}>Save weight</button></form><div className="flex items-center gap-3">{!data.historical && <><button className="underline" disabled={busy} onClick={async () => { if (await submit({ action: day === pht() ? 'attendance_today' : 'attendance', user_id: w.user_id, work_date: day, active: true })) setVersion(v => v + 1); }}>Mark active</button><button className="underline" disabled={busy} onClick={async () => { if (await submit({ action: day === pht() ? 'attendance_today' : 'attendance', user_id: w.user_id, work_date: day, active: false })) setVersion(v => v + 1); }}>Mark inactive</button></>}</div></div>)}</div></details>
+                </>}
+            </>}
+        </>}
+    </section>;
+}

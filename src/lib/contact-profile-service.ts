@@ -100,7 +100,7 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     const saved = getChatbotDetailProgress(configResult.data, stateResult.data?.collected_details);
     const combinedDetails = { ...extracted, ...saved.collected_details, ...manual };
     const conflicts = (snapshot?.payload?.extracted_answers || []).filter((answer: any) => saved.collected_details[answer.field] && saved.collected_details[answer.field] !== answer.value);
-    return { contact: { ...contact, tags: (contact.contact_tags || []).map((assignment: any) => assignment.tags).filter(Boolean), contact_tags: undefined },
+    return { workspace_enabled: workspaceEnabled(), contact: { ...contact, tags: (contact.contact_tags || []).map((assignment: any) => assignment.tags).filter(Boolean), contact_tags: undefined },
         page: pageResult.data, state: stateResult.data, detail_progress: getChatbotDetailProgress(configResult.data, combinedDetails),
         saved_detail_keys: [...new Set([...Object.keys(saved.collected_details), ...Object.keys(manual)])], manual_detail_keys: Object.keys(manual), answer_conflicts: conflicts,
         snapshot, conversation_metrics: conversationMetricsResult.data, job: jobResult.data, processing_mode: 'local', source_stale: Boolean(snapshot && [contact.last_interaction_at, contact.pipeline_stage_updated_at].some(value => value && Date.parse(value) > Date.parse(snapshot.source_cutoff_at))),

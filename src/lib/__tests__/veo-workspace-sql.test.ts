@@ -22,7 +22,7 @@ async function setup() {
       INSERT INTO pages VALUES('${page}','veo-page','VEO'),('${foreignPage}','suno-page','Suno');
       INSERT INTO contacts(id,page_id,name,pipeline_stage) VALUES('${contact}','${page}','Client','converted');
       INSERT INTO user_pages VALUES('${owner}','${page}'),('${owner}','${foreignPage}');`);
-    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql', '202611050019_veo_conversation_event_leases.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
+    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql', '202611050019_veo_conversation_event_leases.sql', '202611050020_veo_staff_and_delivery.sql', '202611050021_veo_performance_finance.sql', '202611050022_veo_page_capacity_budget.sql', '202611050023_veo_telegram_workforce.sql', '202611050024_veo_shift_reports.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
     await db.query('SELECT veo_launch($1,$2)', [owner, [page]]);
     await db.exec("UPDATE veo_tenants SET launch_at=now()-interval '30 days'");
     const create = (actor: string, user: string, parent: string, role: string) => action(db, actor, 'create_account', { user_id: user, parent_id: parent, role, name: role, email: `${user}@example.org`, password_hash: 'x'.repeat(40), page_ids: [page] });
@@ -40,6 +40,159 @@ async function payment(db: PGlite, orderId: string, amount: number, days = 0, ki
 }
 
 describe('VEO authoritative workspace', () => {
+    it('operational budgets conserve worker quota across Pages and recover allocation when a preferred Page is revoked', async () => {
+        const db=await setup();
+        try {
+            const pageB=id(92), tenant=(await db.query<any>('SELECT tenant_id FROM veo_accounts WHERE user_id=$1',[owner])).rows[0].tenant_id;
+            await db.query('INSERT INTO pages(id,fb_page_id,name,veo_tenant_id,veo_enabled) VALUES($1,$2,$3,$4,true)',[pageB,'veo-page-b','Page B',tenant]);
+            for(const user of [owner,leader,manager,member]) await db.query('INSERT INTO user_pages VALUES($1,$2)',[user,pageB]);
+            await db.query("INSERT INTO veo_attendance(user_id,work_date,active,updated_by) SELECT user_id,veo_today(),true,$1 FROM veo_accounts WHERE role IN('member','manager')",[owner]);
+            await db.query("SELECT veo_budget_action($1,'page_weight',$2)",[owner,JSON.stringify({user_id:member,page_id:page,weight:0})]);
+            let plans=(await db.query<any>('SELECT veo_page_capacity($1,veo_today()) AS p',[owner])).rows[0].p.plans;
+            const capacity=(await db.query<any>('SELECT veo_team_capacity($1) AS p',[owner])).rows[0].p;
+            expect(plans.reduce((n:number,p:any)=>n+p.quota,0)).toBe(capacity.combined.quota.closed);
+            expect(plans.find((p:any)=>p.page_id===pageB).workers.find((w:any)=>w.user_id===member).page_target).toBe(1);
+            await expect(db.query('SELECT veo_page_capacity($1,veo_today())',[manager])).rejects.toThrow(/Owner or Team Leader/);
+            await action(db,manager,'assign_pages',{user_id:member,page_ids:[page]});
+            plans=(await db.query<any>('SELECT veo_page_capacity($1,veo_today()) AS p',[owner])).rows[0].p.plans;
+            expect(plans.flatMap((p:any)=>p.workers).filter((w:any)=>w.user_id===member).reduce((n:number,w:any)=>n+w.page_target,0)).toBe(1);
+            await expect(db.query("SELECT veo_budget_action($1,'page_weight',$2)",[owner,JSON.stringify({user_id:member,page_id:page,weight:0})])).rejects.toThrow(/positive weight/);
+        } finally {await db.close();}
+    },60000);
+    it('operational finance allocates actual whole-day commission exactly and the compact calendar uses actual salary', async () => {
+        const db=await setup();
+        try {
+            const pageB=id(93),contactB=id(94),tenant=(await db.query<any>('SELECT tenant_id FROM veo_accounts WHERE user_id=$1',[owner])).rows[0].tenant_id;
+            await db.query('INSERT INTO pages(id,fb_page_id,name,veo_tenant_id,veo_enabled) VALUES($1,$2,$3,$4,true)',[pageB,'second-page','Second Page',tenant]);
+            for(const user of [owner,leader,manager,member]) await db.query('INSERT INTO user_pages VALUES($1,$2)',[user,pageB]);
+            await db.query("INSERT INTO contacts(id,page_id,name,pipeline_stage) VALUES($1,$2,'Second client','converted')",[contactB,pageB]);
+            const a=await order(db,member,101);await payment(db,a.id,101);
+            const b=await action(db,member,'order',{request_id:id(request++),page_id:pageB,contact_id:contactB,seller_id:member,description:'Second',total_minor:102,currency:'PHP'});await payment(db,b.id,102);
+            const day=(await db.query<any>('SELECT veo_today()::text AS d')).rows[0].d;
+            const salary=(await db.query<any>('SELECT veo_salary($1,$2) AS s',[member,day])).rows[0].s;
+            const first=(await db.query<any>('SELECT veo_finance_days($1,$2,$2,$3,$4) AS f',[owner,day,page,member])).rows[0].f.days[0];
+            const second=(await db.query<any>('SELECT veo_finance_days($1,$2,$2,$3,$4) AS f',[owner,day,pageB,member])).rows[0].f.days[0];
+            expect(first.rate).toBe(40);expect(first.totals[0].commission_minor+second.totals[0].commission_minor).toBe(salary.totals[0].commission_minor);
+            expect(salary.totals[0].commission_minor).toBe(81);
+            await db.exec('CREATE TABLE ad_daily_spend(page_id uuid,spend_date date,currency text,amount numeric,pht_aligned boolean,report_complete boolean)');
+            await db.query("INSERT INTO ad_daily_spend VALUES($1,veo_today(),'PHP',1,true,true)",[page]);
+            const calendar=(await db.query<any>('SELECT veo_calendar_finance($1,$2,$2) AS c',[owner,day])).rows[0].c;
+            expect(calendar.days[0].totals[0]).toMatchObject({gross_minor:203,commission_minor:81});
+            expect(calendar.days[0].spend[0]).toMatchObject({amount_minor:100,complete:true});
+        }finally{await db.close();}
+    },60000);
+    it('operational Telegram observations import tomorrow votes and require verified membership history before automatic removal',async()=>{
+        const db=await setup();
+        try {
+            const tenant=(await db.query<any>('SELECT tenant_id FROM veo_accounts WHERE user_id=$1',[member])).rows[0].tenant_id;
+            const team=(await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1',[manager])).rows[0].id;
+            await action(db,owner,'mapping',{team_id:team,chat_id:-100123});
+            await db.query('SELECT veo_map_staff_telegram($1,$2,321,-100123)',[owner,member]);
+            const tomorrow=(await db.query<any>('SELECT (veo_today()+1)::text AS d')).rows[0].d;
+            const time=(ms:number)=>new Date(Date.now()+ms).toISOString();
+            const person=(ms:number,more:any={})=>({user_id:member,telegram_user_id:321,chat_id:-100123,observed_at:time(ms),membership:'member',is_bot:false,membership_confirmed:true,...more});
+            const apply=async(p:any)=>(await db.query<any>('SELECT veo_apply_telegram_observations($1,$2) AS r',[tenant,JSON.stringify({tenant_id:tenant,workers:[p]})])).rows[0].r;
+            await apply(person(0,{attendance:{work_date:tomorrow,active:true,updated_at:time(-1000)}}));
+            expect((await db.query<any>('SELECT active,source FROM veo_attendance WHERE user_id=$1 AND work_date=$2',[member,tomorrow])).rows[0]).toEqual({active:true,source:'telegram'});
+            await action(db,member,'attendance',{user_id:member,work_date:tomorrow,active:false});
+            await apply(person(1000,{attendance:{work_date:tomorrow,active:true,updated_at:time(-1000)}}));
+            expect((await db.query<any>('SELECT active,source FROM veo_attendance WHERE user_id=$1 AND work_date=$2',[member,tomorrow])).rows[0]).toEqual({active:false,source:'workspace'});
+            await apply(person(2000,{membership:'unknown',membership_confirmed:false,is_bot:null,error:'lookup_failed'}));
+            expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[member])).rows[0].active).toBe(true);
+            await action(db,owner,'mapping',{team_id:team,chat_id:-100456});
+            await apply(person(3000,{chat_id:-100456,membership:'left'}));
+            expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[member])).rows[0].active).toBe(true);
+            await apply(person(4000,{chat_id:-100456}));
+            await apply(person(5000,{chat_id:-100456,membership:'left'}));
+            expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[member])).rows[0].active).toBe(false);
+            expect((await db.query<any>('SELECT veo_scope($1) AS s',[owner])).rows[0].s.role).toBe('owner');
+        }finally{await db.close();}
+    },60000);
+    it('operational reports expose full eligible client lists, common Page targets and stable permission fingerprints',async()=>{
+        const db=await setup();
+        try{
+            const o=await order(db);await payment(db,o.id,2000,1,'deposit');
+            await action(db,member,'fulfillment',{order_id:o.id,status:'ready_waiting_payment',reason:'Client has not completed payment',work_complete:true});
+            const row=(await db.query<any>('SELECT tenant_id,veo_today()::text AS d FROM veo_accounts WHERE user_id=$1',[owner])).rows[0];
+            const report=(await db.query<any>('SELECT veo_operations_report($1,$2) AS r',[row.tenant_id,row.d])).rows[0].r;
+            const team=report.teams.find((t:any)=>t.workers.some((w:any)=>w.id===member));
+            expect(report.report_version).toBe(2);expect(team.access_signature).toMatch(/^[a-f0-9]{32}$/);
+            const client=team.workers.find((w:any)=>w.id===member).clients[0];
+            expect(client).toMatchObject({waiting_payment:true,overdue:false,work_status:'ready_waiting_payment'});
+            const snapshot=team.access_signature;
+            await action(db,owner,'assign_pages',{user_id:leader,page_ids:[]});
+            const changed=(await db.query<any>('SELECT veo_operations_report($1,$2) AS r',[row.tenant_id,row.d])).rows[0].r.teams.find((t:any)=>t.id===team.id);
+            expect(changed.access_signature).not.toBe(snapshot);
+        }finally{await db.close();}
+    },60000);
+    it('staff operations revoke fired staff, release unfinished clients and preserve completed salary attribution', async () => {
+        const db = await setup();
+        try {
+            const pending = await order(db); await payment(db,pending.id,3000,2,'deposit');
+            const paid = await order(db); await payment(db,paid.id,10000);
+            const olderPaid = await order(db); await payment(db,olderPaid.id,10000,2);
+            await expect(action(db,otherManager,'staff_delete',{user_id:member,reason:'Dismissed'})).rejects.toThrow(/branch/);
+            await expect(action(db,member,'staff_delete',{user_id:other,reason:'Dismissed'})).rejects.toThrow(/branch/);
+            await action(db,manager,'staff_delete',{user_id:member,reason:'Employment ended'});
+            expect((await db.query<any>('SELECT veo_scope($1) AS s,veo_can_page($1,$2) AS allowed',[member,page])).rows[0]).toEqual({s:null,allowed:false});
+            const day = (await db.query<any>('SELECT veo_today()::text AS d')).rows[0].d;
+            const report = (await db.query<any>('SELECT veo_operations($1,$2,$2) AS r',[owner,day])).rows[0].r;
+            expect(report.employees.find((e:any)=>e.id===member)).toMatchObject({active:false,done:1});
+            expect(report.finance.days.find((d:any)=>d.user_id===member).totals[0].gross_minor).toBe(10000);
+            expect(report.summary.released_clients).toBe(1);
+            await action(db,other,'claim_client',{contact_id:contact});
+            const orders = (await db.query<any>('SELECT id,seller_id FROM veo_orders ORDER BY id')).rows;
+            expect(orders.find(o=>o.id===pending.id).seller_id).toBe(other);
+            expect(orders.find(o=>o.id===paid.id).seller_id).toBe(member);
+            expect(orders.find(o=>o.id===olderPaid.id).seller_id).toBe(member);
+            const takeover = (await db.query<any>('SELECT veo_operations($1,$2,$2) AS r',[owner,day])).rows[0].r;
+            expect(takeover.employees.find((e:any)=>e.id===other)).toMatchObject({done:0,overdue:2});
+            expect(takeover.employees.find((e:any)=>e.id===member)).toMatchObject({done:1,overdue:0});
+            expect(takeover.page_rankings.find((e:any)=>e.user_id===other)).toMatchObject({done:0,overdue:2});
+            await expect(action(db,manager,'claim_client',{contact_id:contact})).rejects.toThrow(/no longer available/);
+            await payment(db,pending.id,7000,0,'balance',other);
+            expect((await db.query<any>('SELECT veo_salary($1,veo_today()) AS s',[other])).rows[0].s.done).toBe(1);
+            await action(db,owner,'staff_delete',{user_id:other,reason:'Replacement worker also left'});
+            await action(db,manager,'claim_client',{contact_id:contact});
+            expect((await db.query<any>('SELECT count(*)::int AS n FROM veo_order_work WHERE assignee_id=$1',[manager])).rows[0].n).toBe(3);
+            expect((await db.query<any>('SELECT seller_id FROM veo_orders WHERE id=$1',[olderPaid.id])).rows[0].seller_id).toBe(member);
+        } finally { await db.close(); }
+    },60000);
+    it('staff operations preserve active descendants when a supervisor leaves and isolate performance by branch', async () => {
+        const db = await setup();
+        try {
+            await action(db,owner,'staff_delete',{user_id:manager,reason:'Manager left the team'});
+            expect((await db.query<any>('SELECT veo_can_page($1,$2) AS allowed',[member,page])).rows[0].allowed).toBe(true);
+            expect((await db.query<any>('SELECT veo_can_page($1,$2) AS allowed',[manager,page])).rows[0].allowed).toBe(false);
+            const one=await order(db); await payment(db,one.id,10000);
+            const two=await order(db,other); await payment(db,two.id,10000,0,'full',other);
+            const day=(await db.query<any>('SELECT veo_today()::text AS d')).rows[0].d;
+            const leaderView=(await db.query<any>('SELECT veo_operations($1,$2,$2) AS r',[leader,day])).rows[0].r;
+            expect(leaderView.summary.done).toBe(1);
+            expect(JSON.stringify(leaderView)).not.toContain(otherManager);
+            expect(leaderView.page_rankings.find((r:any)=>r.user_id===member).rank).toBe(1);
+            await expect(db.query('SELECT veo_calendar_finance($1,$2,$2)',[member,day])).rejects.toThrow(/restricted/);
+            await expect(db.query('SELECT veo_calendar_finance($1,$2,$2)',[otherManager,day])).rejects.toThrow(/restricted/);
+            expect((await db.query<any>('SELECT veo_calendar_finance($1,$2,$2) AS c',[leader,day])).rows[0].c.days[0].totals[0].commission_minor).toBe(4000);
+        } finally { await db.close(); }
+    },60000);
+    it('staff operations separate overdue work from completed work awaiting a client balance, and verify both payment entry flows', async () => {
+        const db=await setup();
+        try {
+            const o=await order(db); await payment(db,o.id,2000,2,'deposit');
+            const day=(await db.query<any>('SELECT veo_today()::text AS d')).rows[0].d;
+            const report=async()=> (await db.query<any>('SELECT veo_operations($1,$2,$2) AS r',[manager,day])).rows[0].r;
+            expect((await report()).summary).toMatchObject({waiting_payment:1,overdue:1});
+            await expect(action(db,member,'fulfillment',{order_id:o.id,status:'ready_waiting_payment',reason:'Client balance pending',work_complete:false})).rejects.toThrow(/Confirm/);
+            await action(db,member,'fulfillment',{order_id:o.id,status:'ready_waiting_payment',reason:'Project is ready; client has not paid the balance',work_complete:true});
+            expect((await report()).summary).toMatchObject({waiting_payment:1,overdue:0});
+            await db.exec("UPDATE contacts SET pipeline_stage='order_created'");
+            await payment(db,o.id,8000,0,'balance',member,{confirm_converted:true});
+            const fact=(await db.query<any>('SELECT * FROM veo_order_facts WHERE id=$1',[o.id])).rows[0]; expect(fact.converted).toBe(true); expect(Number(fact.paid_minor)).toBe(10000);
+            expect((await report()).summary).toMatchObject({done:1,waiting_payment:0,overdue:0});
+            const another=await order(db); await expect(payment(db,another.id,10000,0,'full',member,{confirmed:false,confirm_converted:true})).rejects.toThrow(/Verify/);
+        } finally {await db.close();}
+    },60000);
     it('leases different conversations together while fencing later inbound, echo and standby events for a busy or retrying client', async () => {
         const db = await setup();
         try {

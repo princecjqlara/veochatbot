@@ -12,11 +12,13 @@ function dashboard(role = 'member') {
 }
 beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); vi.stubGlobal('fetch', m.fetch); });
 afterEach(async () => { if (view) await act(async () => view.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
-async function render(role = 'member', params = 'view=clients') {
+async function render(role = 'member', params = 'view=dashboard') {
     m.params = new URLSearchParams(params);
     m.fetch.mockImplementation(async (url: string) => {
         const query = new URL(url, 'https://veo.test');
         if (query.pathname === '/api/pages') return new Response(JSON.stringify({ pages: [{ id: 'page-1', name: 'VEO One' }, { id: 'page-2', name: 'VEO Two' }] }));
+        if (query.pathname === '/api/workspace/operations') return new Response(JSON.stringify({ summary: {}, orders: [], finance: { days: [] }, employees: [], page_rankings: [], order_page: { total: 0 }, client_assignments: [] }));
+        if (query.pathname === '/api/workspace/budget') return new Response(JSON.stringify({ plans: [], saved: [], defaults: {} }));
         if (query.pathname === '/api/workspace/contacts') {
             const search = query.searchParams.get('search') || '';
             const items = !search || 'searchable client'.includes(search.toLowerCase()) ? [{ id: 'client', page_id: 'page-2', page_name: 'VEO Two', name: 'Searchable Client', psid: '123', pipeline_stage: 'new' }] : [];
@@ -61,6 +63,7 @@ describe('workspace contacts, unified deals and Owner separation', () => {
         expect(text).not.toContain('Create order'); expect(text).not.toContain('Record verified payment');
         const links = view.root.findByType('nav').findAllByType('a').map(a => a.props.href);
         expect(links).toContain('/dashboard/workspace?view=accounts');
-        expect(links.some(h => /view=(clients|salary|deals)/.test(h))).toBe(false);
+        expect(links.some(h => /view=(clients|deals)/.test(h))).toBe(false);
+        expect(links).toContain('/dashboard/workspace?view=salary');
     });
 });

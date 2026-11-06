@@ -39,6 +39,8 @@ export default function DashboardLayout({
     const [pages, setPages] = useState<Page[]>([]);
     const [selectedPage, setSelectedPage] = useState<Page | null>(null);
     const [showPageDropdown, setShowPageDropdown] = useState(false);
+    const adsBlocked = !!session?.user.role && !['owner', 'team_leader'].includes(session.user.role) && pathname.startsWith('/dashboard/ad-');
+    useEffect(() => { if (adsBlocked) router.replace('/dashboard/workspace'); }, [adsBlocked, router]);
 
     useEffect(() => {
         // Only redirect if we're sure the user is unauthenticated (not loading)
@@ -89,13 +91,17 @@ export default function DashboardLayout({
         );
     }
 
+    if (adsBlocked) return <p role="status" className="p-6">Returning to your workspace…</p>;
     if (session.user.role && !session.user.telegramProfileConfirmed) return <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6"><section className="w-full max-w-lg"><VeoTelegramProfile confirmation /><button className="block mx-auto mt-4 text-sm underline text-slate-600" onClick={() => void signOut({ callbackUrl: '/' })}>Sign out</button></section></main>;
 
-    const navItems = session.user.role ? session.user.role === 'owner' ? [
+    const navItems = session.user.role ? ['owner', 'team_leader'].includes(session.user.role) ? [
         { href: '/dashboard/workspace', icon: LayoutDashboard, label: 'Teams Dashboard' },
         { href: '/dashboard/workspace?view=capacity', icon: BarChart3, label: 'Capacity & Quotas' },
-        { href: '/dashboard/ad-calendar', icon: BarChart3, label: 'Calendar & Ad Spend' },
+        { href: '/dashboard/ad-calendar', icon: BarChart3, label: 'Calendar & Salary' },
         { href: '/dashboard/ad-quality', icon: BarChart3, label: 'Ads Performance' },
+        { href: '/dashboard/workspace?view=performance', icon: Users, label: 'Employee Performance' },
+        { href: '/dashboard/workspace?view=rankings', icon: BarChart3, label: 'Rankings' },
+        { href: '/dashboard/workspace?view=budget', icon: BarChart3, label: 'Page Ad Budget' },
         { href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' },
         { href: '/dashboard/workspace?view=sync', icon: History, label: 'Collection Health' },
         { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
@@ -106,7 +112,7 @@ export default function DashboardLayout({
         { href: '/dashboard/workspace?view=deals', icon: BarChart3, label: 'Deals' },
         { href: '/dashboard/workspace?view=salary', icon: BarChart3, label: 'Salary' },
         { href: '/dashboard/workspace?view=capacity', icon: BarChart3, label: 'Capacity & Quotas' },
-        ...(session.user.role !== 'member' ? [{ href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' }] : []),
+        ...(session.user.role !== 'member' ? [{ href: '/dashboard/workspace?view=performance', icon: Users, label: 'Employee Performance' }, { href: '/dashboard/workspace?view=rankings', icon: BarChart3, label: 'Rankings' }, { href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' }] : []),
         { href: '/dashboard/contacts', icon: Users, label: 'Contacts & Bulk Tools' },
         { href: '/dashboard/pipeline', icon: GitBranch, label: 'Pipeline' },
         { href: '/dashboard/campaigns', icon: MessageSquare, label: 'Campaigns' },

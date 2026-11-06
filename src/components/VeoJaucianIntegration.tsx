@@ -9,6 +9,7 @@ export default function VeoJaucianIntegration({ submit, busy, editable = true }:
     const [data, setData] = useState<any>(null), [error, setError] = useState(''), [loading, setLoading] = useState(true);
     const [teamId, setTeamId] = useState(''), [destination, setDestination] = useState(''), [topic, setTopic] = useState('');
     const [workerId, setWorkerId] = useState(''), [telegramId, setTelegramId] = useState('');
+    const [staffChat, setStaffChat] = useState('');
     async function refresh(signal?: AbortSignal) {
         setLoading(true); setError('');
         try {
@@ -22,10 +23,10 @@ export default function VeoJaucianIntegration({ submit, busy, editable = true }:
     useEffect(() => { const controller = new AbortController(); refresh(controller.signal); return () => controller.abort(); }, []);
     const workspace = data?.workspace, jaucian = data?.jaucian;
     const groups = jaucian?.groups || [], teams = workspace?.teams || [], accounts = workspace?.accounts || [];
-    const workers = accounts.filter((a: any) => ['manager', 'member'].includes(a.role));
+    const workers = accounts.filter((a: any) => ['manager', 'member', 'team_leader'].includes(a.role));
     const worker = workers.find((w: any) => w.user_id === workerId);
     const workerTeam = worker && teams.find((t: any) => t.manager_id === (worker.role === 'manager' ? worker.user_id : worker.parent_id));
-    const workerGroup = groups.find((g: any) => String(g.chat_id) === String(workerTeam?.telegram_chat_id));
+    const workerGroup = groups.find((g: any) => String(g.chat_id) === String(worker?.role === 'team_leader' ? staffChat || worker.telegram_chat_id : workerTeam?.telegram_chat_id));
     const unmappedTeams = teams.filter((t: any) => !groups.some((g: any) => String(g.chat_id) === String(t.telegram_chat_id)));
     return <section className="rounded border bg-white p-5 space-y-4" aria-label="Jaucian integration">
         <div className="flex items-center justify-between gap-3"><h2 className="font-bold text-xl">Jaucian connection and Telegram setup</h2><button type="button" disabled={loading || busy} className="underline disabled:opacity-40" onClick={() => refresh()}>Refresh connection</button></div>
@@ -53,10 +54,11 @@ export default function VeoJaucianIntegration({ submit, busy, editable = true }:
                     <button className={button} disabled={busy || loading || !teamId || !destination || !!error}>Save team destination</button>
                 </form>
                 <form className="space-y-3 border rounded p-4" onSubmit={async e => {
-                    e.preventDefault(); const saved = await submit({ action: 'mapping', user_id: workerId, telegram_user_id: telegramId });
+                    e.preventDefault(); const saved = await submit({ action: 'mapping', user_id: workerId, telegram_user_id: telegramId, chat_id: String(workerGroup?.chat_id || '') });
                     if (saved) await refresh();
                 }}><h3 className="font-bold">Worker Telegram identity</h3>
-                    <label className="block">Worker<select required className={field} value={workerId} onChange={e => { setWorkerId(e.target.value); setTelegramId(String(workers.find((w: any) => w.user_id === e.target.value)?.telegram_user_id || '')); }}><option value="">Choose worker</option>{workers.map((w: any) => <option key={w.user_id} value={w.user_id}>{w.name} ({w.role})</option>)}</select></label>
+                    <label className="block">Worker / Team Leader<select required className={field} value={workerId} onChange={e => { setWorkerId(e.target.value); const person = workers.find((w: any) => w.user_id === e.target.value); setTelegramId(String(person?.telegram_user_id || '')); setStaffChat(String(person?.telegram_chat_id || '')); }}><option value="">Choose worker</option>{workers.map((w: any) => <option key={w.user_id} value={w.user_id}>{w.name} ({w.role})</option>)}</select></label>
+                    {worker?.role === 'team_leader' && <label className="block">Leader’s primary team group<select required className={field} value={staffChat} onChange={e => { setStaffChat(e.target.value); setTelegramId(''); }}><option value="">Choose a mapped group in this leader’s branch</option>{groups.filter((g: any) => teams.some((t: any) => t.leader_id === worker.user_id && String(t.telegram_chat_id) === String(g.chat_id))).map((g: any) => <option key={g.chat_id} value={String(g.chat_id)}>{g.name}</option>)}</select></label>}
                     {worker && <p className="text-sm">Declared username: {worker.telegram_username ? `@${worker.telegram_username}` : 'Unavailable'} · Group: {workerGroup?.name || 'Map the team destination first'}. Select the person’s matching identity; a typed username alone does not verify identity.</p>}
                     <label className="block">Observed Telegram identity<select className={field} value={workerGroup?.identities.some((i: any) => String(i.user_id) === telegramId) ? telegramId : ''} onChange={e => setTelegramId(e.target.value)}><option value="">Choose identity or enter an ID below</option>{(workerGroup?.identities || []).map((i: any) => <option key={i.user_id} value={String(i.user_id)}>{i.name} ({i.user_id})</option>)}</select></label>
                     <label className="block">Human Telegram user ID<input required className={field} inputMode="numeric" pattern="[1-9][0-9]*" value={telegramId} onChange={e => setTelegramId(e.target.value)} /></label>

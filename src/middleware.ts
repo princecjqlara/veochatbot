@@ -30,6 +30,11 @@ export async function middleware(request: NextRequest) {
         if (!scope?.launch_at) return NextResponse.json({ error: 'Workspace access is inactive' }, { status: 403 });
         const forbidden = () => NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         if (path.startsWith('/api/workspace')) return NextResponse.next();
+        if (scope.role === 'team_leader' && request.method === 'GET' && (path === '/api/ad-calendar' || /^\/api\/ad-quality(?:\/(?:connection|performance|contacts))?$/.test(path))) {
+            const page = request.nextUrl.searchParams.get('pageId');
+            if (page && !scope.page_ids.includes(page)) return forbidden();
+            return NextResponse.next();
+        }
         if (scope.role !== 'owner' && !(/^\/api\/(pages(?:\/[^/]+(?:\/(?:contacts|team|pipeline|history|exports|human-agent-send|human-agent-media)(?:\/.*)?)?)?|campaigns(?:\/.*)?|exports(?:\/.*)?|tags(?:\/.*)?|facebook\/messages\/send|facebook\/templates(?:\/.*)?|media\/photo-header|chatbot-media\/[^/]+)$/.test(path))) return forbidden();
         if (scope.role !== 'owner' && path === '/api/pages' && request.method !== 'GET') return forbidden();
         if (scope.role !== 'owner' && /\/team$/.test(path) && request.method !== 'GET') return forbidden();

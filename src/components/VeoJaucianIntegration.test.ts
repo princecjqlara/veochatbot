@@ -25,7 +25,7 @@ it('shows missing setup and uses the mapped group’s observed identities withou
         const observed = view.root.findAllByType('select').find((s: any) => s.findAllByType('option').some((o: any) => o.props.value === '42'));
         await act(async () => observed.props.onChange({ target: { value: '42' } }));
         await act(async () => view.root.findAllByType('form')[1].props.onSubmit({ preventDefault() {} }));
-        expect(submit).toHaveBeenCalledWith({ action: 'mapping', user_id: 'worker', telegram_user_id: '42' });
+        expect(submit).toHaveBeenCalledWith({ action: 'mapping', user_id: 'worker', telegram_user_id: '42', chat_id: '-123' });
         expect(flatten(view.toJSON())).toContain('No workspace deliveries recorded yet');
     } finally { await act(async () => view.unmount()); }
 });

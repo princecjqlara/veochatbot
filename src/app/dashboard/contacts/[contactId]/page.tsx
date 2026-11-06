@@ -114,7 +114,7 @@ function ContactProfile() {
         <nav className="flex gap-1 overflow-x-auto border-b border-slate-200" aria-label="Contact profile sections">{['Overview', 'Conversation', 'Sources', 'Payments', 'Timeline', 'Projection'].map(name => <button key={name} onClick={() => setTab(name)} aria-current={tab === name ? 'page' : undefined} className={`whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium ${tab === name ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'}`}>{name}</button>)}</nav>
 
         {tab === 'Overview' && <>
-            <VeoContactDetails contactId={contactId} name={contact.name} />
+            <VeoContactDetails contactId={contactId} pageId={pageId} name={contact.name} />
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[
                 ['Data collected', `${details.collected_count} / ${details.required_count} required answers`],
                 ['Verified purchases', String(metrics.purchase_count)],
@@ -141,7 +141,8 @@ function ContactProfile() {
 
         {tab === 'Sources' && <ContactSources pageId={pageId} contactId={contactId} eventKey={sourceEvent} onClearFocus={() => setSourceEvent('')} onMessage={source} />}
 
-        {tab === 'Payments' && <>
+        {tab === 'Payments' && profile.workspace_enabled && <VeoContactDetails contactId={contactId} pageId={pageId} name={contact.name} />}
+        {tab === 'Payments' && !profile.workspace_enabled && <>
             <div className="flex flex-wrap items-center justify-between gap-4"><div><h2 className="text-lg font-semibold">Purchases and verified payments</h2><p className="mt-1 text-sm text-slate-500">Only records checked by staff contribute to totals. Chat evidence is listed separately.</p></div><div className="flex gap-2"><button className="rounded-lg border px-3 py-2 text-sm font-medium" onClick={() => openForm('purchase')}>Record order</button><button className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white" onClick={() => openForm('payment')}>Record verified payment</button></div></div>
             <div className="grid gap-3 sm:grid-cols-3"><Card title="Received">{metrics.currencies.length ? metrics.currencies.map((total: any) => <p key={total.currency} className="text-xl font-semibold">{money(total.received_minor, total.currency)}</p>) : <Empty>Not verified</Empty>}</Card><Card title="Refunded">{metrics.currencies.length ? metrics.currencies.map((total: any) => <p key={total.currency} className="text-xl font-semibold">{money(total.refunded_minor, total.currency)}</p>) : <Empty>Not verified</Empty>}</Card><Card title="Net received">{metrics.currencies.length ? metrics.currencies.map((total: any) => <p key={total.currency} className="text-xl font-semibold">{money(total.net_minor, total.currency)}</p>) : <Empty>Not verified</Empty>}</Card></div>
             {formMode && <Card title={formMode === 'purchase' ? 'Record a confirmed order' : 'Record a staff-verified payment'}><form onSubmit={saveFinance} className="grid gap-4 sm:grid-cols-2">
