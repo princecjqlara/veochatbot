@@ -22,7 +22,7 @@ async function setup() {
       INSERT INTO pages VALUES('${page}','veo-page','VEO'),('${foreignPage}','suno-page','Suno');
       INSERT INTO contacts(id,page_id,name,pipeline_stage) VALUES('${contact}','${page}','Client','converted');
       INSERT INTO user_pages VALUES('${owner}','${page}'),('${owner}','${foreignPage}');`);
-    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
+    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
     await db.query('SELECT veo_launch($1,$2)', [owner, [page]]);
     await db.exec("UPDATE veo_tenants SET launch_at=now()-interval '30 days'");
     const create = (actor: string, user: string, parent: string, role: string) => action(db, actor, 'create_account', { user_id: user, parent_id: parent, role, name: role, email: `${user}@example.org`, password_hash: 'x'.repeat(40), page_ids: [page] });
@@ -58,8 +58,16 @@ describe('VEO authoritative workspace', () => {
             const ownerMetrics = (await db.query<any>('SELECT veo_team_capacity($1) AS r', [owner])).rows[0].r;
             expect(ownerMetrics.combined).toMatchObject({ workers: 3, capacity: 12, average_worker_capacity: 4 });
             await db.query('UPDATE veo_attendance SET active=false WHERE user_id=$1 AND work_date=veo_today()', [member]);
-            expect((await db.query<any>('SELECT veo_team_capacity($1) AS r',[member])).rows[0].r.combined.quota.closed).toBe(4);
-            await expect(db.exec('UPDATE veo_team_daily_capacity SET capacity=99')).rejects.toThrow(/read-only/);
+            expect((await db.query<any>('SELECT veo_team_capacity($1) AS r',[member])).rows[0].r.combined.quota.closed).toBe(3);
+            // A newly enrolled worker updates current planning without altering the
+            // immutable individual targets or a previously completed team snapshot.
+            const added = id(82);
+            await action(db,manager,'create_account',{user_id:added,parent_id:manager,role:'member',name:'New worker',email:'new-worker@example.org',password_hash:'x'.repeat(40),page_ids:[page]});
+            expect((await db.query<any>('SELECT veo_team_capacity($1) AS r',[member])).rows[0].r.combined).toMatchObject({ workers:3,capacity:5 });
+            const teamId=team.teams[0].id;
+            await db.query('INSERT INTO veo_team_daily_capacity(team_id,work_date,workers,capacity,participating,inactive,unknown,quota) VALUES($1,veo_today()-1,2,4,1,1,0,3)',[teamId]);
+            expect((await db.query<any>('SELECT veo_team_capacity($1,veo_today()-1) AS r',[member])).rows[0].r.combined).toMatchObject({workers:2,capacity:4,quota:{closed:3}});
+            await expect(db.exec('UPDATE veo_team_daily_capacity SET capacity=99 WHERE work_date<veo_today()')).rejects.toThrow(/read-only/);
             expect((await db.query<any>('SELECT veo_team_capacity($1) AS r', [leader])).rows[0].r.teams).toHaveLength(1);
             expect((await db.query<any>("SELECT has_function_privilege('anon','veo_team_capacity(uuid,date)','EXECUTE') AS ok")).rows[0].ok).toBe(false);
         } finally { await db.close(); }
