@@ -16,7 +16,8 @@ export type DemographicKey = typeof demographicFields[number]['key'];
 export type DemographicMessage = { id: string; at: string; text: string; sender: string; basis?: string };
 export type DemographicFact = { field: DemographicKey; value: string; evidence: Array<{ message_id: string; quote: string; at: string; basis?: string }> };
 const normalize = (s: string) => s.normalize('NFKC').toLowerCase().replace(/[\s_-]+/g, '');
-export const demographicKey = (value: string) => demographicFields.find(f => [f.key, ...f.aliases].some(k => normalize(k) === normalize(value)))?.key;
+const fieldAliases = new Map<string, DemographicKey>(demographicFields.flatMap(f => [f.key, ...f.aliases].map(k => [normalize(k), f.key] as const)));
+export const demographicKey = (value: string) => fieldAliases.get(normalize(value));
 const placeholder = /^(?:unknown|not known|unavailable|not provided|n\/?a|none|null|undefined|prefer not to say|[-?]+)$/i;
 export function validDemographicValue(field: string, value: unknown) {
     if (typeof value !== 'string' || value.trim().length > 160) return false;
@@ -50,11 +51,17 @@ export function groundDemographics(input: any, messages: DemographicMessage[]): 
 }
 export function recordedDemographics(client: any) {
     const extracted = Object.fromEntries((client.extracted_answers || []).filter((a: any) => a.evidence?.length).map((a: any) => [a.field, a.value]));
+    const layers = ([['manual', client.manual_fields], ['saved', client.saved_fields], ['ai', client.ai_demographics], ['extracted', extracted]] as const).map(([kind, layer]) => {
+        const values = new Map<DemographicKey, unknown>();
+        for (const [key, value] of Object.entries(layer || {})) {
+            const field = demographicKey(key);
+            if (field && (!values.has(field) || key === field)) values.set(field, value);
+        }
+        return { kind, values };
+    });
     return demographicFields.map(f => {
-        for (const [kind, layer] of [['manual', client.manual_fields], ['saved', client.saved_fields], ['ai', client.ai_demographics], ['extracted', extracted]] as const) {
-            const entries = Object.entries(layer || {});
-            const entry = entries.find(([k]) => k === f.key) || entries.find(([k]) => demographicKey(k) === f.key);
-            if (entry) return { ...f, value: validDemographicValue(f.key, entry[1]) ? String(entry[1]).trim() : 'Unknown', source: kind };
+        for (const { kind, values } of layers) {
+            if (values.has(f.key)) { const value = values.get(f.key); return { ...f, value: validDemographicValue(f.key, value) ? String(value).trim() : 'Unknown', source: kind }; }
         }
         return { ...f, value: 'Unknown', source: 'unknown' as const };
     });
