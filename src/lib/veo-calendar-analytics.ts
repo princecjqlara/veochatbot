@@ -61,11 +61,14 @@ function financials(orders: any[], cash: any[], spend: any[], pageCount: number,
         const amount = ads.length && ads.every(r => r.amount_minor != null) ? sum(ads, 'amount_minor') : null, salaryKnown = !beforeLaunch && !done.some(r => r.commission_minor == null) && !payments.some(r => r.source === 'retained');
         const salary = salaryKnown ? sum(done, 'commission_minor') : null, gross = sum(done, 'paid_minor'), received = sum(payments, 'amount_minor');
         const mixedRevenue = [...orders, ...cash].some(r => r.currency !== currency && Number(r.paid_minor || r.amount_minor || 0) !== 0);
+        const spendComplete = amount != null && ads.every(r => r.complete) && new Set(ads.map(r => r.page_id)).size === pageCount;
         return { currency, gross_minor: gross, received_minor: received, salary_minor: salary, known_salary_minor: sum(done, 'commission_minor'), ad_spend_minor: amount,
-            spend_complete: amount != null && ads.every(r => r.complete) && new Set(ads.map(r => r.page_id)).size === pageCount, spend_checked_at: ads.map(r => r.checked_at).filter(Boolean).sort().at(-1) || null,
-            mean_order_minor: mean(values), median_order_minor: median(values), done_orders: done.length, net_minor: !mixedRevenue && amount != null && salary != null ? gross - salary - amount : null,
-            cash_net_minor: !mixedRevenue && amount != null && salary != null ? received - salary - amount : null, gross_roas: !mixedRevenue && amount != null ? ratio(gross, amount) : null,
-            cash_roas: !mixedRevenue && amount != null ? ratio(received, amount) : null, legacy_salary_unknown: done.filter(r => r.commission_minor == null).length };
+            spend_complete: spendComplete, spend_pages_covered: ads.filter(r => r.complete).length, spend_pages_expected: pageCount,
+            spend_accounts_checked: Math.max(0, ...ads.map(r => Number(r.accounts_checked || 0))),
+            spend_checked_at: ads.map(r => r.checked_at).filter(Boolean).sort()[0] || null,
+            mean_order_minor: mean(values), median_order_minor: median(values), done_orders: done.length, net_minor: !mixedRevenue && spendComplete && salary != null ? gross - salary - amount! : null,
+            cash_net_minor: !mixedRevenue && spendComplete && salary != null ? received - salary - amount! : null, gross_roas: !mixedRevenue && spendComplete ? ratio(gross, amount!) : null,
+            cash_roas: !mixedRevenue && spendComplete ? ratio(received, amount!) : null, legacy_salary_unknown: done.filter(r => r.commission_minor == null).length };
     });
 }
 function quotaProgress(actual: number, target: number | null) { return { actual, target, percent: target != null ? ratio(actual, target) : null, remaining: target == null ? null : Math.max(0, target - actual), surplus: target == null ? null : Math.max(0, actual - target), status: target == null || target === 0 ? 'unavailable' : actual > target ? 'surpassed' : actual === target ? 'reached' : 'below' }; }
@@ -79,7 +82,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
             (p.source !== 'workspace' || clients.some((c: any) => c.id === p.contact_id && c.stage === 'converted')));
         const converted = clients.filter((c: any) => c.converted_at || c.stage === 'converted'), payers = new Set(co.filter((o: any) => o.closed_at).map((o: any) => o.contact_id));
         const money = financials(co, cash, spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay && !co.some((o: any) => o.financial_source === 'workspace' && o.done_at)).map(f => ({ ...f,
-            acquisition_cost_minor: f.ad_spend_minor != null ? ratio(f.ad_spend_minor, payers.size) : null, cost_per_inquiry_minor: f.ad_spend_minor != null ? ratio(f.ad_spend_minor, clients.length) : null,
+            acquisition_cost_minor: f.spend_complete ? ratio(f.ad_spend_minor!, payers.size) : null, cost_per_inquiry_minor: f.spend_complete ? ratio(f.ad_spend_minor!, clients.length) : null,
             paid_customers: payers.size, net_minor: f.cash_net_minor, gross_roas: f.cash_roas }));
         return { inquiries: clients.length, converted: converted.length, converted_later: converted.filter((c: any) => c.converted_at && dayOf(c.converted_at) > day).length,
             conversion_time_unknown: converted.filter((c: any) => !c.converted_at).length, conversion_rate: ratio(converted.length, clients.length), paid_customers: payers.size, paid_rate: ratio(payers.size, clients.length),

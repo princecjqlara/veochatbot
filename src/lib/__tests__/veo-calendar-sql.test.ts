@@ -80,3 +80,15 @@ it('denies manager access, foreign Pages and anonymous execution without creatin
     await db.query("SELECT veo_calendar_inputs($1,'2020-01-01','2020-01-31','2020-01-01')", [owner]);
     expect((await db.query<any>('SELECT count(*)::int AS n FROM veo_daily_targets WHERE work_date<veo_today()')).rows[0].n).toBe(before);
 });
+it('requires full source coverage for spend, including zero-ad Pages and newer ledger changes', async () => {
+    await db.query("INSERT INTO ad_daily_spend(page_id,ad_id,account_id,spend_date,currency,account_timezone,pht_aligned,amount,report_complete,checked_at) VALUES($1,'123','99',$2,'PHP','Asia/Manila',true,10,true,now()-interval '1 hour')", [page, earlier]);
+    const read = async () => (await db.query<any>('SELECT veo_calendar_spend($1,$2,$2) AS r', [[page], earlier])).rows[0].r[0];
+    expect(await read()).toMatchObject({ amount_minor: 1000, complete: false });
+    await db.query("INSERT INTO veo_ad_spend_coverage VALUES($1,$2,'PHP',1000,1,27,now(),true,true)", [page, earlier]);
+    expect(await read()).toMatchObject({ amount_minor: 1000, complete: true, accounts_checked: 27 });
+    await db.query("UPDATE ad_daily_spend SET amount=11,checked_at=now()+interval '1 second' WHERE page_id=$1", [page]);
+    expect(await read()).toMatchObject({ amount_minor: 1100, complete: false });
+    await db.query("INSERT INTO veo_ad_spend_coverage VALUES($1,$2,'PHP',0,0,27,now(),true,true)", [foreign, earlier]);
+    expect((await db.query<any>('SELECT veo_calendar_spend($1,$2,$2) AS r', [[foreign], earlier])).rows[0].r[0]).toMatchObject({ amount_minor: 0, complete: true });
+    expect((await db.query<any>("SELECT has_table_privilege('authenticated','veo_ad_spend_coverage','SELECT') AS allowed")).rows[0].allowed).toBe(false);
+});

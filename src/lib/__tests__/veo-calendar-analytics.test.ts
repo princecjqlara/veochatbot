@@ -35,6 +35,13 @@ describe('restored daily activity and eventual inquiry cohort analytics', () => 
         const r = buildVeoCalendar(input, { salary_days: [] }, '2026-11', '2026-11-01');
         expect(r.selected.cohort.finance.every((f: any) => f.net_minor == null && f.gross_roas == null)).toBe(true);
     });
+    it('blocks financial return ratios when any Page spend is partial, missing or still provisional', () => {
+        const input: any = inputs(); input.spend[0].complete = false;
+        const partial = buildVeoCalendar(input, {}, '2026-11', '2026-11-01').selected.cohort.finance[0];
+        expect(partial).toMatchObject({ ad_spend_minor: 2000, spend_complete: false, gross_roas: null, net_minor: null, acquisition_cost_minor: null, cost_per_inquiry_minor: null });
+        input.spend[0].complete = true; input.pages.push({ id: 'missing', name: 'Missing Page' });
+        expect(buildVeoCalendar(input, {}, '2026-11', '2026-11-01').selected.cohort.finance[0].gross_roas).toBeNull();
+    });
     it('keeps verified cash separate until the new-period contact is Converted and has a qualifying order', () => {
         const input: any = inputs(); input.leads[0].stage = 'order_created'; input.leads[0].converted_at = null;
         input.orders[0].closed_at = null; input.orders[0].done_at = null; input.orders[0].done_date = null;

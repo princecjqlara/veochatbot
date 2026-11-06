@@ -43,7 +43,7 @@ it('restores inquiry and cohort metrics beside actual salary and keeps missing a
     const day = view.root.findAllByType('button').find(b => b.props['aria-label'] === 'Work date 2026-11-06')!;
     expect(day.props.className).toContain('min-h-[76px]'); expect(flatten(day)).toContain('Inq 1');
     const rendered = flatten(view.toJSON()); expect(rendered).toContain('0.81'); expect(rendered).toContain('Converted'); expect(rendered).toContain('Day 30');
-    expect(rendered).toContain('Spend coverage is missing or partial'); expect(rendered).toContain('Recorded demographics');
+    expect(rendered).toContain('ROAS and acquisition cost are unavailable'); expect(rendered).toContain('Recorded demographics');
 });
 it.each(['member', 'manager'])('does not request calendar data for a %s', async role => {
     const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
