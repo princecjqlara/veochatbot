@@ -14,10 +14,10 @@ try {
     await db.query('BEGIN READ ONLY');
     const tenant = (await db.query('SELECT owner_id,launch_at FROM veo_tenants WHERE id=$1', [receipt.id])).rows[0];
     assert.equal(tenant.owner_id, receipt.owner); assert.equal(tenant.launch_at.toISOString(), receipt.launch_at);
-    const installed = (await db.query("SELECT count(*)::int AS n FROM app_private.schema_migrations WHERE version BETWEEN '202611050020' AND '202611050024'")).rows[0].n;
-    assert.equal(installed, 5);
+    const installed = (await db.query("SELECT count(*)::int AS n FROM app_private.schema_migrations WHERE version BETWEEN '202611050020' AND '202611050025'")).rows[0].n;
+    assert.equal(installed, 6);
     const accounts = (await db.query('SELECT user_id,role FROM veo_accounts WHERE tenant_id=$1 AND active ORDER BY role', [receipt.id])).rows;
-    const privateFunctions = ['veo_offboard', 'veo_apply_telegram_observations', 'veo_operations', 'veo_calendar_finance', 'veo_page_capacity', 'veo_budget_action', 'veo_operations_report'];
+    const privateFunctions = ['veo_current_telegram_group', 'veo_offboard', 'veo_apply_telegram_observations', 'veo_operations', 'veo_calendar_finance', 'veo_page_capacity', 'veo_budget_action', 'veo_operations_report'];
     const exposed = (await db.query("SELECT count(*)::int AS n FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname=ANY($1::text[]) AND(has_function_privilege('anon',oid,'EXECUTE') OR has_function_privilege('authenticated',oid,'EXECUTE'))", [privateFunctions])).rows[0].n;
     assert.equal(exposed, 0);
     const retained = (await db.query("SELECT count(*)::int AS n FROM veo_archive_records WHERE tenant_id=$1 AND source_table='contact_verified_payments'", [receipt.id])).rows[0].n;

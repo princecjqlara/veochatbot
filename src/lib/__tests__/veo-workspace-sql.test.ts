@@ -22,7 +22,7 @@ async function setup() {
       INSERT INTO pages VALUES('${page}','veo-page','VEO'),('${foreignPage}','suno-page','Suno');
       INSERT INTO contacts(id,page_id,name,pipeline_stage) VALUES('${contact}','${page}','Client','converted');
       INSERT INTO user_pages VALUES('${owner}','${page}'),('${owner}','${foreignPage}');`);
-    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql', '202611050019_veo_conversation_event_leases.sql', '202611050020_veo_staff_and_delivery.sql', '202611050021_veo_performance_finance.sql', '202611050022_veo_page_capacity_budget.sql', '202611050023_veo_telegram_workforce.sql', '202611050024_veo_shift_reports.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
+    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql', '202611050019_veo_conversation_event_leases.sql', '202611050020_veo_staff_and_delivery.sql', '202611050021_veo_performance_finance.sql', '202611050022_veo_page_capacity_budget.sql', '202611050023_veo_telegram_workforce.sql', '202611050024_veo_shift_reports.sql', '202611050025_veo_current_telegram_group.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
     await db.query('SELECT veo_launch($1,$2)', [owner, [page]]);
     await db.exec("UPDATE veo_tenants SET launch_at=now()-interval '30 days'");
     const create = (actor: string, user: string, parent: string, role: string) => action(db, actor, 'create_account', { user_id: user, parent_id: parent, role, name: role, email: `${user}@example.org`, password_hash: 'x'.repeat(40), page_ids: [page] });
@@ -88,6 +88,7 @@ describe('VEO authoritative workspace', () => {
             const team=(await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1',[manager])).rows[0].id;
             await action(db,owner,'mapping',{team_id:team,chat_id:-100123});
             await db.query('SELECT veo_map_staff_telegram($1,$2,321,-100123)',[owner,member]);
+            await db.query('SELECT veo_map_staff_telegram($1,$2,322,-100123)',[owner,leader]);
             const tomorrow=(await db.query<any>('SELECT (veo_today()+1)::text AS d')).rows[0].d;
             const time=(ms:number)=>new Date(Date.now()+ms).toISOString();
             const person=(ms:number,more:any={})=>({user_id:member,telegram_user_id:321,chat_id:-100123,observed_at:time(ms),membership:'member',is_bot:false,membership_confirmed:true,...more});
@@ -100,11 +101,18 @@ describe('VEO authoritative workspace', () => {
             await apply(person(2000,{membership:'unknown',membership_confirmed:false,is_bot:null,error:'lookup_failed'}));
             expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[member])).rows[0].active).toBe(true);
             await action(db,owner,'mapping',{team_id:team,chat_id:-100456});
+            expect((await db.query<any>('SELECT veo_current_telegram_group($1) AS chat',[leader])).rows[0].chat).toBeNull();
+            await apply(person(3000,{user_id:leader,telegram_user_id:322,membership:'left'}));
+            expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[leader])).rows[0].active).toBe(true);
             await apply(person(3000,{chat_id:-100456,membership:'left'}));
             expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[member])).rows[0].active).toBe(true);
             await apply(person(4000,{chat_id:-100456}));
             await apply(person(5000,{chat_id:-100456,membership:'left'}));
             expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[member])).rows[0].active).toBe(false);
+            await action(db,owner,'mapping',{team_id:team,chat_id:-100123});
+            await apply(person(6000,{user_id:leader,telegram_user_id:322,membership:'left'}));
+            expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[leader])).rows[0].active).toBe(false);
+            expect((await db.query<any>('SELECT veo_can_page($1,$2) AS allowed',[manager,page])).rows[0].allowed).toBe(true);
             expect((await db.query<any>('SELECT veo_scope($1) AS s',[owner])).rows[0].s.role).toBe('owner');
         }finally{await db.close();}
     },60000);

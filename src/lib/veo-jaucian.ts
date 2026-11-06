@@ -51,13 +51,24 @@ export async function veoDirectory(tenant: string) {
     const names = new Map(users.map(u => [u.id, u])), tg = new Map(mappings.map(m => [m.user_id, m.telegram_user_id]));
     const active = accounts.filter(a => names.get(a.user_id)?.is_active);
     const activeIds = new Set(active.map(a => a.user_id));
+    const currentTeams = teams.filter(t => activeIds.has(t.manager_id) || active.some(a => a.parent_id === t.manager_id));
+    function inBranch(manager: string, leader: string) {
+        const visited = new Set<string>();
+        while (manager && !visited.has(manager)) { if (manager === leader) return true; visited.add(manager); manager = ancestry.find(a => a.user_id === manager)?.parent_id; }
+        return false;
+    }
+    function currentGroup(account: any) {
+        if (account.role !== 'team_leader') return currentTeams.find(t => t.manager_id === (account.role === 'manager' ? account.user_id : account.parent_id))?.telegram_chat_id || null;
+        const chat = groups.find(g => g.user_id === account.user_id)?.telegram_chat_id;
+        return chat && currentTeams.some(t => String(t.telegram_chat_id) === String(chat) && inBranch(t.manager_id, account.user_id)) ? chat : null;
+    }
     return { ok: true, tenant_id: tenant, name: connection.name, launch_at: connection.launch_at,
         checked_at: new Date().toISOString(), source: 'VEO database', read_only: true, commission_rule: commissionRule,
         accounts: active.map(a => ({ ...a, name: names.get(a.user_id)?.name || 'Unknown name',
             telegram_user_id: tg.get(a.user_id) || null, telegram_username_verified: false,
-            telegram_chat_id: a.role === 'team_leader' ? groups.find(g => g.user_id === a.user_id)?.telegram_chat_id || null : teams.find(t => t.manager_id === (a.role === 'manager' ? a.user_id : a.parent_id))?.telegram_chat_id || null,
+            telegram_chat_id: currentGroup(a),
             page_ids: grants.filter(g => g.user_id === a.user_id).map(g => g.page_id) })),
-        teams: teams.filter(t => activeIds.has(t.manager_id) || active.some(a => a.parent_id === t.manager_id)).map(t => ({ ...t, leader_id: ancestry.find(a => a.user_id === t.manager_id)?.parent_id || null })), pages,
+        teams: currentTeams.map(t => ({ ...t, leader_id: ancestry.find(a => a.user_id === t.manager_id)?.parent_id || null })), pages,
         attendance: attendance.filter(a => activeIds.has(a.user_id)) };
 }
 

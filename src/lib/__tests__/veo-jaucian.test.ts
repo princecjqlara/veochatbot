@@ -37,6 +37,19 @@ it('fails closed when a directory source is unavailable', async () => {
     database({ veo_tenants: [{ id: tenant, owner_id: CJ_OWNER_USER_ID, launch_at: '2026-11-05T00:00:00Z' }] }, 'veo_accounts');
     await expect(veoDirectory(tenant)).rejects.toThrow('Workspace directory unavailable');
 });
+it('withholds a leader’s obsolete primary group after the branch team is remapped', async () => {
+    const accounts = [{ user_id: 'leader', tenant_id: tenant, role: 'team_leader', active: true, parent_id: CJ_OWNER_USER_ID },
+        { user_id: 'manager', tenant_id: tenant, role: 'manager', active: true, parent_id: 'leader' }];
+    const tables = { veo_tenants: [{ id: tenant, owner_id: CJ_OWNER_USER_ID, launch_at: '2026-11-05T00:00:00Z' }], veo_accounts: accounts,
+        users: accounts.map(a => ({ id: a.user_id, is_active: true })), veo_staff_telegram_groups: [{ user_id: 'leader', telegram_chat_id: -100123 }],
+        veo_teams: [{ id: 'team', tenant_id: tenant, manager_id: 'manager', telegram_chat_id: -100123 }] };
+    database(tables);
+    expect((await veoDirectory(tenant)).accounts.find(a => a.user_id === 'leader')?.telegram_chat_id).toBe(-100123);
+    tables.veo_teams[0].telegram_chat_id = -100456;
+    expect((await veoDirectory(tenant)).accounts.find(a => a.user_id === 'leader')?.telegram_chat_id).toBeNull();
+    tables.veo_staff_telegram_groups[0].telegram_chat_id = -100456;
+    expect((await veoDirectory(tenant)).accounts.find(a => a.user_id === 'leader')?.telegram_chat_id).toBe(-100456);
+});
 it('reads Jaucian with server authentication and rejects redirects, foreign tenant data and outages', async () => {
     vi.stubEnv('VEO_JAUCIAN_URL', 'https://jaucian.example'); vi.stubEnv('VEO_JAUCIAN_SECRET', 'private-test-key');
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, tenant_id: tenant, groups: [] })));
