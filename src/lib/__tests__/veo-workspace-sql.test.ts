@@ -22,7 +22,7 @@ async function setup() {
       INSERT INTO pages VALUES('${page}','veo-page','VEO'),('${foreignPage}','suno-page','Suno');
       INSERT INTO contacts(id,page_id,name,pipeline_stage) VALUES('${contact}','${page}','Client','converted');
       INSERT INTO user_pages VALUES('${owner}','${page}'),('${owner}','${foreignPage}');`);
-    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql', '202611050019_veo_conversation_event_leases.sql', '202611050020_veo_staff_and_delivery.sql', '202611050021_veo_performance_finance.sql', '202611050022_veo_page_capacity_budget.sql', '202611050023_veo_telegram_workforce.sql', '202611050024_veo_shift_reports.sql', '202611050025_veo_current_telegram_group.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
+    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql', '202611050018_veo_current_team_planning.sql', '202611050019_veo_conversation_event_leases.sql', '202611050020_veo_staff_and_delivery.sql', '202611050021_veo_performance_finance.sql', '202611050022_veo_page_capacity_budget.sql', '202611050023_veo_telegram_workforce.sql', '202611050024_veo_shift_reports.sql', '202611050025_veo_current_telegram_group.sql', '202611050028_veo_distinct_client_release.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
     await db.query('SELECT veo_launch($1,$2)', [owner, [page]]);
     await db.exec("UPDATE veo_tenants SET launch_at=now()-interval '30 days'");
     const create = (actor: string, user: string, parent: string, role: string) => action(db, actor, 'create_account', { user_id: user, parent_id: parent, role, name: role, email: `${user}@example.org`, password_hash: 'x'.repeat(40), page_ids: [page] });
@@ -166,6 +166,19 @@ describe('VEO authoritative workspace', () => {
             expect((await db.query<any>('SELECT seller_id FROM veo_orders WHERE id=$1',[olderPaid.id])).rows[0].seller_id).toBe(member);
         } finally { await db.close(); }
     },60000);
+    it('releases a client once when the departed worker has many unfinished orders for that same client', async () => {
+        const db = await setup();
+        try {
+            const first = await order(db);
+            await db.query(`INSERT INTO veo_orders(request_id,tenant_id,team_id,page_id,contact_id,seller_id,description,total_minor,currency,created_by)
+              SELECT gen_random_uuid(),tenant_id,team_id,page_id,contact_id,seller_id,'Another video '||n,total_minor,currency,created_by FROM veo_orders CROSS JOIN generate_series(1,120) n WHERE id=$1`, [first.id]);
+            const removed = await action(db, manager, 'staff_delete', { user_id: member, reason: 'Employment ended' });
+            expect(removed.released_clients).toBe(1);
+            expect((await db.query<any>('SELECT count(*)::int AS n FROM veo_client_claims WHERE contact_id=$1 AND user_id IS NULL', [contact])).rows[0].n).toBe(1);
+            await action(db, other, 'claim_client', { contact_id: contact });
+            expect((await db.query<any>('SELECT count(*)::int AS n FROM veo_orders WHERE seller_id=$1', [other])).rows[0].n).toBe(121);
+        } finally { await db.close(); }
+    }, 60000);
     it('staff operations preserve active descendants when a supervisor leaves and isolate performance by branch', async () => {
         const db = await setup();
         try {

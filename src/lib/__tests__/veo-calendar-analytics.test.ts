@@ -1,0 +1,64 @@
+import { describe, expect, it } from 'vitest';
+import { buildVeoCalendar, demographics, objections, cohortProjection } from '../veo-calendar-analytics';
+const first = '2026-11-01T04:00:00Z', now = '2026-11-08T04:00:00Z';
+const lead = (id: string, stage = 'converted') => ({ id, page_id: 'page', name: id, stage, inquiry_at: first, converted_at: stage === 'converted' ? '2026-11-03T04:00:00Z' : null });
+function inputs() { return { as_of: now, scope: { role: 'owner', launch_at: '2026-10-30T00:00:00Z' }, pages: [{ id: 'page', name: 'VEO' }], leads: [lead('one'), lead('two', 'qualified')], selected_clients: [lead('one'), lead('two', 'qualified')], orders: [{ order_key: 'order', contact_id: 'one', seller_id: 'seller', currency: 'PHP', paid_minor: 10000, total_minor: 10000, commission_minor: 3500, financial_source: 'workspace', closed_at: '2026-11-03T04:00:00Z', closed_date: '2026-11-03', done_at: '2026-11-05T04:00:00Z', done_date: '2026-11-05' }], cash: [{ contact_id: 'one', currency: 'PHP', amount_minor: 3000, paid_day: '2026-11-03' }, { contact_id: 'one', currency: 'PHP', amount_minor: 7000, paid_day: '2026-11-05' }], spend: [{ page_id: 'page', currency: 'PHP', spend_date: '2026-11-01', amount_minor: 2000, complete: true }, { page_id: 'page', currency: 'PHP', spend_date: '2026-11-05', amount_minor: 1000, complete: true }], peer_lag_hours: [], messages: [], message_coverage: [], page_plans: [], team_plans: [], employees: [{ id: 'seller', name: 'Seller' }], missing_inquiry_dates: 3 }; }
+describe('restored daily activity and eventual inquiry cohort analytics', () => {
+    it('credits later payments to the inquiry cohort and counts CD/DD only on their actual financial dates', () => {
+        const r = buildVeoCalendar(inputs(), { salary_days: [] }, '2026-11', '2026-11-01');
+        expect(r.days.find(d => d.work_date === '2026-11-01')).toMatchObject({ inquiries: 2, closed: 0, done: 0, cohort_converted: 1, converted_later: 1 });
+        expect(r.days.find(d => d.work_date === '2026-11-03')?.closed).toBe(1);
+        expect(r.days.find(d => d.work_date === '2026-11-05')?.finance[0]).toMatchObject({ gross_minor: 10000, salary_minor: 3500, ad_spend_minor: 1000, net_minor: 5500 });
+        expect(r.selected.cohort.finance[0]).toMatchObject({ received_minor: 10000, salary_minor: 3500, ad_spend_minor: 2000, net_minor: 4500, acquisition_cost_minor: 2000, gross_roas: 5, mean_order_minor: 10000, median_order_minor: 10000 });
+        expect(r.selected.touchpoints.map(t => t.converted)).toEqual([0, 1, 1, 1]);
+        expect(r.selected.timing[1]).toMatchObject({ mean_hours: 48, median_hours: 48 });
+        expect(r.selected.timing[2]).toMatchObject({ mean_hours: 96, median_hours: 96 });
+    });
+    it('does not invent historical salaries, response rates, staffing or quotas', () => {
+        const input = inputs(); input.orders[0].commission_minor = null as any; input.orders[0].financial_source = 'retained'; input.scope.launch_at = '2026-11-06T00:00:00Z';
+        const r = buildVeoCalendar(input, { salary_days: [] }, '2026-11', '2026-11-05');
+        expect(r.selected.finance[0]).toMatchObject({ salary_minor: null, net_minor: null });
+        expect(r.selected.response).toMatchObject({ rate: null, inbound: null, coverage_complete: false });
+        expect(r.selected.staffing.available).toBeNull(); expect(r.selected.quota.done.target).toBeNull();
+        expect(r.selected.quota.done.actual).toBe(0); expect(r.selected.done).toBe(1);
+    });
+    it('reports quota surpassed separately from daily attendance unknowns and preserves Page-filtered targets', () => {
+        const input: any = inputs(); input.team_plans = [{ work_date: '2026-11-05', quota: 1, participating: 1, unknown: 2, workers: 3, capacity: 3 }];
+        input.orders.push({ ...input.orders[0], order_key: 'two', contact_id: 'two' });
+        input.messages = [{ day: '2026-11-05', inbound: 4, answered: 3 }]; input.message_coverage = [{ page_id: 'page', capture_from: '2026-10-30T00:00:00Z' }];
+        const r = buildVeoCalendar(input, { salary_days: [] }, '2026-11', '2026-11-05');
+        expect(r.selected.quota.done).toMatchObject({ status: 'surpassed', percent: 2, surplus: 1, remaining: 0 });
+        expect(r.selected.staffing).toMatchObject({ available: 1, unknown: 2, roster: 3 }); expect(r.selected.response.rate).toBe(.75);
+    });
+    it('does not combine mismatched currencies into ROAS or net profit', () => {
+        const input: any = inputs(); input.orders[0].currency = 'USD'; input.cash.forEach((c: any) => c.currency = 'USD');
+        const r = buildVeoCalendar(input, { salary_days: [] }, '2026-11', '2026-11-01');
+        expect(r.selected.cohort.finance.every((f: any) => f.net_minor == null && f.gross_roas == null)).toBe(true);
+    });
+    it('keeps verified cash separate until the new-period contact is Converted and has a qualifying order', () => {
+        const input: any = inputs(); input.leads[0].stage = 'order_created'; input.leads[0].converted_at = null;
+        input.orders[0].closed_at = null; input.orders[0].done_at = null; input.orders[0].done_date = null;
+        input.cash.forEach((p: any) => p.source = 'workspace');
+        const r = buildVeoCalendar(input, { salary_days: [] }, '2026-11', '2026-11-01');
+        expect(r.selected.cohort.paid_customers).toBe(0); expect(r.selected.cohort.finance[0].received_minor).toBe(0);
+        expect(r.days.find(d => d.work_date === '2026-11-05')?.finance[0].received_minor).toBe(7000);
+    });
+});
+it('uses recorded demographics with explicit unknown percentages and manual correction priority', () => {
+    const rows = demographics([{ manual_fields: { gender: '', age: '22' }, saved_fields: { gender: 'Male', city: 'Manila' } }, { manual_fields: { gender: 'Female', age: '34' } }]);
+    expect(rows.find(r => r.dimension === 'Gender')?.rows.find(r => r.label === 'Unknown')).toMatchObject({ count: 1, percent: .5 });
+    expect(rows.find(r => r.dimension === 'Location')?.known).toBe(1);
+    expect(rows.find(r => r.dimension === 'Age')?.known).toBe(2);
+});
+it('deduplicates supported objections per client and excludes unsupported extracted facts', () => {
+    const proof = [{ message_id: 'm', quote: 'mahal' }];
+    const r = objections([{ id: 'one', profile_as_of: now, objections: [{ value: 'mahal', evidence: proof }, { value: 'price', evidence: proof }, { value: 'scam', evidence: [] }] }, { id: 'two' }]);
+    expect(r.rows).toEqual([{ label: 'Price / budget', clients: 1, percent: .5 }]);
+});
+it('requires mature peer coverage for projections and never treats a closed window as a lifetime limit', () => {
+    expect(cohortProjection([lead('new', 'new')], [], Date.parse(now)).status).toBe('insufficient_history');
+    const peers = [...Array(40).fill(null), ...Array(10).fill(300)];
+    const estimate = cohortProjection([lead('new', 'new')], peers, Date.parse(now));
+    expect(estimate.status).toBe('estimated'); expect(estimate.additional).toBeCloseTo(.2); expect(estimate.lower).toBeLessThan(.2); expect(estimate.upper).toBeGreaterThan(.2);
+    expect(cohortProjection([lead('old', 'new')], peers, Date.parse('2026-12-30')).status).toBe('window_complete');
+});

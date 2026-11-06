@@ -5,6 +5,7 @@ vi.mock('next/link', () => ({ default: ({ href, children, ...props }: any) => cr
 import Operations from './VeoOperationsPanel';
 import Calendar from './VeoWorkCalendar';
 import Offboarding from './VeoStaffOffboarding';
+import { buildVeoCalendar } from '@/lib/veo-calendar-analytics';
 const flatten = (v: any): string => typeof v === 'string' || typeof v === 'number' ? String(v) : (v?.children || []).map(flatten).join('');
 let view: ReactTestRenderer;
 const scope = { user_id: 'worker', role: 'manager', launch_at: '2026-11-05T00:00:00Z' };
@@ -35,12 +36,14 @@ it('keeps a removed seller receipt blocked even if settlement and conversion are
     expect(view.root.findAllByType('button').find(b => flatten(b).includes('Submit eligible receipt'))!.props.disabled).toBe(true);
     expect(flatten(view.toJSON())).toContain('A supervisor must review attribution');
 });
-it('uses recorded salary in compact calendar cells and keeps missing ad costs unavailable', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ days: [{ work_date: '2026-11-06', closed: 1, done: 1, totals: salary.totals, spend: [], cash: [], provisional: true }], salary_days: [salary] }))));
+it('restores inquiry and cohort metrics beside actual salary and keeps missing ad costs unavailable', async () => {
+    const input = { as_of: '2026-11-06T04:00:00Z', scope, pages: [{ id: 'page', name: 'VEO' }], leads: [{ id: 'client', page_id: 'page', name: 'Client', inquiry_at: '2026-11-06T01:00:00Z', stage: 'converted', converted_at: '2026-11-06T02:00:00Z' }], selected_clients: [], orders: [{ ...record, contact_id: 'client', done_date: '2026-11-06', done_at: '2026-11-06T02:00:00Z', commission_minor: 81, financial_source: 'workspace' }], cash: [], spend: [], team_plans: [], page_plans: [], employees: [], messages: [], message_coverage: [] };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(buildVeoCalendar(input, { salary_days: [salary] }, '2026-11', '2026-11-06')))));
     await act(async () => { view = create(createElement(Calendar, { scope: { ...scope, role: 'team_leader' }, pages: [] })); });
     const day = view.root.findAllByType('button').find(b => b.props['aria-label'] === 'Work date 2026-11-06')!;
-    expect(day.props.className).toContain('min-h-[76px]'); expect(flatten(day)).toContain('0.81');
-    expect(flatten(view.toJSON())).toContain('Unavailable without ad-spend coverage');
+    expect(day.props.className).toContain('min-h-[76px]'); expect(flatten(day)).toContain('Inq 1');
+    const rendered = flatten(view.toJSON()); expect(rendered).toContain('0.81'); expect(rendered).toContain('Converted'); expect(rendered).toContain('Day 30');
+    expect(rendered).toContain('Spend coverage is missing or partial'); expect(rendered).toContain('Recorded demographics');
 });
 it.each(['member', 'manager'])('does not request calendar data for a %s', async role => {
     const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
