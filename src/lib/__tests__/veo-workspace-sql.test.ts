@@ -22,7 +22,7 @@ async function setup() {
       INSERT INTO pages VALUES('${page}','veo-page','VEO'),('${foreignPage}','suno-page','Suno');
       INSERT INTO contacts(id,page_id,name,pipeline_stage) VALUES('${contact}','${page}','Client','converted');
       INSERT INTO user_pages VALUES('${owner}','${page}'),('${owner}','${foreignPage}');`);
-    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
+    for (const file of ['202611050010_veo_workspace.sql', '202611050011_veo_workspace_workers.sql', '202611050012_veo_workspace_hardening.sql', '202611050013_veo_refund_and_submission_recovery.sql', '202611050014_veo_salary_reconciliation_queue.sql', '202611050015_veo_review_corrections.sql', '202611050016_veo_contacts_and_telegram_profile.sql', '202611050017_veo_team_capacity.sql']) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'));
     await db.query('SELECT veo_launch($1,$2)', [owner, [page]]);
     await db.exec("UPDATE veo_tenants SET launch_at=now()-interval '30 days'");
     const create = (actor: string, user: string, parent: string, role: string) => action(db, actor, 'create_account', { user_id: user, parent_id: parent, role, name: role, email: `${user}@example.org`, password_hash: 'x'.repeat(40), page_ids: [page] });
@@ -40,6 +40,61 @@ async function payment(db: PGlite, orderId: string, amount: number, days = 0, ki
 }
 
 describe('VEO authoritative workspace', () => {
+    it('adds worker targets into team quotas and weighted branch averages without exposing other workers finance or changing commission', async () => {
+        const db = await setup();
+        try {
+            await db.query('UPDATE veo_daily_targets SET target=3 WHERE user_id=$1 AND work_date=veo_today()', [manager]);
+            await db.query('UPDATE veo_daily_targets SET target=8 WHERE user_id=$1 AND work_date=veo_today()', [otherManager]);
+            await db.query('UPDATE veo_accounts SET active=false WHERE user_id=$1', [other]);
+            await db.query('INSERT INTO veo_attendance SELECT user_id,veo_today(),true,$1,now() FROM veo_accounts WHERE role IN($2,$3)', [owner,'manager','member']);
+            const carried = await order(db); await payment(db, carried.id, 2000, 1, 'deposit'); await payment(db, carried.id, 8000, 0, 'balance');
+            for (let i=0;i<4;i++) { const o = await order(db, manager); await payment(db, o.id, 10000, 0, 'full', manager); }
+            const team = (await db.query<any>('SELECT veo_team_capacity($1) AS r', [member])).rows[0].r;
+            expect(team.teams).toHaveLength(1); expect(team.teams[0].manager_id).toBe(manager);
+            expect(team.combined).toMatchObject({ workers: 2, capacity: 4, average_worker_capacity: 2, closed: 4, done: 5, quota: { closed: 4, done: 4, met: true } });
+            expect(JSON.stringify(team)).not.toContain('commission_minor'); expect(JSON.stringify(team)).not.toContain(otherManager);
+            const salary = (await db.query<any>('SELECT veo_salary($1,veo_today()) AS r', [member])).rows[0].r;
+            expect(salary).toMatchObject({ closed: 0, done: 1, rate: 35 });
+            const ownerMetrics = (await db.query<any>('SELECT veo_team_capacity($1) AS r', [owner])).rows[0].r;
+            expect(ownerMetrics.combined).toMatchObject({ workers: 3, capacity: 12, average_worker_capacity: 4 });
+            await db.query('UPDATE veo_attendance SET active=false WHERE user_id=$1 AND work_date=veo_today()', [member]);
+            expect((await db.query<any>('SELECT veo_team_capacity($1) AS r',[member])).rows[0].r.combined.quota.closed).toBe(4);
+            await expect(db.exec('UPDATE veo_team_daily_capacity SET capacity=99')).rejects.toThrow(/read-only/);
+            expect((await db.query<any>('SELECT veo_team_capacity($1) AS r', [leader])).rows[0].r.teams).toHaveLength(1);
+            expect((await db.query<any>("SELECT has_function_privilege('anon','veo_team_capacity(uuid,date)','EXECUTE') AS ok")).rows[0].ok).toBe(false);
+        } finally { await db.close(); }
+    }, 60000);
+    it('averages combined team output across completed PHT dates, including zero days and excluding today and older history', async () => {
+        const db = await setup();
+        try {
+            for (const [days, quantity] of [[2,5],[3,1],[4,3],[15,9],[0,2]]) for (let i=0;i<quantity;i++) { const o=await order(db); await payment(db,o.id,10000,days); }
+            const metrics = (await db.query<any>('SELECT veo_team_capacity($1) AS r',[member])).rows[0].r.combined;
+            expect(metrics.history).toMatchObject({ completed_days: 14, done_total: 9, average_done_per_day: 0.64, best_three_average: 3, eligible_days: 3 });
+            expect(metrics.history.days.filter((d: any) => d.done===0)).toHaveLength(11);
+            const future = (await db.query<any>('SELECT (veo_today()+1)::text AS day')).rows[0].day;
+            await expect(db.query('SELECT veo_team_capacity($1,$2)',[member,future])).rejects.toThrow(/Date outside/);
+            await expect(db.query('SELECT veo_team_capacity($1)',[id(999)])).rejects.toThrow(/Forbidden/);
+        } finally { await db.close(); }
+    }, 60000);
+    it('updates active-tomorrow team quotas, preserves individual snapshots and shares the same aggregates with Jaucian', async () => {
+        const db = await setup();
+        try {
+            const tomorrow = (await db.query<any>('SELECT (veo_today()+1)::text AS day')).rows[0].day;
+            await action(db,member,'attendance',{work_date:tomorrow,active:true});
+            let metrics = (await db.query<any>('SELECT veo_team_capacity($1) AS r',[manager])).rows[0].r;
+            expect(metrics.combined.tomorrow).toMatchObject({ active:1, unknown:1, capacity:1, full_capacity:2, average_active_capacity:1 });
+            await action(db,manager,'attendance',{work_date:tomorrow,active:true});
+            metrics = (await db.query<any>('SELECT veo_team_capacity($1) AS r',[manager])).rows[0].r;
+            expect(metrics.combined.tomorrow).toMatchObject({ active:2, unknown:0, capacity:2 });
+            await action(db,member,'attendance',{work_date:tomorrow,active:false});
+            metrics = (await db.query<any>('SELECT veo_team_capacity($1) AS r',[manager])).rows[0].r;
+            expect(metrics.combined.tomorrow).toMatchObject({ active:1, inactive:1, capacity:1 });
+            const tenant = (await db.query<any>('SELECT tenant_id FROM veo_accounts WHERE user_id=$1',[owner])).rows[0].tenant_id;
+            const report = (await db.query<any>('SELECT veo_jaucian_report($1,veo_today()) AS r',[tenant])).rows[0].r;
+            expect(report.teams.find((t: any)=>t.id===metrics.teams[0].id).capacity).toEqual(metrics.teams[0]);
+            expect(metrics.combined.capacity).toBe(2);
+        } finally { await db.close(); }
+    }, 60000);
     it('searches visible contacts without orders by name, client ID and manual details, with pagination and revocation', async () => {
         const db = await setup();
         try {

@@ -62,6 +62,12 @@ try {
     const ownerBody = await ownerResponse.json();
     assert.equal(ownerResponse.status, 200);
     assert.equal(ownerBody.scope.role, 'owner'); assert.equal(ownerBody.scope.user_id, receipt.owner);
+    assert(Array.isArray(ownerBody.capacity?.teams), 'Team capacity must be available to the Owner');
+    assert.equal(typeof ownerBody.capacity.combined.capacity, 'number');
+    assert.equal(typeof ownerBody.capacity.combined.quota.closed, 'number');
+    assert.equal(typeof ownerBody.capacity.combined.tomorrow.capacity, 'number');
+    result.team_capacity_verified = { teams: ownerBody.capacity.teams.length, full_capacity: ownerBody.capacity.combined.capacity,
+        daily_quota: ownerBody.capacity.combined.quota.closed, tomorrow_quota: ownerBody.capacity.combined.tomorrow.capacity };
     assert.equal(typeof ownerBody.order_page?.total, 'number', 'Order lists must include full-ledger pagination');
     const headers = { Cookie: `__Secure-next-auth.session-token=${token}; next-auth.session-token=${token}` };
     const contactsResponse = await fetch(origin + '/api/workspace/contacts', { headers, signal: AbortSignal.timeout(30000) });

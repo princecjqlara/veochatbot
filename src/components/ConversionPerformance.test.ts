@@ -4,6 +4,12 @@ const row={page_id:'p',ad_id:'123',day:'2026-10-20',page:{name:'Azshinari'},lead
 const data={pages:[row],ads:[row],daily:[row],unique_contacts:10,refresh_pending:0,generated_at:'2026-10-29T00:00:00Z',range:{from:'2026-10-19T16:00:00Z',to:'2026-10-20T16:00:00Z'}};
 const response=(d:any)=>({ok:true,json:async()=>d});
 describe('Page and creative summary display',()=>{
+ it('uses saved marketing outcomes in workspace mode without historical conversation verification requests',async()=>{
+  const fetch=vi.fn(async()=>response({...data,refresh_pending:10,read_only_reports:true}));vi.stubGlobal('fetch',fetch);
+  await act(async()=>{view=create(createElement(ConversionPerformance,{query:'range=today',connection:{readOnlyReports:true,status:'saved_data'}}));});
+  expect(view!.root.findAllByType('button').some(b=>b.props.children==='Verify latest conversations')).toBe(false);
+  expect(fetch.mock.calls.some(c=>String(c[0]).includes('/refresh-evidence'))).toBe(false);
+ });
  it('separates period payment counts from original-cohort conversions and shows missing spend as N/A',async()=>{
   vi.stubGlobal('fetch',vi.fn(async()=>response(data)));await act(async()=>{view=create(createElement(ConversionPerformance,{query:'range=30'}));});const text=JSON.stringify(view!.toJSON());expect(text).toContain('Payment confirmations in period');expect(text).toContain('Cohort payers now');expect(text).toContain('10.00%');expect(text).toContain('20.00%');expect(text).toContain('N/A');expect(text).toContain('Future inquiry volume is not assumed');
  });

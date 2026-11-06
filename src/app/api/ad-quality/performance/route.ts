@@ -5,6 +5,7 @@ import{getSupabaseAdmin}from'@/lib/supabase';
 import{adQualityRange}from'@/lib/ad-quality-range';
 import{performanceAccumulator,joinDailySpend,phtDate}from'@/lib/conversion-performance';
 import{forecastPageName}from'@/lib/contact-forecast';
+import{workspaceEnabled}from'@/lib/veo-workspace';
 export const dynamic='force-dynamic';export const maxDuration=120;
 export async function GET(request:NextRequest){
  const session=await getSessionFromRequest(request);if(!session?.user?.id)return NextResponse.json({error:'Unauthorized'},{status:401});
@@ -51,7 +52,7 @@ export async function GET(request:NextRequest){
   for(const s of spend){const key=JSON.stringify([s.page_id,s.ad_id,s.spend_date]);if(!dayKeys.has(key)){data.daily.push({...performanceAccumulator([{id:s.page_id,fb_page_id:pageNames.get(s.page_id)?.fb_page_id||''}]).result().pages[0],ad_id:s.ad_id,day:s.spend_date});dayKeys.add(key);}}
   const meta=new Map((catalog.data||[]).map((a:any)=>[JSON.stringify([a.page_id,a.ad_id]),a]));
   const decorate=(r:any)=>({...r,page:pageNames.get(r.page_id),ad:meta.get(JSON.stringify([r.page_id,r.ad_id]))||null});
-  return NextResponse.json({range,generated_at:range.generated_at,model_version:'dd7f0ca783ad1651',outlook_method:'recorded_payers_plus_expected_by_day30',
+  return NextResponse.json({range,generated_at:range.generated_at,read_only_reports:workspaceEnabled(),model_version:'dd7f0ca783ad1651',outlook_method:'recorded_payers_plus_expected_by_day30',
    pages:data.pages.map(p=>({...p,page:pageNames.get(p.page_id),period_payments:(payments.data||[]).find((x:any)=>x.page_id===p.page_id)||{confirmed:0,avg_hours:null,median_hours:null}})),
    ads:joinDailySpend(data.ads,spend,range).map(decorate),daily:joinDailySpend(data.daily,spend,range).map(decorate),unique_contacts:data.unique_contacts,refresh_pending:pending.error?null:Number(pending.data?.pending||0),
    note:'Payment counts use documented first payment/deposit confirmation. The expected cohort outcome includes all recorded payers plus additional confirmations projected within each unpaid lead\'s remaining 30-day window. Separate Day-7/14/30 rates count confirmations within those first-inquiry windows. Expected payer counts are probability-weighted averages. Missing or outdated sources remain unknown; cutoff dates describe the forecast window, not predicted purchase dates.'

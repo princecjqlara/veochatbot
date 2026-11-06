@@ -47,8 +47,8 @@ export default function ConversionPerformance({query='range=today',compact=false
  useEffect(()=>{
   // Today's queue is small and contains new activity from older cohorts too.
   // Historical ranges use the explicit bounded verification action.
-  if(automatic&&new URLSearchParams(query).get('range')==='today'&&data?.refresh_pending>0&&Date.now()-lastAuto.current>60_000&&Date.now()>failedUntil.current){lastAuto.current=Date.now();void verify(false);}
- },[data,query,automatic,verify]);
+  if(automatic&&connection?.readOnlyReports!==true&&data?.read_only_reports!==true&&new URLSearchParams(query).get('range')==='today'&&data?.refresh_pending>0&&Date.now()-lastAuto.current>60_000&&Date.now()>failedUntil.current){lastAuto.current=Date.now();void verify(false);}
+ },[data,query,automatic,verify,connection?.readOnlyReports]);
  const syncSpend=async()=>{
   if(spending||!connection?.accounts?.length)return;setSpending(true);const sourceQuery=query,q=new URLSearchParams(query),now=Date.now(),from=data?.range?.from?day(Date.parse(data.range.from)):day(now-29*86_400_000),to=day(Date.parse(data?.range?.to||new Date().toISOString())-1);let saved=0,calls=0;
   try{
@@ -71,7 +71,7 @@ export default function ConversionPerformance({query='range=today',compact=false
  const rows=(daily?data?.daily:data?.ads)||[],payers=(data?.pages||[]).reduce((n:number,p:any)=>n+Number(p.period_payments.confirmed),0);
  const visible=rows.filter((r:any)=>adFilter==='all'||JSON.stringify([r.page_id,r.ad_id])===adFilter).sort((a:any,b:any)=>(b.day||'').localeCompare(a.day||'')||b.leads-a.leads);
  return <section aria-label="Conversion performance" className="border border-black p-3 md:p-4 space-y-3 min-w-0">
-  <div className="flex flex-wrap justify-between items-center gap-2"><div><h2 className="text-lg font-bold">{compact?'Today’s Page conversions':'Page and creative conversion summary'}</h2><p className="text-xs text-gray-600">Philippine Time · first documented payment or deposit per customer</p></div><div className="flex flex-wrap gap-2"><button className="border border-black px-2 py-1 text-sm disabled:opacity-40" onClick={()=>void load()} disabled={loading}>{loading?'Loading summary…':'Refresh summary'}</button><button className="border border-black px-2 py-1 text-sm disabled:opacity-40" onClick={()=>void verify()} disabled={refreshing}>{refreshing?'Verifying conversations…':'Verify latest conversations'}</button></div></div>
+  <div className="flex flex-wrap justify-between items-center gap-2"><div><h2 className="text-lg font-bold">{compact?'Today’s Page conversions':'Page and creative conversion summary'}</h2><p className="text-xs text-gray-600">Philippine Time · first documented payment or deposit per customer</p></div><div className="flex flex-wrap gap-2"><button className="border border-black px-2 py-1 text-sm disabled:opacity-40" onClick={()=>void load()} disabled={loading}>{loading?'Loading summary…':'Refresh summary'}</button>{connection?.readOnlyReports!==true&&data?.read_only_reports!==true&&<button className="border border-black px-2 py-1 text-sm disabled:opacity-40" onClick={()=>void verify()} disabled={refreshing}>{refreshing?'Verifying conversations…':'Verify latest conversations'}</button>}</div></div>
   {error&&<p role="alert" className="text-red-800">{error}{data?' Previous summary remains visible.':''}</p>}
   {notice&&<p role="status" className="text-sm">{notice}</p>}
   {!data?<p className="text-sm">{loading?'Loading payment evidence and original inquiry cohorts…':'Summary unavailable.'}</p>:<>

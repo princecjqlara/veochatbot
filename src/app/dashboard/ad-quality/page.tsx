@@ -1,9 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { signIn } from 'next-auth/react';
 import { BarChart3, RefreshCw, X } from 'lucide-react';
 import ContactBotProjection from '@/components/ContactBotProjection';
-import { FACEBOOK_PERMISSION_SCOPE } from '@/lib/facebook-permissions';
 import AdCreativePreview from '@/components/AdCreativePreview';
 import {visibleAdRows,sortAdRows}from'@/lib/ad-quality-view';
 import ConversionPerformance from '@/components/ConversionPerformance';
@@ -86,7 +84,7 @@ export default function AdQualityPage() {
     const allRows=visibleAdRows(report?.pages||[]),trackedCount=allRows.filter(x=>x.ad.ad_id).length;
     const rows=sortAdRows(allRows.filter(x=>(visibility==='all'||(visibility==='tracked'?!!x.ad.ad_id:!x.ad.ad_id))&&[x.page.name,x.ad.ad_name,x.ad.ad_title,x.ad.ad_id,x.ad.campaign_name].join(' ').toLowerCase().includes(search.toLowerCase())),sort);
     return <div className="p-4 md:p-8 space-y-5 max-w-full min-w-0">
-        <div className="flex items-center gap-3"><BarChart3 className="w-7 h-7" /><div><h1 className="text-2xl font-bold">Ad Lead Quality</h1><p className="text-sm text-gray-600">Which ads bring inquiries that are marked not qualified?</p></div></div>
+        <div className="flex items-center gap-3"><BarChart3 className="w-7 h-7" /><div><h1 className="text-2xl font-bold">Ads Performance & Lead Quality</h1><p className="text-sm text-gray-600">Which ads bring inquiries that are marked not qualified?</p></div></div>
         <div className="border border-black p-4 flex flex-wrap gap-3 items-end">
             <label className="text-sm">Page<select aria-label="Page" disabled={syncing} className="block border border-black p-2 max-w-full" value={pageId} onChange={e => setPageId(e.target.value)}><option value="all">All my Pages</option>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
             <label className="text-sm">First inquiry date · Philippine Time<select aria-label="Date range" className="block border border-black p-2" value={range} onChange={e => setRange(e.target.value)}>{[['today', 'Today'], ['7', 'Last 7 calendar days'], ['30', 'Last 30 calendar days'], ['all', 'All time'], ['custom', 'Custom dates']].map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></label>
@@ -95,8 +93,9 @@ export default function AdQualityPage() {
             <label className="text-sm flex gap-2 items-center py-2"><input type="checkbox" checked={automatic} onChange={e => setAutomatic(e.target.checked)} />Update every 15 seconds</label>
         </div>
         <p className="text-sm text-gray-600">Dates select when a lead first inquired. Qualification shows their current recorded pipeline stage, including changes made later. Today is partial; 7 and 30 days include today.</p>
+        <p className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">Marketing analytics use saved ad delivery, spend and recorded pipeline/chat outcomes. They do not verify bank payments or determine workspace commission. View Capacity &amp; Quotas and Salary for the authoritative new-period results.</p>
         <ConversionPerformance query={params().toString()} connection={connection}/>
-        <div className="border border-black p-3 text-sm space-y-2"><p>{connection?.message||'Checking Facebook ad-account access…'}</p><div className="flex flex-wrap gap-2"><button className="border border-black px-3 py-2 disabled:opacity-40" disabled={connection?.status!=='ready'||!connection?.accounts?.length||syncing} onClick={()=>void importAds()}>{syncing?'Importing Facebook ads…':'Import Facebook ads'}</button></div><p className="text-xs text-gray-600">Recorded Messenger creatives and Page-post previews appear without importing the account. Import adds ad inventory; it does not assign unknown contacts to an ad.</p></div>
+        <div className="border border-black p-3 text-sm space-y-2"><p>{connection?.message||'Checking Facebook ad-account access…'}</p>{!connection?.readOnlyReports && <div className="flex flex-wrap gap-2"><button className="border border-black px-3 py-2 disabled:opacity-40" disabled={connection?.status!=='ready'||!connection?.accounts?.length||syncing} onClick={()=>void importAds()}>{syncing?'Importing Facebook ads…':'Import Facebook ads'}</button></div>}<p className="text-xs text-gray-600">Recorded Messenger creatives and Page-post previews appear without importing the account. Import adds ad inventory; it does not assign unknown contacts to an ad.</p></div>
         {error && <div role="alert" className="border border-red-600 bg-red-50 p-3 text-red-800">{error}{report && ' Last successful results remain below; they are not current.'}</div>}
         {!report ? <p>{loading ? 'Loading recorded lead quality…' : 'Report unavailable.'}</p> : <>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">{[['Tracked ads available',trackedCount],['Inquiries in date range', totals.inquiries], ['Recorded not qualified', totals.nq], ['Awaiting / ongoing assessment', totals.pending], ['Source-linked inquiries', totals.attributed]].map(([label, value]) => <div key={String(label)} className="border border-black p-4"><p className="text-sm text-gray-600">{label}</p><p className="text-3xl font-bold mt-2">{n(Number(value))}</p></div>)}</div>

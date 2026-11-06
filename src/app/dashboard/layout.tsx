@@ -93,6 +93,9 @@ export default function DashboardLayout({
 
     const navItems = session.user.role ? session.user.role === 'owner' ? [
         { href: '/dashboard/workspace', icon: LayoutDashboard, label: 'Teams Dashboard' },
+        { href: '/dashboard/workspace?view=capacity', icon: BarChart3, label: 'Capacity & Quotas' },
+        { href: '/dashboard/ad-calendar', icon: BarChart3, label: 'Calendar & Ad Spend' },
+        { href: '/dashboard/ad-quality', icon: BarChart3, label: 'Ads Performance' },
         { href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' },
         { href: '/dashboard/workspace?view=sync', icon: History, label: 'Collection Health' },
         { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
@@ -102,6 +105,7 @@ export default function DashboardLayout({
         { href: '/dashboard/workspace?view=clients', icon: Users, label: 'Clients' },
         { href: '/dashboard/workspace?view=deals', icon: BarChart3, label: 'Deals' },
         { href: '/dashboard/workspace?view=salary', icon: BarChart3, label: 'Salary' },
+        { href: '/dashboard/workspace?view=capacity', icon: BarChart3, label: 'Capacity & Quotas' },
         ...(session.user.role !== 'member' ? [{ href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' }] : []),
         { href: '/dashboard/contacts', icon: Users, label: 'Contacts & Bulk Tools' },
         { href: '/dashboard/pipeline', icon: GitBranch, label: 'Pipeline' },

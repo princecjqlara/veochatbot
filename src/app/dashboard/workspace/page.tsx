@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import VeoWorkspaceContacts, { type WorkspaceContact } from '@/components/VeoWorkspaceContacts';
 import VeoTeamsDashboard from '@/components/VeoTeamsDashboard';
+import VeoCapacitySummary from '@/components/VeoCapacitySummary';
 import VeoTelegramProfile from '@/components/VeoTelegramProfile';
 
 const field = 'border border-slate-300 rounded px-3 py-2 bg-white text-slate-900 w-full';
@@ -28,7 +29,7 @@ function Workspace() {
     const refreshGeneration = useRef(0);
     async function refresh() {
         const generation = ++refreshGeneration.current;
-        const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : view === 'profile' ? 'dashboard' : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
+        const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : ['profile', 'capacity'].includes(view) ? 'dashboard' : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
         const r = await fetch(`/api/workspace?${filters}`);
         const body = await r.json();
         if (!r.ok) throw new Error(body.error);
@@ -76,7 +77,7 @@ function Workspace() {
     if (!data) return <div className="p-8 text-slate-900"><h1 className="text-2xl font-bold">VEO workspace</h1><p className="mt-4" role="status">{message || 'Loading…'}</p></div>;
     const workers = data.accounts.filter((a: any) => ['member', 'manager'].includes(a.role));
     const isOwner = data.scope.role === 'owner';
-    const activeView = isOwner && !['accounts', 'sync', 'profile'].includes(view) ? 'dashboard' : view;
+    const activeView = isOwner && !['accounts', 'sync', 'profile', 'capacity'].includes(view) ? 'dashboard' : view;
     const availableContacts = picked && !contacts.some(c => c.id === picked.id) ? [picked, ...contacts] : contacts;
     const chosenContact = availableContacts.find(c => c.id === contact);
     const selected = data.orders.find((o: any) => o.id === order);
@@ -87,11 +88,13 @@ function Workspace() {
     const formData = (e: React.FormEvent<HTMLFormElement>) => { e.preventDefault(); return Object.fromEntries(new FormData(e.currentTarget)); };
     return <div className="mx-auto max-w-7xl p-4 md:p-8 text-slate-900 space-y-6">
         <header><p className="text-xs uppercase tracking-widest">CJ Lara / VEO / {label(data.scope.role)}</p><h1 className="text-3xl font-bold mt-2">{isOwner && activeView === 'dashboard' ? 'Teams dashboard' : activeView === 'clients' ? 'Clients' : activeView === 'deals' ? 'Deals' : activeView === 'profile' ? 'My profile' : label(activeView)}</h1><p className="mt-2 text-sm text-slate-600">Launch: {new Date(data.scope.launch_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })} PHT. All work dates use Philippine time.</p></header>
-        <nav className="flex flex-wrap gap-2">{(isOwner ? ['dashboard', 'accounts', 'sync', 'profile'] : ['dashboard', 'clients', 'deals', 'salary', ...(supervisor ? ['accounts'] : []), 'sync', 'profile']).map(v => <Link className={`rounded border px-3 py-2 text-sm ${activeView === v ? 'bg-slate-900 text-white' : 'bg-white'}`} key={v} href={`/dashboard/workspace?view=${v}`}>{isOwner && v === 'dashboard' ? 'Teams dashboard' : v === 'accounts' ? 'Accounts & Teams' : v === 'profile' ? 'My profile' : label(v)}</Link>)}</nav>
+        <nav className="flex flex-wrap gap-2">{(isOwner ? ['dashboard', 'capacity', 'accounts', 'sync', 'profile'] : ['dashboard', 'clients', 'deals', 'salary', 'capacity', ...(supervisor ? ['accounts'] : []), 'sync', 'profile']).map(v => <Link className={`rounded border px-3 py-2 text-sm ${activeView === v ? 'bg-slate-900 text-white' : 'bg-white'}`} key={v} href={`/dashboard/workspace?view=${v}`}>{isOwner && v === 'dashboard' ? 'Teams dashboard' : v === 'capacity' ? 'Capacity & Quotas' : v === 'accounts' ? 'Accounts & Teams' : v === 'profile' ? 'My profile' : label(v)}</Link>)}</nav>
         {!isOwner && ['dashboard', 'clients', 'deals'].includes(activeView) && <div className="grid gap-3 md:grid-cols-3"><label>Page<select className={field} value={page} onChange={e => { setPage(e.target.value); setOffset(0); setContactOffset(0); setContact(''); setPicked(null); setOrder(''); }}><option value="">All assigned pages</option>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Client search<input className={field} value={query} maxLength={200} onChange={e => { setQuery(e.target.value); setOffset(0); setContactOffset(0); setOrder(''); }} placeholder={activeView === 'deals' ? 'Search client, seller or order' : 'Search client name, ID or saved details'} /></label><label>Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => { setDay(e.target.value); setOffset(0); }} /></label></div>}
-        {(activeView === 'salary' || (isOwner && activeView === 'dashboard')) && <label className="block max-w-xs">Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => setDay(e.target.value)} /></label>}
+        {(['salary', 'capacity'].includes(activeView) || (isOwner && activeView === 'dashboard')) && <label className="block max-w-xs">Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => setDay(e.target.value)} /></label>}
         {!isOwner && activeView === 'deals' && <label className="block max-w-xs font-semibold">Deal type<select className={field} value={dealStatus} onChange={e => { setOffset(0); setOrder(''); router.replace(`/dashboard/workspace?view=deals&status=${e.target.value}`); }}><option value="closed">Closed Deals</option><option value="done">Done Deals</option></select></label>}
         {message && <p role="status" className="rounded border bg-amber-50 p-3">{message}</p>}
+        {(activeView === 'capacity' || (!isOwner && activeView === 'dashboard')) && <VeoCapacitySummary capacity={data.capacity} personal={data.salary.find((s: any) => s.user_id === data.scope.user_id)} />}
+        {isOwner && activeView === 'dashboard' && <div className="flex gap-4 text-sm"><Link className="underline" href="/dashboard/ad-calendar">Calendar & Ad Spend</Link><Link className="underline" href="/dashboard/ad-quality">Ads Performance</Link></div>}
         {!isOwner && activeView === 'dashboard' && <section className="rounded border bg-white p-5"><h2 className="font-bold text-xl">Tomorrow’s plan</h2><p className="my-2">{data.tomorrow.filter((w: any) => w.active === true).length} participating workers · team target {tomorrowTotal} Closed Deals and {tomorrowTotal} Done Deals</p><p className="text-sm text-slate-600 mb-4">Default target 1. Established targets use 80% of the best three eligible Done Deal days in the previous 14 completed dates, rounded down.</p><div className="space-y-2">{data.tomorrow.map((w: any) => <div key={w.user_id} className="flex items-center justify-between gap-3 border-t py-2"><span>{data.accounts.find((a: any) => a.id === w.user_id)?.name || 'Unknown worker'} · target {w.target}</span><select aria-label="Active tomorrow" className="border rounded p-2" disabled={busy} value={w.active == null ? '' : String(w.active)} onChange={e => void submit({ action: 'attendance', user_id: w.user_id, active: e.target.value === 'true', work_date: new Date(Date.now() + 32 * 3600000).toISOString().slice(0, 10) })}><option value="" disabled>Unknown</option><option value="true">Active tomorrow</option><option value="false">Inactive tomorrow</option></select></div>)}</div></section>}
         {isOwner && activeView === 'dashboard' && <VeoTeamsDashboard data={data} busy={busy} onAttendance={(userId, active) => void submit({ action: 'attendance', user_id: userId, active, work_date: new Date(Date.now() + 32 * 3600000).toISOString().slice(0, 10) })} />}
         {!isOwner && ['dashboard', 'clients'].includes(activeView) && <VeoWorkspaceContacts items={contacts} total={contactTotal} offset={contactOffset} loading={contactsLoading} onOffset={setContactOffset} onSelect={c => { setPicked(c); setContact(c.id); setOrder(''); }} />}
