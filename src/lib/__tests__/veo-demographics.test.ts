@@ -29,3 +29,9 @@ it('reports subgroups with both within-group and whole-cohort percentages includ
     expect(group.count).toBe(2); expect(group.rows[0].group_percent).toBe(.5); expect(group.rows[0].cohort_percent).toBeCloseTo(1 / 3);
     expect(location.groups.reduce((n, g) => n + g.count, 0)).toBe(3);
 });
+it('fills unanswered saved fields from evidence without overriding manual clearings or a declined disclosure', () => {
+    const values = recordedDemographics({ saved_fields: { city: '', industry: 'Unknown', gender: 'Prefer not to say' }, ai_demographics: { city: 'Cebu', industry: 'Food', gender: 'Female' } });
+    expect(values.find(f => f.key === 'city')).toMatchObject({ value: 'Cebu', source: 'ai' });
+    expect(values.find(f => f.key === 'industry')).toMatchObject({ value: 'Food', source: 'ai' });
+    expect(values.find(f => f.key === 'gender')?.value).toBe('Unknown');
+});

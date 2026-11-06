@@ -10,4 +10,8 @@ New customer messages queue a bounded extraction, with a short debounce and a 15
 
 Manual demographic corrections are merged atomically into existing contact details and audited. Explicit manual clearing masks an older AI value. AI data is stored separately and cannot overwrite corrections, verify payments or change lead stage. Cohort reports receive only the demographic values, without source message text. Subgroups display country/province/city, industry/business subtype, occupation/job role and preferred language, with both group and cohort percentages including Unknown.
 
+Unanswered or placeholder saved-form values can be filled by grounded AI facts. Explicit manual clearings and declined disclosures remain protected. Field aliases and source layers are normalized once during aggregation so large inquiry cohorts stay responsive.
+
+Migration `202611070003` makes calendar Page inputs read-only. Current-day planning is prepared once before the concurrent reads; historical reports do not refresh today's planning. Salary is read directly from the authoritative daily finance function, avoiding a second full pass over legacy ad-spend reports. This prevents parallel Page requests from waiting on each other's target/capacity writes.
+
 Apply migration `202611070002` with the workspace release script before deploying the compatible app. Run demographic/source validation, queue/permission SQL, tag API, UI and navigation tests, plus the production build. `node --env-file=.env.local scripts/verify-veo-contacts.mjs --analyze` checks production Head access on every Page, profiles, tag visibility, private demographic storage and one queued saved-source AI review. It does not modify tags, payments or messaging destinations.

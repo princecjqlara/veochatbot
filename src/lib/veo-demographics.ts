@@ -18,7 +18,7 @@ export type DemographicFact = { field: DemographicKey; value: string; evidence: 
 const normalize = (s: string) => s.normalize('NFKC').toLowerCase().replace(/[\s_-]+/g, '');
 const fieldAliases = new Map<string, DemographicKey>(demographicFields.flatMap(f => [f.key, ...f.aliases].map(k => [normalize(k), f.key] as const)));
 export const demographicKey = (value: string) => fieldAliases.get(normalize(value));
-const placeholder = /^(?:unknown|not known|unavailable|not provided|n\/?a|none|null|undefined|prefer not to say|[-?]+)$/i;
+const placeholder = /^(?:unknown|not known|unavailable|not provided|n\/?a|none|null|undefined|prefer not to say|declined|withheld|[-?]+)$/i;
 export function validDemographicValue(field: string, value: unknown) {
     if (typeof value !== 'string' || value.trim().length > 160) return false;
     if (!value.trim() || placeholder.test(value.trim())) return false;
@@ -61,7 +61,10 @@ export function recordedDemographics(client: any) {
     });
     return demographicFields.map(f => {
         for (const { kind, values } of layers) {
-            if (values.has(f.key)) { const value = values.get(f.key); return { ...f, value: validDemographicValue(f.key, value) ? String(value).trim() : 'Unknown', source: kind }; }
+            if (!values.has(f.key)) continue;
+            const value = values.get(f.key);
+            if (validDemographicValue(f.key, value)) return { ...f, value: String(value).trim(), source: kind };
+            if (kind === 'manual' || /^(?:prefer not to say|declined|withheld)$/i.test(String(value).trim())) return { ...f, value: 'Unknown', source: kind };
         }
         return { ...f, value: 'Unknown', source: 'unknown' as const };
     });

@@ -13,7 +13,7 @@ export async function loadVeoCalendarInputs(db: any, actor: string, pageIds: str
         while (!failure && cursor < jobs.length) {
             const job = jobs[cursor++];
             try {
-                const left = deadline - Date.now(); if (left <= 0) throw new Error('Calendar report deadline reached');
+                const left = deadline - Date.now(); if (left <= 0) throw Object.assign(new Error('Calendar report deadline reached. Retry shortly.'), { status: 503 });
                 const selected = day >= job.from && day <= job.to ? day : job.from;
                 let reply: any;
                 try { reply = await requestDeadline(signal => {

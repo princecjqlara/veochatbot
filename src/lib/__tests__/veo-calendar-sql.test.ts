@@ -117,3 +117,13 @@ it('blocks demographic access outside current Pages and keeps demographic tables
     expect((await db.query<any>("SELECT has_function_privilege('anon','veo_demographic_action(uuid,uuid,text,jsonb)','EXECUTE') f,has_table_privilege('authenticated','veo_contact_demographics','SELECT') t")).rows[0]).toEqual({ f: false, t: false });
     await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [manager, page]);
 });
+it('reads historical and current Page inputs in a read-only transaction without competing snapshot writes', async () => {
+    await db.exec('BEGIN READ ONLY');
+    try {
+        const current = (await db.query<any>('SELECT veo_calendar_inputs($1,$2,$3,$2) r', [owner, earlier, today])).rows[0].r;
+        expect(current.pages.some((p: any) => p.id === page)).toBe(true);
+        await db.query("SELECT veo_calendar_inputs($1,'2020-01-01','2020-01-31','2020-01-01')", [owner]);
+    } finally { await db.exec('ROLLBACK'); }
+    expect((await db.query<any>('SELECT veo_calendar_prepare($1) r', [owner])).rows[0].r).toBe(true);
+    await expect(db.query('SELECT veo_calendar_prepare($1)', [manager])).rejects.toThrow(/denied/);
+});

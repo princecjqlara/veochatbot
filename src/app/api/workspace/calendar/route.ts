@@ -17,12 +17,16 @@ export async function GET(request: NextRequest) {
         const day = q.get('day') || (range.today.startsWith(month) ? range.today : range.days[0]);
         if (!range.days.includes(day)) throw new Error('Choose a date in the selected month');
         if (page && (!uuid(page) || !scope.page_ids.includes(page))) return NextResponse.json({ error: 'Page access denied' }, { status: 403 });
-        const args = { p_actor: scope.user_id, p_from: range.days[0], p_to: range.days.at(-1), p_page: page };
         const db = getSupabaseAdmin();
-        const beforeLaunch = range.days.at(-1)! < philippineDate(new Date(scope.launch_at));
+        if (range.days.includes(range.today)) {
+            const prepared = await db.rpc('veo_calendar_prepare', { p_actor: scope.user_id });
+            if (prepared.error) throw Object.assign(new Error('Today’s calendar planning is temporarily unavailable'), { status: 503 });
+        }
+        const launchDay = philippineDate(new Date(scope.launch_at)), from = range.days[0] > launchDay ? range.days[0] : launchDay;
+        const to = range.days.at(-1)! < range.today ? range.days.at(-1)! : range.today;
         const [input, finance] = await Promise.all([loadVeoCalendarInputs(db, scope.user_id, page ? [page] : scope.page_ids, range.days[0], range.days.at(-1)!, day),
-            beforeLaunch ? Promise.resolve({ data: { salary_days: [] }, error: null }) : db.rpc('veo_calendar_finance', args)]);
+            from > to ? Promise.resolve({ data: { days: [] }, error: null }) : db.rpc('veo_finance_days', { p_actor: scope.user_id, p_from: from, p_to: to, p_page: page })]);
         if (finance.error) throw Object.assign(new Error('Calendar salary could not be completed. Retry shortly.'), { status: finance.error.code === '42501' ? 403 : 503 });
-        return NextResponse.json(buildVeoCalendar(input, finance.data, month, day, page), { headers: { 'Cache-Control': 'no-store' } });
+        return NextResponse.json(buildVeoCalendar(input, { salary_days: finance.data?.days || [] }, month, day, page), { headers: { 'Cache-Control': 'no-store' } });
     } catch (e: any) { return NextResponse.json({ error: e.message || 'Calendar unavailable' }, { status: e.status || 400, headers: { 'Cache-Control': 'no-store' } }); }
 }

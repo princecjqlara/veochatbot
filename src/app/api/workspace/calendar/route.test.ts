@@ -2,7 +2,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 const m = vi.hoisted(() => ({ session: vi.fn(), scope: vi.fn(), rpc: vi.fn(), build: vi.fn(), load: vi.fn() }));
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: m.session }));
-vi.mock('@/lib/veo-workspace', () => ({ workspaceScope: m.scope, philippineDate: () => '2026-11-06', uuid: (v: string) => /^[\da-f-]{36}$/.test(v) }));
+vi.mock('@/lib/veo-workspace', () => ({ workspaceScope: m.scope, philippineDate: (date?: Date) => date ? new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 10) : '2026-11-06', uuid: (v: string) => /^[\da-f-]{36}$/.test(v) }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
 vi.mock('@/lib/veo-calendar-analytics', () => ({ buildVeoCalendar: m.build }));
 vi.mock('@/lib/veo-calendar-loader', () => ({ loadVeoCalendarInputs: m.load }));
@@ -31,4 +31,9 @@ it('fails an incomplete data read rather than presenting it as empty calendar da
     m.load.mockRejectedValue(Object.assign(new Error('Incomplete calendar slice'), { status: 503 }));
     const r = await GET(new NextRequest('https://veo.test/api/workspace/calendar'));
     expect(r.status).toBe(503); expect(m.build).not.toHaveBeenCalled();
+});
+it('prepares current planning once and reads authoritative salary days without redoing legacy ad-spend loops', async () => {
+    await GET(new NextRequest('https://veo.test/api/workspace/calendar?month=2026-11&day=2026-11-06'));
+    expect(m.rpc.mock.calls.map(c => c[0])).toEqual(['veo_calendar_prepare', 'veo_finance_days']);
+    expect(m.rpc).toHaveBeenCalledWith('veo_finance_days', expect.objectContaining({ p_actor: 'owner', p_from: '2026-11-05', p_page: null }));
 });
