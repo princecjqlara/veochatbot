@@ -32,10 +32,10 @@ describe('VEO authentication boundary', () => {
         expect((await middleware(new NextRequest('https://veo.test/api/pages/00000000-0000-4000-8000-000000000001/contacts'))).status).toBe(403);
         expect(fetcher.mock.calls[1][0]).toContain('veo_authorize_resources');
         fetcher.mockResolvedValue(new Response(JSON.stringify({ role: 'member', launch_at: '2026-11-05T00:00:00Z' })));
-        expect((await middleware(new NextRequest('https://veo.test/api/facebook/connect', { method: 'POST' }))).status).toBe(403);
+        expect((await middleware(new NextRequest('https://veo.test/api/facebook/connect', { method: 'POST' }))).status).toBe(410);
         vi.unstubAllGlobals();
     });
-    it('rejects a previously issued Facebook session belonging to any other account before reading workspace data', async () => {
+    it('rejects a previously issued Facebook session belonging to any account before reading workspace data', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
         vi.mocked(getToken).mockResolvedValue({ id: 'member', facebookId: 'old-facebook-binding' });
         const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);

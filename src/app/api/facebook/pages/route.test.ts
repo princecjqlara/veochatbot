@@ -1,62 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NextRequest } from 'next/server';
-import { FACEBOOK_REAUTH_MESSAGE } from '@/lib/facebook-permissions';
-
-const mocks = vi.hoisted(() => ({
-    getServerSession: vi.fn(),
-    getFacebookPages: vi.fn()
-}));
-
-vi.mock('next-auth', () => ({
-    getServerSession: mocks.getServerSession
-}));
-
-vi.mock('@/lib/auth', () => ({
-    authOptions: {}
-}));
-
-vi.mock('@/lib/facebook', () => ({
-    getFacebookPages: mocks.getFacebookPages,
-    isFacebookReauthRequired: (error: unknown) => Boolean((error as { requiresReauth?: boolean })?.requiresReauth)
-}));
-
+import { afterEach, expect, it, vi } from 'vitest';
 import { GET } from './route';
-
-function createRequest(): NextRequest {
-    return new Request('http://localhost:3000/api/facebook/pages') as unknown as NextRequest;
-}
-
-describe('GET /api/facebook/pages', () => {
-    it('offers Facebook reauthorization instead of a misleading empty Page list when login lacks a Facebook token', async () => {
-        mocks.getServerSession.mockResolvedValue({ user: { id: 'owner' } });
-        const response = await GET(createRequest()); expect(response.status).toBe(409);
-        expect(await response.json()).toMatchObject({ requiresReauth: true, code: 'FACEBOOK_REAUTH_REQUIRED' }); expect(mocks.getFacebookPages).not.toHaveBeenCalled();
-    });
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
-
-    it('returns a reauthorization response when Facebook rejects /me/accounts permissions', async () => {
-        mocks.getServerSession.mockResolvedValue({
-            user: {
-                id: 'user_1',
-                email: 'user@example.com'
-            },
-            accessToken: 'user_access_token_1'
-        });
-        mocks.getFacebookPages.mockRejectedValue(
-            Object.assign(new Error(FACEBOOK_REAUTH_MESSAGE), { requiresReauth: true })
-        );
-
-        const response = await GET(createRequest());
-        const body = await response.json();
-
-        expect(response.status).toBe(409);
-        expect(body).toEqual({
-            error: 'Facebook authorization required',
-            code: 'FACEBOOK_REAUTH_REQUIRED',
-            requiresReauth: true,
-            message: FACEBOOK_REAUTH_MESSAGE
-        });
-    });
+afterEach(() => { vi.unstubAllGlobals(); });
+it('returns 410 without looking up or changing Facebook connections', async () => {
+ const fetcher=vi.fn(); vi.stubGlobal('fetch',fetcher); const response=await GET();
+ expect(response.status).toBe(410); expect((await response.json()).error).toContain('removed'); expect(fetcher).not.toHaveBeenCalled();
 });

@@ -12,12 +12,12 @@ try {
     await db.query('BEGIN READ ONLY');
     const scope = (await db.query('SELECT veo_scope($1) AS value', [receipt.owner])).rows[0].value;
     assert.equal(scope.role, 'owner'); assert.equal(scope.tenant_id, receipt.id); assert.equal(scope.page_ids.length, receipt.pages.length);
-    assert(fs.readFileSync('src/config/veo-owner.ts', 'utf8').includes(receipt.owner), 'Facebook sign-in must pin the retained CJ Lara identity');
-    const ownerFacebook = (await db.query(`SELECT u.is_active AND a.active AND a.role='owner' AND t.owner_id=u.id
-      AND u.facebook_id IS NOT NULL AND length(u.facebook_id)>0 AS retained_binding
+    assert(fs.readFileSync('src/config/veo-owner.ts', 'utf8').includes(receipt.owner), 'Owner credential maintenance must retain the CJ Lara identity');
+    const ownerCredentials = (await db.query(`SELECT u.is_active AND a.active AND a.role='owner' AND t.owner_id=u.id
+      AND u.password_hash LIKE 'veo-sha256:%' AS credentials_ready
       FROM users u JOIN veo_accounts a ON a.user_id=u.id JOIN veo_tenants t ON t.id=a.tenant_id WHERE u.id=$1`, [receipt.owner])).rows[0];
-    assert.equal(ownerFacebook?.retained_binding, true, 'CJ must retain the existing Facebook identity');
-    result.cj_owner_facebook_binding_preserved = true;
+    assert.equal(ownerCredentials?.credentials_ready, true, 'CJ must have a hashed email/password credential');
+    result.cj_owner_email_credentials_ready = true;
     const pages = (await db.query('SELECT id,name,fb_page_id FROM pages WHERE veo_enabled')).rows;
     const approved = JSON.parse(fs.readFileSync('src/config/veo-pages.json', 'utf8'));
     assert(pages.every(p => approved.some(a => a.facebook_page_id ? a.facebook_page_id === p.fb_page_id : a.name.trim().toLowerCase() === p.name.trim().toLowerCase())));
@@ -42,15 +42,22 @@ try {
     const clientScripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m => m[1]).filter(p => p.includes('/app/page-'));
     for (const script of clientScripts) html += await (await fetch(new URL(script, origin), { signal: AbortSignal.timeout(20000) })).text();
     for (const role of ['Member', 'Manager', 'Team Leader', 'Owner']) assert(html.includes(role));
-    assert(html.includes('Facebook sign-in is reserved for CJ Lara'));
+    assert(html.includes('All accounts use email and password'));
+    assert(!html.includes('Continue with Facebook'));
+    const providers = await (await fetch(origin + '/api/auth/providers')).json();
+    assert.deepEqual(Object.keys(providers), ['credentials']);
+    assert.equal((await fetch(origin + '/api/facebook/pages')).status, 410);
+    result.facebook_login_and_connection_setup_removed = true;
     const api = await fetch(origin + '/api/workspace', { signal: AbortSignal.timeout(20000) });
     assert.equal(api.status, 401);
     const token = await encode({ secret: process.env.NEXTAUTH_SECRET, maxAge: 300, token: { id: receipt.owner, name: 'Cj Lara' } });
-    const deniedToken = await encode({ secret: process.env.NEXTAUTH_SECRET, maxAge: 300, token: { id: '00000000-0000-4000-8000-000000000099', facebookId: 'verification-only-non-owner' } });
-    const deniedFacebook = await fetch(origin + '/api/workspace', { headers: { Cookie: `__Secure-next-auth.session-token=${deniedToken}; next-auth.session-token=${deniedToken}` }, signal: AbortSignal.timeout(20000) });
-    assert.equal(deniedFacebook.status, 401);
-    assert((await deniedFacebook.json()).error.includes('Facebook sign-in is reserved for CJ Lara'));
-    result.non_owner_facebook_sessions_rejected = true;
+    for (const id of [receipt.owner, '00000000-0000-4000-8000-000000000099']) {
+        const deniedToken = await encode({ secret: process.env.NEXTAUTH_SECRET, maxAge: 300, token: { id, facebookId: 'verification-only-facebook-session' } });
+        const deniedFacebook = await fetch(origin + '/api/workspace', { headers: { Cookie: `__Secure-next-auth.session-token=${deniedToken}; next-auth.session-token=${deniedToken}` }, signal: AbortSignal.timeout(20000) });
+        assert.equal(deniedFacebook.status, 401);
+        assert((await deniedFacebook.json()).error.includes('Facebook sign-in has been removed'));
+    }
+    result.facebook_sessions_rejected_including_owner = true;
     const ownerResponse = await fetch(origin + '/api/workspace', { headers: { Cookie: `__Secure-next-auth.session-token=${token}; next-auth.session-token=${token}` }, signal: AbortSignal.timeout(30000) });
     const ownerBody = await ownerResponse.json();
     assert.equal(ownerResponse.status, 200);

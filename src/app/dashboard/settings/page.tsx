@@ -177,12 +177,7 @@ export default function SettingsPage() {
                         <LinkIcon className="w-5 h-5" />
                         <h2 className="text-xl font-bold uppercase">Connected Pages</h2>
                     </div>
-                    <Link
-                        href="/dashboard/connect"
-                        className="btn-wireframe text-xs py-2 h-8"
-                    >
-                        + Connect Page
-                    </Link>
+
                 </div>
 
                 {loading ? (

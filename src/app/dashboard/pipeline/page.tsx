@@ -355,7 +355,7 @@ export default function PipelinePage() {
             {error && <div className="border border-red-600 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
             {stageSync && <div className={`border p-3 text-sm ${stageSync.messaging_auto_tag_last_error ? 'border-amber-600 bg-amber-50 text-amber-900' : 'border-gray-300 bg-white text-gray-600'}`}>
                 <b>Meta stage sync:</b> {stageSync.messaging_auto_tag_enabled ? `Last completed ${formatDate(stageSync.messaging_auto_tag_checked_at)}` : 'Turned off for this Page'}
-                {stageSync.messaging_auto_tag_last_error && <p className="mt-1">{stageSync.messaging_auto_tag_last_error} <a className="font-bold underline" href="/dashboard/connect">Review Facebook connection</a></p>}
+                {stageSync.messaging_auto_tag_last_error && <p className="mt-1">{stageSync.messaging_auto_tag_last_error} <a className="font-bold underline" href="/dashboard/settings">Review Page settings</a></p>}
             </div>}
 
             <div className="overflow-x-auto border-2 border-black bg-white">

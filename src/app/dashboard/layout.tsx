@@ -42,10 +42,11 @@ export default function DashboardLayout({
 
     useEffect(() => {
         // Only redirect if we're sure the user is unauthenticated (not loading)
+        if (status === 'authenticated' && !session?.user.id) { void signOut({ callbackUrl: '/' }); return; }
         if (status === 'unauthenticated') {
             router.push('/');
         }
-    }, [status, router]);
+    }, [status, router, session?.user.id]);
 
     useEffect(() => {
         // Fetch pages when session is available
@@ -94,7 +95,6 @@ export default function DashboardLayout({
         { href: '/dashboard/workspace', icon: LayoutDashboard, label: 'Teams Dashboard' },
         { href: '/dashboard/workspace?view=accounts', icon: Users, label: 'Accounts & Teams' },
         { href: '/dashboard/workspace?view=sync', icon: History, label: 'Collection Health' },
-        { href: '/dashboard/connect', icon: Plus, label: 'Page Connections' },
         { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
         { href: '/dashboard/workspace?view=profile', icon: User, label: 'My Profile' },
     ] : [
@@ -190,7 +190,7 @@ export default function DashboardLayout({
                                     </div>
                                 )}
                                 <Link
-                                    href="/dashboard/connect"
+                                    href="/dashboard/settings"
                                     className="flex items-center gap-2 px-3 py-2 text-sm text-black hover:bg-[#f0f0f0] border-t-2 border-black"
                                     onClick={() => setShowPageDropdown(false)}
                                 >

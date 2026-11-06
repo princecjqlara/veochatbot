@@ -170,7 +170,7 @@ export default function PricingPage() {
         {error && <div role="alert" className="border border-red-400 bg-red-50 p-4 text-sm text-red-800">{error}</div>}
         {notice && <div role="status" className="border border-green-400 bg-green-50 p-4 text-sm text-green-800">{notice}</div>}
         {loading && <p role="status" className="text-sm text-gray-600">Loading pricing packages…</p>}
-        {!loading && !pages.length && !error && <p className="text-sm">Connect a Facebook Page to create pricing packages. <Link className="underline" href="/dashboard/connect">Connect Page</Link></p>}
+        {!loading && !pages.length && !error && <p className="text-sm">Connect a Facebook Page to create pricing packages. <Link className="underline" href="/dashboard/settings">Page settings</Link></p>}
         {showEditor && <section className="border border-black bg-gray-50 p-4 md:p-6 space-y-5">
             <div><h2 className="text-lg font-semibold">Create a pricing run</h2><p className="text-sm text-gray-600 mt-1">Use comparable packages for the same customer need. A catalog groups all duration choices under one assigned offer.</p></div>
             <fieldset disabled={saving} className="space-y-5">

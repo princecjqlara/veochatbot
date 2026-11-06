@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
-import { CJ_OWNER_USER_ID } from '@/config/veo-owner';
 
 // Service-role-backed legacy endpoints pass this boundary as well as their own checks.
 export async function middleware(request: NextRequest) {
-    if (process.env.VEO_WORKSPACE_ENABLED !== 'true') return NextResponse.next();
     const path = request.nextUrl.pathname;
+    if (['/api/facebook/connect', '/api/facebook/pages'].includes(path)) return NextResponse.json({ error: 'Facebook connection setup has been removed. Sign in with email and password.' }, { status: 410 });
+    if (process.env.VEO_WORKSPACE_ENABLED !== 'true') return NextResponse.next();
     if (path === '/api/sales-form') return NextResponse.next(); // The route requires an expiring, contact-scoped capability.
     if (/^\/api\/chatbot-media\/[a-f0-9-]{36}$/i.test(path) && request.nextUrl.searchParams.has('token')) return NextResponse.next(); // Route verifies a short-lived, asset-bound signature.
     if (path.startsWith('/api/auth/') || ['/api/facebook/webhook', '/api/facebook/partner-webhook', '/api/telegram/webhook', '/api/workspace/handoff'].includes(path)) return NextResponse.next();
@@ -17,7 +17,7 @@ export async function middleware(request: NextRequest) {
     if (/\/sync$|\/refresh-evidence$|\/profile\/finance$/.test(path)) return NextResponse.json({ error: 'Historical imports are disabled. Record verified sales in the VEO workspace.' }, { status: 410 });
     const token = await getToken({ req: request });
     if (!token?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    if (token.facebookId && token.id !== CJ_OWNER_USER_ID) return NextResponse.json({ error: 'Facebook sign-in is reserved for CJ Lara. Sign in with email and password.' }, { status: 401 });
+    if (token.facebookId || token.accessToken) return NextResponse.json({ error: 'Facebook sign-in has been removed. Sign in with email and password.' }, { status: 401 });
     try {
         const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
         const headers = { apikey: key!, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };

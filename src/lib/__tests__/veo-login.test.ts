@@ -39,41 +39,24 @@ describe('stored roles and administrator-created sign-in', () => {
         expect(await credentials({ email: 'member@any-provider.example', password: 'x', role: 'member' })).toBeNull();
         expect(m.maybeSingle).not.toHaveBeenCalled(); expect(m.update).not.toHaveBeenCalled();
     });
-    it('permits only CJ’s retained Facebook identity with the Owner selection and current stored Owner role', async () => {
+    it('provides credentials only and rejects Facebook even for CJ Owner', async () => {
+        expect(authOptions.providers.map(p => p.id)).toEqual(['credentials']);
+        m.cookie.mockReturnValue({ value: 'owner' });
         m.maybeSingle.mockResolvedValue({ data: { id: CJ_OWNER_USER_ID, is_active: true, facebook_id: 'fb1' } });
         m.rpc.mockResolvedValue({ data: { role: 'owner', launch_at: '2026-11-05T00:00:00Z' } });
-        m.cookie.mockReturnValue({ value: 'member' }); expect(await facebook()).toBe(false);
-        m.cookie.mockReturnValue({ value: 'owner' }); expect(await facebook()).toBe(true);
-        expect(await facebook('different-facebook-identity')).toBe(false);
-        m.rpc.mockResolvedValue({ data: { role: 'manager', launch_at: '2026-11-05T00:00:00Z' } });
         expect(await facebook()).toBe(false);
-        expect(m.update).not.toHaveBeenCalled();
+        expect(m.maybeSingle).not.toHaveBeenCalled();
+        expect(await (authOptions.callbacks!.signIn as any)({ account: { provider: 'credentials' } })).toBe(true);
     });
-    it('rejects every other Facebook account even when selecting Owner or using a matching name and email', async () => {
-        m.cookie.mockReturnValue({ value: 'owner' });
-        m.rpc.mockResolvedValue({ data: { role: 'owner', launch_at: '2026-11-05T00:00:00Z' } });
-        for (const role of ['member', 'manager', 'team_leader', 'owner']) {
-            m.maybeSingle.mockResolvedValue({ data: { id: 'someone-else', name: 'CJ Lara', email: 'cj@example.org', role, is_active: true, facebook_id: 'fb1' } });
-            expect(await facebook()).toBe(false);
-        }
-        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'false');
-        expect(await facebook()).toBe(false);
-    });
-    it('does not auto-link Facebook through email or create a Facebook account', async () => {
-        m.cookie.mockReturnValue({ value: 'owner' });
-        m.maybeSingle.mockResolvedValue({ data: { id: CJ_OWNER_USER_ID, is_active: true, facebook_id: null } }).mockResolvedValueOnce({ data: null });
-        expect(await facebook('unknown')).toBe(false);
-        expect(m.maybeSingle).toHaveBeenCalledTimes(1); expect(m.update).not.toHaveBeenCalled();
-    });
-    it('rejects non-owner Facebook token creation and invalidates their older sessions while retaining email sessions', async () => {
+    it('invalidates all old Facebook sessions and clears Facebook fields when switching to credentials', async () => {
         const jwt = authOptions.callbacks!.jwt as any;
-        expect(await jwt({ token: {}, account: { provider: 'facebook', providerAccountId: 'fb1' }, user: { id: 'oauth' } })).toEqual({});
-        expect(await jwt({ token: { id: 'member', facebookId: 'fb1' } })).toEqual({});
+        for (const id of ['member', CJ_OWNER_USER_ID]) {
+            expect(await jwt({ token: { id, facebookId: 'fb1' } })).toEqual({});
+            expect(await jwt({ token: { id, accessToken: 'old-facebook-token' } })).toEqual({});
+        }
+        expect(await jwt({ token: {}, account: { provider: 'facebook', providerAccountId: 'fb1' }, user: { id: CJ_OWNER_USER_ID } })).toEqual({});
+        const emailToken = await jwt({ token: { facebookId: 'fb1', accessToken: 'old-owner-token' }, account: { provider: 'credentials' }, user: { id: CJ_OWNER_USER_ID } });
+        expect(emailToken.id).toBe(CJ_OWNER_USER_ID); expect(emailToken.facebookId).toBeUndefined(); expect(emailToken.accessToken).toBeUndefined();
         expect(await jwt({ token: { id: 'member' } })).toEqual({ id: 'member' });
-        const emailToken = await jwt({ token: { id: CJ_OWNER_USER_ID, facebookId: 'fb1', accessToken: 'owner-token' }, account: { provider: 'credentials' }, user: { id: 'member' } });
-        expect(emailToken.id).toBe('member'); expect(emailToken.facebookId).toBeUndefined(); expect(emailToken.accessToken).toBeUndefined();
-        m.maybeSingle.mockResolvedValue({ data: { id: CJ_OWNER_USER_ID, is_active: true, facebook_id: 'fb1' } });
-        m.rpc.mockResolvedValue({ data: { role: 'owner', launch_at: '2026-11-05T00:00:00Z' } });
-        expect(await jwt({ token: {}, account: { provider: 'facebook', providerAccountId: 'fb1' }, user: { id: 'oauth' } })).toMatchObject({ id: CJ_OWNER_USER_ID, facebookId: 'fb1' });
     });
 });
