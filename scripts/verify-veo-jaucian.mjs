@@ -19,7 +19,7 @@ try {
     await db.query('BEGIN READ ONLY');
     const scope = (await db.query('SELECT veo_scope($1) AS value', [receipt.owner])).rows[0].value;
     assert.equal(scope.role, 'owner'); assert.equal(scope.tenant_id, receipt.id);
-    const member = (await db.query("SELECT user_id FROM veo_accounts WHERE tenant_id=$1 AND active AND role='member' LIMIT 1", [receipt.id])).rows[0];
+    const member = (await db.query("SELECT user_id FROM veo_accounts WHERE tenant_id=$1 AND active AND role<>'owner' ORDER BY CASE role WHEN 'member' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END LIMIT 1", [receipt.id])).rows[0];
     await db.query('COMMIT');
     assert.equal((await read(origin + '/api/workspace/jaucian')).status, 401);
     assert.equal((await read(origin + '/api/workspace/handoff?resource=directory&tenant_id=' + receipt.id)).status, 401);
