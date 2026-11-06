@@ -1,12 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ rpc: vi.fn() }));
+const m = vi.hoisted(() => ({ rpc: vi.fn(), verifyMapping: vi.fn(), jaucianRead: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: async () => ({ user: { id: 'owner' } }) }));
-import { GET } from './route';
+vi.mock('@/lib/veo-jaucian', () => ({ verifyWorkerMapping: m.verifyMapping, jaucianRead: m.jaucianRead }));
+import { GET, POST } from './route';
 import { philippineDate } from '@/lib/veo-workspace';
 afterEach(() => { vi.clearAllMocks(); });
 describe('workspace work-date boundaries', () => {
+    it('blocks unverified or unauthorized Telegram mappings before changing database state', async () => {
+        const request = () => new NextRequest('https://veo.test/api/workspace', { method: 'POST', headers: { Origin: 'https://veo.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'mapping', user_id: 'worker', telegram_user_id: '42' }) });
+        m.rpc.mockResolvedValue({ data: { user_id: 'owner', tenant_id: 'tenant', role: 'manager', launch_at: 'launched' } });
+        expect((await POST(request())).status).toBe(403);
+        expect(m.verifyMapping).not.toHaveBeenCalled();
+        m.rpc.mockResolvedValue({ data: { user_id: 'owner', tenant_id: 'tenant', role: 'owner', launch_at: 'launched' } });
+        m.verifyMapping.mockRejectedValue(Object.assign(new Error('Not a current human member'), { status: 400 }));
+        expect((await POST(request())).status).toBe(400);
+        expect(m.rpc.mock.calls.every(([name]) => name === 'veo_scope')).toBe(true);
+        m.verifyMapping.mockResolvedValue({ verified: true });
+        expect((await POST(request())).status).toBe(200);
+        expect(m.rpc).toHaveBeenCalledWith('veo_action', expect.objectContaining({ p_action: 'mapping' }));
+    });
     it('rejects future target freezing and dates before launch without calculating a salary', async () => {
         const launch = new Date(Date.now() - 86400000).toISOString();
         m.rpc.mockImplementation(async name => ({ data: name === 'veo_scope' ? { user_id: 'owner', role: 'owner', launch_at: launch } : {} }));

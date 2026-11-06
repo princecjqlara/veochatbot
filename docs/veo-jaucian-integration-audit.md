@@ -1,0 +1,41 @@
+# VEO and Jaucian integration audit — November 6, 2026
+
+VEO owns the verified financial ledger. Jaucian retains the existing Telegram bot, approved VEO destinations, observed Telegram identities, delivery outbox and archived group history. Each server can now read the other service's necessary data through authenticated, tenant-bound APIs. Database administrator keys remain private to their own service. There is no second writable copy of sales or salary data to reconcile.
+
+## Commission
+
+A worker, including a selling manager, earns **40% only when both personal Closed Deal and Done Deal targets are met** for the Philippine work date. Otherwise the rate is **35%**. Each personal target is the frozen capacity target, with minimum/default 1. Reaching a team quota does not qualify a worker who missed a personal quota. The final daily rate applies to every fully paid order total attributed to that worker on that date; earnings remain provisional until Philippine midnight. Retained history is excluded, and refunds/corrections retain audited adjustments. No payroll transfer or manager override commission is introduced.
+
+The database tests cover a carried deposit with a balance today (Done without Closed today), personal Closed target reached while Done remains short (35%), and the later balance reaching both targets (40% across the entire day's fully paid totals). Existing tests cover a team reaching its quotas while an individual stays at 35%.
+
+## Shared data and setup
+
+| Direction | Shared data and controls |
+| --- | --- |
+| VEO → Jaucian | Authenticated eligible-order handoff; current Converted status, verified settlement, attribution, page access and expiry checked before forwarding; short-lived private photo URL. No image bytes in the database. |
+| Jaucian → VEO | Tenant-bound approved active VEO group directory, observed identity candidates, known topic IDs and the latest 50 VEO outbox states. Arbitrary messages, signed photos, Suno data and credentials are excluded. Identity lists explicitly have limited coverage. |
+| VEO → Jaucian | Tenant-bound active workforce/team/page directory, explicit numeric Telegram mappings, current/tomorrow declarations and the commission policy. No passwords, email addresses or Page tokens. Jaucian checks the reverse connection and reports missing mappings. |
+| VEO → Jaucian | Authoritative per-day worker commission, personal/team quotas, capacity averages and tomorrow's participation through the existing report endpoint. Telegram receipt parsing cannot create a second VEO sale. |
+| Mapping writes | Owner only, same-origin and audited. Team destinations must be approved in both systems. A worker's numeric Telegram ID is checked with the existing bot's `getChatMember` for current human membership in that worker's mapped team group. User-entered usernames never automatically bind identities. |
+
+Owner **Accounts & Teams → Jaucian connection and Telegram setup** shows both connection directions, missing mappings, known groups, identity suggestions, existing mappings and delivery states. Map each real application team to its approved Jaucian group, then choose each matching person. Group titles or usernames alone cannot safely identify which newly created account belongs to which existing Telegram identity, so mappings are not guessed.
+
+The read-only production audit at 07:39 UTC found 6 workspace accounts, 15 enabled VEO Pages, 0 orders, 0 mapped teams and 0 mapped workers. No anonymous application table/function access was exposed. Jaucian's regular database scheduler and watchdog were healthy with no failed, stale or overdue deliveries. No test Telegram message, fake sale or historical backfill was dispatched. These counts are a point-in-time observation; staff can continue editing the live workspace.
+
+## Differences from the older Jaucian workflow
+
+| Older capability | Current VEO behavior / remaining gap |
+| --- | --- |
+| Telegram photo/receipt text counted as sales | Replaced by verified VEO orders and payments. Archived receipts never increase new quotas or salary. |
+| Telegram availability and page-access polls | VEO declarations and supervisor-controlled Page grants are authoritative. Legacy Telegram votes do not currently write attendance or Page access into VEO. A future poll bridge would need explicit verified worker/team mapping, work-date checks and audit records. |
+| Ready queues, automatic round robin offers, freebie assignments, referrals and missed-offer warnings | Preserved as archived Jaucian code/history, excluded from the active VEO workspace dispatcher. These workflows do not currently exist in the new workspace. Re-enabling them would require adapting them to current Page permissions and the launch cutoff. |
+| Legacy forecasting and production/workload planning | New individual capacity, team quota, combined/average capacity and tomorrow's roster are implemented. Older speculative forecasts and workload-based warning policies are not imported as verified results. |
+| Large Telegram team reports | The sender rejects a report beyond Telegram's message limit rather than silently truncating it. Automatic multi-part reports with independent delivery checkpoints remain a future improvement for large teams. |
+| Uncertain Telegram acknowledgment | Delivery is held for reconciliation to avoid a duplicate post. The connection panel exposes the hold; automatic blind resend is suppressed. A dedicated review/action UI is still absent. |
+| Facebook login/connect | Removed by the user's later instruction. CJ retains the existing Owner identity with email/password sign-in. Retained VEO Page tokens and webhook collection continue. New Page reconnection is not available in this email-only workflow. |
+
+No direct cross-database administration is needed for coexistence. Each service writes its own records and reads the necessary authoritative data through the existing shared secret. Launch/archive boundaries and Suno deactivation remain in effect.
+
+## Verification and release
+
+The 15 VEO SQL tests and 48 related authentication, permissions, directory, mapping, route and UI tests passed. The VEO production build passed. Jaucian's required `py validate_project.py` passed all 1,294 tests; its deployment gate now requires `test_veo_directory.py`. No migrations or environment-secret changes are required for this bridge. Deploy both compatible API changes before using the new mapping forms. Verify both service directions using `node --env-file=.env.local scripts/verify-veo-jaucian.mjs`, plus production health and the normal scheduler, without invoking delivery manually. This verification reads databases/APIs only and does not print tokens, personal directory entries or credentials.

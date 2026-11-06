@@ -40,6 +40,23 @@ async function payment(db: PGlite, orderId: string, amount: number, days = 0, ki
 }
 
 describe('VEO authoritative workspace', () => {
+    it('keeps 35% until BOTH personal quotas are met, then applies 40% to the whole fully paid day', async () => {
+        const db = await setup();
+        try {
+            await db.query('INSERT INTO veo_daily_targets(user_id,work_date,target,basis) VALUES($1,veo_today(),2,\'{}\') ON CONFLICT(user_id,work_date) DO UPDATE SET target=2', [member]);
+            const carried = await order(db); await payment(db, carried.id, 2000, 1, 'deposit'); await payment(db, carried.id, 8000, 0, 'balance');
+            const first = await order(db); await payment(db, first.id, 2000, 0, 'deposit');
+            const second = await order(db); await payment(db, second.id, 2000, 0, 'deposit');
+            let salary = (await db.query<any>('SELECT veo_salary($1,veo_today()) AS r', [member])).rows[0].r;
+            expect(salary).toMatchObject({ target: 2, closed: 2, done: 1, rate: 35 });
+            expect(salary.totals[0].commission_minor).toBe(3500);
+            await payment(db, first.id, 8000, 0, 'balance');
+            salary = (await db.query<any>('SELECT veo_salary($1,veo_today()) AS r', [member])).rows[0].r;
+            expect(salary).toMatchObject({ target: 2, closed: 2, done: 2, rate: 40 });
+            expect(salary.totals[0].gross_minor).toBe(20000);
+            expect(salary.totals[0].commission_minor).toBe(8000);
+        } finally { await db.close(); }
+    }, 60000);
     it('adds worker targets into team quotas and weighted branch averages without exposing other workers finance or changing commission', async () => {
         const db = await setup();
         try {

@@ -5,7 +5,7 @@ const data={pages:[row],ads:[row],daily:[row],unique_contacts:10,refresh_pending
 const response=(d:any)=>({ok:true,json:async()=>d});
 describe('Page and creative summary display',()=>{
  it('uses saved marketing outcomes in workspace mode without historical conversation verification requests',async()=>{
-  const fetch=vi.fn(async()=>response({...data,refresh_pending:10,read_only_reports:true}));vi.stubGlobal('fetch',fetch);
+  const fetch=vi.fn(async(_url:string)=>response({...data,refresh_pending:10,read_only_reports:true}));vi.stubGlobal('fetch',fetch);
   await act(async()=>{view=create(createElement(ConversionPerformance,{query:'range=today',connection:{readOnlyReports:true,status:'saved_data'}}));});
   expect(view!.root.findAllByType('button').some(b=>b.props.children==='Verify latest conversations')).toBe(false);
   expect(fetch.mock.calls.some(c=>String(c[0]).includes('/refresh-evidence'))).toBe(false);

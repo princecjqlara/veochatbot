@@ -15,6 +15,8 @@ it('shows team quotas separately from full capacity, historical average and an i
         const text = flatten(view.toJSON());
         for (const title of ['Your individual quota', 'Combined daily capacity', 'Average capacity per worker', 'Combined team daily average', 'Best-three team days average']) expect(text).toContain(title);
         expect(text).toContain('35%'); expect(text).toContain('5 / 8'); expect(text).toContain('4 / 8');
+        expect(text).toContain('To reach 40%: 1 more Closed and 0 more Done Deals');
+        expect(text).toContain('otherwise they earn 35%');
         expect(text).toContain('team quota 3 Closed and 3 Done Deals'); expect(text).toContain('zero-output dates included');
         expect(view.root.findAllByType('progress').map((p: any) => [p.props.value, p.props.max])).toEqual([[5,8],[4,8]]);
     } finally { await act(async () => view.unmount()); }

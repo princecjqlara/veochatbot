@@ -2,14 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { uuid } from '@/lib/veo-workspace';
+import { connectedVeoTenant, veoDirectory } from '@/lib/veo-jaucian';
 export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
     const expected = Buffer.from(`Bearer ${process.env.VEO_JAUCIAN_SECRET || ''}`), supplied = Buffer.from(request.headers.get('authorization') || '');
     if (!process.env.VEO_JAUCIAN_SECRET || expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const resource = request.nextUrl.searchParams.get('resource');
+    if (resource) {
+        if (resource !== 'directory') return NextResponse.json({ error: 'Invalid resource' }, { status: 400 });
+        try {
+            return NextResponse.json(await veoDirectory(request.nextUrl.searchParams.get('tenant_id') || ''), { headers: { 'Cache-Control': 'no-store' } });
+        } catch (error: any) { return NextResponse.json({ error: error.message }, { status: error.status || 503 }); }
+    }
     const reportDate = request.nextUrl.searchParams.get('report_date');
     if (reportDate) {
         const tenant = request.nextUrl.searchParams.get('tenant_id');
         if (!uuid(tenant) || !/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return NextResponse.json({ error: 'Invalid report' }, { status: 400 });
+        try { await connectedVeoTenant(tenant); }
+        catch (error: any) { return NextResponse.json({ error: error.message }, { status: error.status || 503 }); }
         const result = await getSupabaseAdmin().rpc('veo_jaucian_report', { p_tenant: tenant, p_day: reportDate });
         return NextResponse.json(result.error ? { error: 'Report unavailable' } : result.data, { status: result.error ? 503 : 200, headers: { 'Cache-Control': 'no-store' } });
     }

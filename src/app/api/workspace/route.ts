@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { createWorkspaceAccount, workspaceAction, workspaceScope, uuid, philippineDate, passwordHash } from '@/lib/veo-workspace';
 import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
 import { randomUUID } from 'node:crypto';
+import { jaucianRead, verifyWorkerMapping } from '@/lib/veo-jaucian';
 
 export const dynamic = 'force-dynamic';
 const bucket = 'veo-conversation-submissions';
@@ -82,11 +83,15 @@ export async function POST(request: NextRequest) {
         const body = await request.json(), action = body.action;
         if (action === 'create_account') return NextResponse.json({ saved: await createWorkspaceAccount(scope.user_id, body) }, { status: 201 });
         if (action === 'password') return NextResponse.json({ saved: await workspaceAction(scope.user_id, 'password', { user_id: body.user_id || scope.user_id, password_hash: await passwordHash(body.password) }) });
+        if (action === 'mapping' && scope.role !== 'owner') throw Object.assign(new Error('Owner access required'), { status: 403 });
         if (action === 'mapping' && body.team_id) {
             if (body.thread_id === '') body.thread_id = null;
             const destinations = (process.env.VEO_APPROVED_TELEGRAM_CHAT_IDS || '').split(',').map(v => v.trim());
             if (!destinations.includes(String(body.chat_id))) throw new Error('Choose an approved VEO Telegram destination');
+            const directory = await jaucianRead(scope.tenant_id);
+            if (!directory.groups?.some((g: any) => String(g.chat_id) === String(body.chat_id))) throw new Error('Choose a currently approved active Jaucian VEO group');
         }
+        if (action === 'mapping' && !body.team_id) await verifyWorkerMapping(scope.tenant_id, body.user_id, body.telegram_user_id);
         if (action === 'order') body.total_minor = parseMoneyMinor(body.amount);
         if (action === 'payment') body.amount_minor = parseMoneyMinor(body.amount);
         if (!['assign_pages', 'order', 'payment', 'attribution', 'attendance', 'contact', 'mapping'].includes(action)) throw new Error('Unknown action');
