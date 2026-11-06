@@ -46,8 +46,11 @@ time and the most recent individual history check do not imply all source data
 is current. A failed refresh explicitly marks the retained report as stale.
 
 When known confirmed customers outnumber customers with verified receipts,
-recorded revenue stays visible but affected profit and return ratios are
-unavailable. Even when every known confirmed customer has a receipt, incomplete
+the calendar shows recorded revenue and recorded net/return ratios with a
+provisional flag. Incomplete spend or receipt coverage never establishes final
+profit. Missing-day spend remains unknown; non-Philippine-aligned spend stays
+visible with its mismatch flag and cannot establish comparable return ratios.
+Even when every known confirmed customer has a receipt, incomplete
 histories, balances, or inventory can understate recorded returns. No receipt
 amounts or unpaid statuses are inferred from missing data.
 

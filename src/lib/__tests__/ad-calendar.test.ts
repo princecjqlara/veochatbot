@@ -2,25 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { buildAdCalendar, calendarHeat, calendarInquiryCount, calendarRange, shiftCalendarMonth } from '@/lib/ad-calendar';
 import { actionAmount, dailyDeliveryMetrics } from '@/lib/ad-daily-spend';
 const now = Date.parse('2020-02-04T00:00:00Z'), ad = { page_id: 'p', ad_id: '11', ad_account_id: '22', ad_name: 'Creative' };
-const group = { page_id: 'p', ad_id: '11', day: '2020-01-01', inquiries: 10, converted: 3, converted_later: 2, payers: 2, payers_later: 2,
+const group = { page_id: 'p', ad_id: '11', day: '2020-01-01', inquiries: 10, converted: 3, converted_later: 2, payers: 2, payers_later: 2, confirmed_payers: 2, confirmed_payers_later: 2,
  stage_lags: [1, 1, 1, 0, 0], paid_lags: [0, 1, 1, 0, 0], finance: [{ currency: 'PHP', received_minor: 50000, refunded_minor: 5000, records: 3, paid_orders: 2 }] };
 const spend = { page_id: 'p', ad_id: '11', account_id: '22', spend_date: '2020-01-01', currency: 'PHP', amount: 100, pht_aligned: true, impressions: 1000, clicks: 50,
- link_clicks: 25, messaging_started: 20, reach: 800, action_report_time: 'conversion', attribution_setting: 'adset_unified' };
+ link_clicks: 25, messaging_started: 20, reach: 800, action_report_time: 'conversion', attribution_setting: 'adset_unified', report_complete: true };
 const build = (patch: any = {}) => buildAdCalendar({ month: '2020-01', now, groups: [group], spend: [spend], inventory: [ad], ...patch });
 
 describe('acquisition-day ad economics', () => {
- it('retains partial recorded revenue but withholds profit and return ratios when confirmed customers have no receipts', () => {
+ it('labels recorded returns as provisional when confirmed customers have no receipt amounts', () => {
   const result = build({ groups: [{ ...group, confirmed_payers: 3 }] });
   expect(result.days[0].confirmed_customers_without_receipts).toBe(1);
   expect(result.days[0].finance[0].gross).toBe(450);
-  expect(result.days[0].profit).toBeNull(); expect(result.days[0].gross_roas).toBeNull(); expect(result.days[0].net_roas).toBeNull();
+  expect(result.days[0]).toMatchObject({ profit: 170, gross_roas: 4.5, net_roas: 1.7, profit_is_partial: true });
   expect(result.days[0].confirmed_cpa).toBeCloseTo(100 / 3);
  });
  it('reports all-source cohort returns without assigning unknown customers to a creative or counting a payer twice', () => {
   const unknown = { ...group, ad_id: null, inquiries: 5, confirmed_payers: 2, chat_confirmed_payers: 2, confirmed_payers_later: 2, finance: [{ currency: 'PHP', received_minor: 10000, refunded_minor: 0, records: 1, paid_orders: 1 }] };
   const result = build({ groups: [{ ...group, confirmed_payers: 2 }, unknown] });
   expect(result.overall.inquiries).toBe(15); expect(result.overall.confirmed_payers).toBe(4);
-  expect(result.days[0].overall.confirmed_cpa).toBe(25); expect(result.days[0].overall.confirmed_payers_later).toBe(2);
+  expect(result.days[0].overall.confirmed_cpa).toBe(25); expect(result.days[0].overall.confirmed_payers_later).toBe(4);
   expect(result.overall.finance[0].gross).toBe(550); expect(result.days[0].overall.profit).toBe(230);
   expect(result.ads[0].inquiries).toBe(10); expect(result.ads[0].confirmed_payers).toBe(2); expect(result.day_ads[0].profit).toBe(170);
   const onlyUnknown = build({ adId: 'unknown', groups: [unknown] });
@@ -34,9 +34,13 @@ describe('acquisition-day ad economics', () => {
   const day = build().days[0]; expect(day.finance[0]).toMatchObject({ gross: 450, salary: 180, after_salary: 270 });
   expect(day).toMatchObject({ profit: 170, gross_roas: 4.5, after_salary_roas: 2.7, net_roas: 1.7, cpa: 50, cost_per_inquiry: 10, cost_per_messaging: 5, cpc: 2, cpm: 100, ctr: .05 });
  });
- it('does not turn a missing imported day or missing ledger into zero spend, unpaid status or invented profit', () => {
-  const result = build(); expect(result.days[1].spend.amount).toBeNull(); expect(result.summary.spend.complete).toBe(false); expect(result.summary.profit).toBeNull();
-  const day = build({ groups: [{ ...group, finance: [] }] }).days[0]; expect(day.financial_verified).toBe(false); expect(day.profit).toBeNull(); expect(day.gross_roas).toBeNull();
+ it('keeps missing days unknown and marks recorded net as provisional when spend or receipt coverage is incomplete', () => {
+  const result = build(); expect(result.days[1].spend.amount).toBeNull(); expect(result.summary.spend.complete).toBe(false);
+  expect(result.summary).toMatchObject({ profit: 170, profit_is_partial: true });
+  const day = build({ groups: [{ ...group, payers: 0, finance: [] }] }).days[0];
+  expect(day).toMatchObject({ financial_verified: false, profit: -100, profit_is_partial: true, confirmed_customers_without_receipts: 2 });
+  expect(day.finance).toEqual([]);
+  expect(build().days[0].profit_is_partial).toBe(false);
  });
  it('includes zero-lead creative spend instead of allocating it away to successful ads', () => {
   const result = build({ inventory: [ad, { ...ad, ad_id: '33' }], spend: [spend, { ...spend, ad_id: '33', amount: 50 }] });
@@ -56,7 +60,9 @@ describe('acquisition-day ad economics', () => {
  it('never combines incompatible currencies, account ownership or account timezones for ROAS', () => {
   const foreign = build({ groups: [{ ...group, finance: [...group.finance, { currency: 'USD', received_minor: 1000, refunded_minor: 0, records: 1 }] }] }).days[0];
   expect(foreign.profit).toBeNull(); expect(foreign.financial_currency_mismatch).toBe(true);
-  expect(build({ spend: [{ ...spend, pht_aligned: false }] }).days[0].spend.amount).toBeNull();
+  const misaligned = build({ spend: [{ ...spend, pht_aligned: false }] }).days[0];
+  expect(misaligned.spend).toMatchObject({ amount: 100, complete: false, timezone_mismatch: 1 });
+  expect(misaligned.profit).toBeNull(); expect(misaligned.gross_roas).toBeNull();
   expect(build({ spend: [spend, { ...spend, account_id: 'different' }] }).days[0].spend.amount).toBeNull();
  });
  it('shows known zero spend without infinite ROAS, and never sums reach into a fake unique audience', () => {
