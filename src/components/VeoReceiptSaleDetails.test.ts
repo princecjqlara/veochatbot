@@ -52,3 +52,8 @@ it('does not show stale commission after changing seller when the new read fails
     await act(async () => { view.update(createElement(Details, { ...props, seller: 'other-worker' })); });
     expect(text(view.toJSON())).toContain('Commission unavailable: Forbidden'); expect(text(view.toJSON())).not.toContain('Quota not yet reached');
 });
+it('keeps commission estimates exact at cent boundaries', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...commission, totals: [{ currency: 'PHP', gross_minor: 180, commission_minor: 63 }] }))));
+    await act(async () => { view = create(createElement(Details, { ...props, order: { ...order, total_minor: 180, paid_minor: 0 } })); });
+    const output = text(view.toJSON()); expect(output).toContain('At 35% if either quota is missed: ₱0.63'); expect(output).toContain('₱0.63 at 35%, or ₱0.72 at 40%');
+});
