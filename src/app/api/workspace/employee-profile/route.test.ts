@@ -11,7 +11,7 @@ beforeEach(() => {
     m.session.mockResolvedValue({ user: { id: owner } }); m.scope.mockResolvedValue({ user_id: owner, role: 'owner', launch_at: '2026-11-05', page_ids: [page] });
     m.rpc.mockResolvedValue({ data: { employee: { id: worker }, summary: {}, capacity: {}, days: [], as_of: '2026-11-07T01:00:00Z', from: '2026-11-05', to: '2026-11-07' } });
 });
-afterEach(() => { vi.clearAllMocks(); });
+afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); });
 it('requires authentication and active workspace access', async () => {
     m.session.mockResolvedValue(null); expect((await request()).status).toBe(401);
     m.session.mockResolvedValue({ user: { id: owner } }); m.scope.mockResolvedValue(null); expect((await request()).status).toBe(403); expect(m.rpc).not.toHaveBeenCalled();
@@ -36,4 +36,15 @@ it.each(['owner', 'team_leader', 'manager'])('delegates %s branch validation to 
 });
 it('surfaces unavailable data instead of reporting a successful empty profile', async () => {
     m.rpc.mockResolvedValue({ data: null }); expect((await request(`worker_id=${worker}`)).status).toBe(400);
+});
+it('recovers a transient database timeout with the same authenticated filters', async () => {
+    vi.useFakeTimers(); m.rpc.mockResolvedValueOnce({ error: { code: '57014' } });
+    const response = request(`worker_id=${worker}`); await vi.advanceTimersByTimeAsync(500);
+    expect((await response).status).toBe(200); expect(m.rpc).toHaveBeenCalledTimes(2);
+    expect(m.rpc.mock.calls[0]).toEqual(m.rpc.mock.calls[1]);
+});
+it('returns service unavailable after bounded persistent timeouts', async () => {
+    vi.useFakeTimers(); m.rpc.mockResolvedValue({ error: { code: '57014' } });
+    const response = request(`worker_id=${worker}`); await vi.advanceTimersByTimeAsync(2000);
+    expect((await response).status).toBe(503); expect(m.rpc).toHaveBeenCalledTimes(3);
 });

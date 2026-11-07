@@ -3,6 +3,8 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, philippineDate, uuid } from '@/lib/veo-workspace';
 import { buildEmployeeProfile } from '@/lib/veo-employee-profile';
+import { readVeoReport } from '@/lib/veo-report-read';
+import { DatabaseReadTimeout } from '@/lib/request-deadline';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -18,9 +20,12 @@ export async function GET(request: NextRequest) {
         const page = q.get('page_id') || null, from = q.get('from') || philippineDate(), to = q.get('to') || philippineDate();
         if (!uuid(worker) || !validDay(from) || !validDay(to) || from > to || (Date.parse(to) - Date.parse(from)) / 86400000 > 92) return json({ error: 'Choose an employee and up to 93 valid Philippine dates' }, 400);
         if ((scope.role === 'member' && worker !== scope.user_id) || (page && (!uuid(page) || !scope.page_ids.includes(page)))) return json({ error: 'Employee or Page access denied' }, 403);
-        const result = await getSupabaseAdmin().rpc('veo_employee_profile', { p_actor: scope.user_id, p_worker: worker, p_from: from, p_to: to, p_page: page });
+        const result = await readVeoReport(signal => {
+            const query = getSupabaseAdmin().rpc('veo_employee_profile', { p_actor: scope.user_id, p_worker: worker, p_from: from, p_to: to, p_page: page });
+            return typeof query.abortSignal === 'function' ? query.abortSignal(signal) : query;
+        });
         if (result.error) return json({ error: result.error.message }, result.error.code === '42501' ? 403 : 400);
         if (!result.data?.employee || !Array.isArray(result.data.days) || !result.data.summary) throw new Error('Employee profile data is unavailable');
         return json(buildEmployeeProfile(result.data));
-    } catch (e: any) { return json({ error: e.message || 'Employee profile unavailable' }, 400); }
+    } catch (e: any) { return json({ error: e.message || 'Employee profile unavailable' }, e instanceof DatabaseReadTimeout ? 503 : 400); }
 }
