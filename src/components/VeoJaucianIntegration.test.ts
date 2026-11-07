@@ -36,3 +36,14 @@ it('shows an upstream failure explicitly and offers refresh without showing usab
     try { expect(flatten(view.toJSON())).toContain('Jaucian unavailable'); expect(view.root.findAllByType('form')).toHaveLength(0); }
     finally { await act(async () => view.unmount()); }
 });
+it('distinguishes Closed and Done confirmations from availability polls in the delivery history', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...data, jaucian: { ...data.jaucian, recent_deliveries: [
+        { id: 1, chat_id: -123, status: 'sent', attempts: 1, veo_receipt_kind: 'closed' },
+        { id: 2, chat_id: -123, status: 'sent', attempts: 1, veo_receipt_kind: 'done' },
+        { id: 3, chat_id: -123, status: 'sent', attempts: 1, veo_availability_date: '2026-11-08' }
+    ] } }))));
+    let view: any;
+    await act(async () => { view = create(createElement(Integration, { submit: vi.fn(), busy: false })); });
+    try { const text = flatten(view.toJSON()); expect(text).toContain('Closed Deal confirmation'); expect(text).toContain('Done Deal confirmation'); expect(text).toContain('Active-tomorrow poll 2026-11-08'); }
+    finally { await act(async () => view.unmount()); }
+});

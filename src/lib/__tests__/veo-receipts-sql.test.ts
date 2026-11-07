@@ -469,4 +469,38 @@ describe('strict Facebook receipt submission after migrating retained records', 
         expect((await db.query<any>("SELECT has_table_privilege('anon','veo_facebook_checks','SELECT') exposed")).rows[0].exposed).toBe(false);
         for (const fn of ['veo_record_facebook_check(uuid,uuid,timestamptz,jsonb)', 'veo_receipt_requirements(uuid,uuid,uuid,text,uuid,boolean)', 'veo_submission_facebook_context(uuid)', 'veo_facebook_stage_conflicts(uuid)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed", [fn])).rows[0].exposed).toBe(false);
     });
+    it('hands Jaucian current scoped staff warnings and overdue explanations without leaking another worker warnings', async () => {
+        const { o } = await facebookOrder();
+        await action(member, 'payment', { request_id: id(request++), order_id: o.id, kind: 'deposit', amount_minor: 1000, confirmed: true, reference: 'DEPOSIT-' + cid, occurred_at: new Date(Date.now() - 36 * 3600000).toISOString() });
+        const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10), tomorrow = new Date(Date.now() + 32 * 3600000).toISOString().slice(0, 10);
+        await db.query("UPDATE veo_accounts SET enrolled_at=now()-interval '1 day' WHERE user_id=$1", [member]);
+        await rpc('veo_apply_telegram_observations', [tenant, JSON.stringify({ tenant_id: tenant, workers: [{ user_id: member, chat_id: -100123, telegram_user_id: 12345, membership: 'member', membership_confirmed: true, is_bot: false, observed_at: new Date().toISOString(), availability: { work_date: tomorrow, poll_id: 'posted-poll', created_at: new Date(Date.now() - 3 * 3600000).toISOString(), has_vote: false, telegram_message_id: 99, poll_url: 'https://t.me/c/123/99' } }] })]);
+        let report = await rpc('veo_operations_report', [tenant, today]);
+        const worker = (data: any) => data.teams.flatMap((t: any) => t.workers).find((w: any) => w.id === member);
+        expect(report.workflow_version).toBe(2); expect(report.warnings_as_of).toBeTruthy();
+        expect(worker(report).warnings.map((w: any) => w.kind)).toEqual(expect.arrayContaining(['availability_unanswered', 'overdue_without_reason']));
+        for (const w of report.teams.flatMap((t: any) => t.workers).filter((w: any) => w.id !== member)) expect(w.warnings.some((x: any) => x.key === `availability:${member}:${tomorrow}`)).toBe(false);
+        await action(member, 'fulfillment', { order_id: o.id, status: 'working', reason: 'Client requested a revised script' });
+        report = await rpc('veo_operations_report', [tenant, today]);
+        expect(worker(report).clients.find((c: any) => c.order_id === o.id).work_reason).toBe('Client requested a revised script');
+        expect(worker(report).warnings.some((w: any) => w.order_id === o.id && w.kind === 'overdue_without_reason')).toBe(false);
+        expect((await db.query<any>("SELECT has_function_privilege('anon','veo_operations_report(uuid,date)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+    });
+    it('imports active tomorrow only from Jaucian votes, clears withdrawals, fences older replies and preserves today attendance', async () => {
+        const days = (await db.query<any>('SELECT veo_today()::text today,(veo_today()+1)::text tomorrow')).rows[0];
+        await db.query("UPDATE veo_accounts SET enrolled_at=now()-interval '1 day' WHERE user_id=$1", [member]);
+        await db.query('DELETE FROM veo_telegram_staff_state WHERE user_id=$1', [member]);
+        await db.query('DELETE FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.tomorrow]);
+        await db.query("INSERT INTO veo_attendance(user_id,work_date,active,updated_by,source) VALUES($1,$2,true,$3,'workspace') ON CONFLICT(user_id,work_date) DO UPDATE SET active=true,source='workspace'", [member, days.today, owner]);
+        const base = Date.now() - 10000;
+        const observation = (active: boolean | null, offset: number) => ({ tenant_id: tenant, workers: [{ user_id: member, chat_id: -100123, telegram_user_id: 12345, membership: 'member', membership_confirmed: true, is_bot: false, observed_at: new Date(base + offset).toISOString(), attendance: { work_date: days.tomorrow, active, updated_at: new Date(base + offset).toISOString() }, availability: { work_date: days.tomorrow, poll_id: 'registered-jaucian-poll', created_at: new Date(Date.now() - 3 * 3600000).toISOString(), has_vote: active !== null, telegram_message_id: 99, poll_url: 'https://t.me/c/123/99' } }] });
+        expect((await rpc('veo_apply_telegram_observations', [tenant, JSON.stringify(observation(true, 0))])).attendance_imported).toBe(1);
+        expect((await db.query<any>('SELECT active,source FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.tomorrow])).rows[0]).toEqual({ active: true, source: 'telegram' });
+        expect((await rpc('veo_workflow_warnings', [owner, member])).workers[0].active_tomorrow).toBe(true);
+        await rpc('veo_apply_telegram_observations', [tenant, JSON.stringify(observation(null, 1000))]);
+        await rpc('veo_apply_telegram_observations', [tenant, JSON.stringify(observation(true, 0))]);
+        expect((await db.query('SELECT user_id FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.tomorrow])).rows).toHaveLength(0);
+        expect((await rpc('veo_workflow_warnings', [owner, member])).workers[0].active_tomorrow).toBeNull();
+        expect((await db.query<any>('SELECT active,source FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.today])).rows[0]).toEqual({ active: true, source: 'workspace' });
+    });
 });
