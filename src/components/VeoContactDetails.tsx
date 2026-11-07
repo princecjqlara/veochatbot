@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-export default function VeoContactDetails({ contactId, pageId = '', name, metrics, onPayments }: { contactId: string; pageId?: string; name: string | null; metrics?: any; onPayments?: () => void }) {
+export default function VeoContactDetails({ contactId, pageId = '', name, metrics, onPayments, onChanged }: { contactId: string; pageId?: string; name: string | null; metrics?: any; onPayments?: () => void; onChanged?: () => Promise<any> }) {
     const { data: session } = useSession(), [data, setData] = useState<any>(null), [fields, setFields] = useState<Array<[string, string]>>([]), [message, setMessage] = useState('');
     const active = useRef(contactId); active.current = contactId;
     const load = async () => { const requested = contactId, r = await fetch(`/api/workspace?contact_id=${requested}`); const b = await r.json(); if (!r.ok) throw new Error(b.error); if (active.current !== requested) return; setData(b); setFields(Object.entries(b.details?.fields || {}).map(([k, v]) => [k, String(v)])); };
@@ -13,7 +13,7 @@ export default function VeoContactDetails({ contactId, pageId = '', name, metric
         try {
             const parsed = Object.fromEntries(fields.filter(([key]) => key.trim()).map(([key, value]) => [key.trim(), value]));
             const r = await fetch('/api/workspace', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'contact', contact_id: contactId, name: f.get('name'), fields: parsed }) });
-            const b = await r.json(); if (!r.ok) throw new Error(b.error); await load(); setMessage('Contact corrections saved with an audit record.');
+            const b = await r.json(); if (!r.ok) throw new Error(b.error); await load(); await onChanged?.(); setMessage('Contact corrections saved with an audit record.');
         } catch (e: any) { setMessage(e.message); }
     }}><label className="block text-sm">Contact name<input className="block w-full border rounded p-2 mt-1" name="name" defaultValue={name || ''} /></label><fieldset className="space-y-2"><legend className="text-sm font-semibold">Additional contact details</legend>{fields.map(([key, value], index) => <div key={index} className="grid grid-cols-2 gap-2"><input aria-label="Field name" placeholder="Phone, company, address…" className="border rounded p-2" value={key} onChange={e => setFields(old => old.map((row, i) => i === index ? [e.target.value, row[1]] : row))} /><input aria-label={key || 'Field value'} placeholder="Value or Unknown" className="border rounded p-2" value={value} onChange={e => setFields(old => old.map((row, i) => i === index ? [row[0], e.target.value] : row))} /></div>)}<button type="button" className="text-sm underline" onClick={() => setFields(old => [...old, ['', '']])}>Add a field</button></fieldset><p className="text-xs text-slate-500">Manual corrections take priority over extracted details. These fields do not verify payments.</p><button className="rounded bg-slate-900 text-white px-4 py-2">Save contact details</button></form></>}</section>;
 }

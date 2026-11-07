@@ -26,9 +26,12 @@ export async function GET(request: NextRequest) {
         if (contactId) {
             const contact = await db.from('contacts').select('id,page_id,name,psid,pipeline_stage').eq('id', contactId).maybeSingle();
             if (contact.error || !contact.data || !scope.page_ids.includes(contact.data.page_id)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+            const profile = await db.rpc('veo_profile_detail_access', { p_actor: scope.user_id, p_contact: contactId });
+            if (profile.error || !Array.isArray(profile.data?.branch_worker_ids)) throw Object.assign(new Error('Contact financial history unavailable'), { status: profile.error?.code === '42501' ? 403 : 503 });
+            const workers = profile.data.branch_worker_ids;
             const [details, orders, legacy] = await Promise.all([
                 db.from('veo_contact_details').select('*').eq('contact_id', contactId).maybeSingle(),
-                db.from('veo_order_facts').select('*').eq('contact_id', contactId).in('seller_id', scope.worker_ids),
+                db.from('veo_order_facts').select('*').eq('contact_id', contactId).in('seller_id', workers),
                 db.rpc('get_contact_finance_records', { p_page_id: contact.data.page_id, p_contact_id: contactId })
             ]);
             if (details.error || orders.error || legacy.error) throw new Error('Contact financial history unavailable');
@@ -39,7 +42,7 @@ export async function GET(request: NextRequest) {
             if (sellers.error) throw new Error('Seller identities unavailable');
             const names = new Map((sellers.data || []).map(s => [s.id, s.name]));
             const ltv: Record<string, number> = {};
-            const retainedPayments = (legacy.data?.payments || []).filter((p: any) => scope.role === 'owner' || scope.worker_ids.includes(p.verified_by));
+            const retainedPayments = (legacy.data?.payments || []).filter((p: any) => scope.role === 'owner' || workers.includes(p.verified_by));
             for (const p of retainedPayments) if (!p.voided_at) ltv[p.currency] = (ltv[p.currency] || 0) + Number(p.amount_minor) * (p.kind === 'refund' ? -1 : 1);
             for (const o of orders.data || []) ltv[o.currency] = (ltv[o.currency] || 0) + Number(o.paid_minor);
             // Shared-page contacts are shared; personal order attribution stays visible on the contact profile.

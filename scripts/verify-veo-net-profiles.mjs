@@ -54,7 +54,7 @@ function verifyProfile(data) {
 try {
     await db.connect();
     const before = await financialCounts(), scope = (await db.query('SELECT veo_scope($1) AS s', [launch.owner])).rows[0].s;
-    assert.equal(scope.role, 'owner'); assert.equal(Date.parse(before.launch_at), Date.parse(launch.launch_at));
+    assert.equal(scope.role, 'owner'); assert.equal(new Date(before.launch_at).getTime(), Date.parse(launch.launch_at));
     const token = await encode({ secret: process.env.NEXTAUTH_SECRET, maxAge: 1200, token: { id: launch.owner } });
     const headers = { Cookie: '__Secure-next-auth.session-token=' + token };
     const enrolled = (await db.query(`SELECT d.contact_id AS id,d.page_id FROM veo_contact_demographics d JOIN contacts c ON c.id=d.contact_id
@@ -80,6 +80,9 @@ try {
     for (const contact of [enrolled, paid]) {
         const profile = await request(`/api/pages/${contact.page_id}/contacts/${contact.id}/profile`, headers); assert.equal(profile.status, 200);
         profiles.push(verifyProfile(profile.body));
+        const compact = await request('/api/workspace?contact_id=' + contact.id, headers); assert.equal(compact.status, 200);
+        for (const metric of profile.body.finance.metrics.currencies) assert.equal(compact.body.lifetime_value[metric.currency], metric.net_minor);
+        for (const [currency, amount] of Object.entries(compact.body.lifetime_value)) assert.equal(amount, profile.body.finance.metrics.currencies.find(m => m.currency === currency)?.net_minor || 0);
     }
     assert(profiles.some(p => p.paid_orders > 0)); report.checks.profiles = profiles;
     if (process.argv.includes('--analyze')) {

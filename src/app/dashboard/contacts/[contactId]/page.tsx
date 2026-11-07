@@ -119,7 +119,7 @@ function ContactProfile() {
 
         {tab === 'Overview' && profile.workspace_enabled && <><VeoContactAutoFill contactId={contactId} data={profile.auto_fill} onChanged={load} /><VeoContactDemographics contactId={contactId} /></>}
         {tab === 'Overview' && <>
-            <VeoContactDetails contactId={contactId} pageId={pageId} name={contact.name} metrics={metrics} onPayments={() => setTab('Payments')} />
+            <VeoContactDetails contactId={contactId} pageId={pageId} name={contact.name} metrics={metrics} onPayments={() => setTab('Payments')} onChanged={load} />
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[
                 ['Data collected', `${details.collected_count} / ${details.required_count} required answers`],
                 ['Best time to contact', profile.best_contact_time?.value || 'Unknown'],
@@ -147,7 +147,7 @@ function ContactProfile() {
 
         {tab === 'Sources' && <ContactSources pageId={pageId} contactId={contactId} eventKey={sourceEvent} onClearFocus={() => setSourceEvent('')} onMessage={source} />}
 
-        {tab === 'Payments' && profile.workspace_enabled && <VeoContactDetails contactId={contactId} pageId={pageId} name={contact.name} metrics={metrics} onPayments={() => setTab('Payments')} />}
+        {tab === 'Payments' && profile.workspace_enabled && <VeoContactDetails contactId={contactId} pageId={pageId} name={contact.name} metrics={metrics} onPayments={() => setTab('Payments')} onChanged={load} />}
         {tab === 'Payments' && !profile.workspace_enabled && <>
             <div className="flex flex-wrap items-center justify-between gap-4"><div><h2 className="text-lg font-semibold">Purchases and verified payments</h2><p className="mt-1 text-sm text-slate-500">Only records checked by staff contribute to totals. Chat evidence is listed separately.</p></div><div className="flex gap-2"><button className="rounded-lg border px-3 py-2 text-sm font-medium" onClick={() => openForm('purchase')}>Record order</button><button className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white" onClick={() => openForm('payment')}>Record verified payment</button></div></div>
             <div className="grid gap-3 sm:grid-cols-3"><Card title="Received">{metrics.currencies.length ? metrics.currencies.map((total: any) => <p key={total.currency} className="text-xl font-semibold">{money(total.received_minor, total.currency)}</p>) : <Empty>Not verified</Empty>}</Card><Card title="Refunded">{metrics.currencies.length ? metrics.currencies.map((total: any) => <p key={total.currency} className="text-xl font-semibold">{money(total.refunded_minor, total.currency)}</p>) : <Empty>Not verified</Empty>}</Card><Card title="Net received">{metrics.currencies.length ? metrics.currencies.map((total: any) => <p key={total.currency} className="text-xl font-semibold">{money(total.net_minor, total.currency)}</p>) : <Empty>Not verified</Empty>}</Card></div>
