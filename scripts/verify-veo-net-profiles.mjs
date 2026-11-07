@@ -83,6 +83,7 @@ try {
     }
     assert(profiles.some(p => p.paid_orders > 0)); report.checks.profiles = profiles;
     if (process.argv.includes('--analyze')) {
+        const expectedVersion = (await db.query('SELECT requested_version+1 AS version FROM veo_contact_demographics WHERE contact_id=$1', [enrolled.id])).rows[0].version;
         const queued = await request('/api/workspace/profile-details', headers, { contact_id: enrolled.id, action: 'refresh' });
         assert.equal(queued.status, 202);
         assert(process.env.CRON_SECRET, 'Profile worker authentication is required');
@@ -90,7 +91,7 @@ try {
         assert.equal(run.status, 200); assert.equal(run.body.failed, 0); assert.equal(run.body.historical_imports, 0);
         report.checks.saved_source_worker = { processed: run.body.processed, failed: 0, historical_imports: 0 };
         const job = (await db.query('SELECT status,source_hash,fields,analyzed_version FROM veo_contact_demographics WHERE contact_id=$1', [enrolled.id])).rows[0];
-        assert(job.analyzed_version >= queued.body.analysis.requested_version); assert(job.source_hash?.startsWith('profile-v2:'));
+        assert(job.analyzed_version >= expectedVersion); assert(job.source_hash?.startsWith('profile-v2:'));
         const details = await request(autoPath, headers); assert.equal(details.status, 200);
         report.checks.saved_source_worker.grounded_fields = job.fields.length;
         report.checks.saved_source_worker.profile_fields = details.body.fields.filter(f => f.source === 'ai').map(f => f.key);
