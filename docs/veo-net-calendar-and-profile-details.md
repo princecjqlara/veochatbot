@@ -17,3 +17,5 @@ Migration `202611070008_veo_contact_profile_fields.sql` adds target metadata and
 Migration `202611070009_veo_profile_source_lookup.sql` indexes saved webhook messages by Page and customer and fixes the private extractor's query-plan settings. This avoids repeated scans of large event payloads as the existing profile queue is upgraded.
 
 Migration `202611070010_veo_calendar_covering_reads.sql` covers the calendar's existing Page-bound contact and qualified/converted stage queries. It reduces reads of wide retained records without changing report definitions, access checks or financial data.
+
+Migration `202611070011_veo_calendar_scope_scalars.sql` supplies scalar role and tenant values to the existing calendar query planner, preserving the same Page and branch authorization and report expressions.
