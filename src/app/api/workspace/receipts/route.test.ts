@@ -60,3 +60,56 @@ it('rechecks Facebook after authorizing an existing receipt and blocks missing r
     expect((await post({ action: 'recheck', receipt_id: receipt })).status).toBe(422);
     expect(m.refresh).toHaveBeenCalledWith(m, worker, receipt); expect(m.rpc.mock.calls.some(([name]) => name === 'veo_receipt_recheck')).toBe(false);
 });
+
+function uploadForm() {
+    const form = new FormData();
+    Object.entries({ contact_id: receipt, seller_id: worker, request_id: receipt, receipt_kind: 'done', deal_mode: 'new', order_id: worker }).forEach(([k, v]) => form.set(k, v));
+    form.set('photo', new Blob([new Uint8Array([255, 216, 255, 217])], { type: 'image/jpeg' }), 'receipt.jpg');
+    return new NextRequest('https://veo.test/api/workspace/receipts', { method: 'POST', headers: { Origin: 'https://veo.test' }, body: form });
+}
+function savingDatabase(saveResult: any, existing: any = null) {
+    let path = '';
+    const remove = vi.fn(async () => ({ data: [] }));
+    m.storage.from.mockReturnValue({ upload: vi.fn(async () => ({ data: {} })), remove });
+    m.from.mockImplementation((table: string) => {
+        const filters: Record<string, string> = {};
+        const q: any = { select: () => q, eq: (key: string, value: string) => { filters[key] = value; return q; }, update: () => q, insert: async (data: any) => { path = data.object_path; return { data: {} }; }, maybeSingle: async () => {
+            const row = typeof existing === 'function' ? existing(path) : existing;
+            return { data: filters.object_path && row?.object_path !== filters.object_path ? null : row };
+        }, then: (resolve: any) => resolve({ data: {} }) };
+        return q;
+    });
+    m.rpc.mockImplementation(async name => {
+        if (name === 'veo_receipt_requirements') return { data: { allowed: true, blockers: [] } };
+        if (name === 'veo_receipt_save') { if (saveResult instanceof Error) throw saveResult; return saveResult; }
+        if (name === 'veo_receipt_access') return { data: typeof existing === 'function' ? existing(path) : existing };
+        return { data: {} };
+    });
+    return { remove, path: () => path };
+}
+it('never recovers a different client receipt when a request ID collides', async () => {
+    const saved = savingDatabase({ error: { code: '23505', message: 'Request ID already used' } }, { id: receipt, contact_id: worker, seller_id: worker, receipt_kind: 'done', object_path: 'another-photo' });
+    const r = await POST(uploadForm()); expect(r.status).toBe(409); expect((await r.json()).saved).toBeUndefined();
+    expect(saved.remove).toHaveBeenCalledWith([saved.path()]); expect(m.rpc.mock.calls.some(([name]) => name === 'veo_receipt_access')).toBe(false);
+});
+it('keeps the private photo when a save outcome is uncertain and not visible yet', async () => {
+    const saved = savingDatabase(Error('Response lost after save request'));
+    const r = await POST(uploadForm()); expect(r.status).toBe(503); expect(saved.remove).not.toHaveBeenCalled();
+});
+it('recovers an acknowledged matching save without deleting its photo', async () => {
+    const saved = savingDatabase(Error('Response lost'), (path: string) => ({ id: receipt, contact_id: receipt, seller_id: worker, receipt_kind: 'done', object_path: path }));
+    const r = await POST(uploadForm()); expect(r.status).toBe(200); expect((await r.json()).saved.id).toBe(receipt); expect(saved.remove).not.toHaveBeenCalled();
+});
+it('recovers a concurrent matching retry and removes only the unused second upload', async () => {
+    const saved = savingDatabase({ error: { code: '23505', message: 'Request already committed' } }, { id: receipt, contact_id: receipt, seller_id: worker, receipt_kind: 'done', object_path: 'first-upload' });
+    const r = await POST(uploadForm()); expect(r.status).toBe(200); expect((await r.json()).saved.duplicate).toBe(true); expect(saved.remove).toHaveBeenCalledWith([saved.path()]);
+});
+it('never removes a referenced photo when a repeated save response reports a duplicate', async () => {
+    const saved = savingDatabase({ data: { id: receipt, duplicate: true } }, (path: string) => ({ id: receipt, contact_id: receipt, seller_id: worker, receipt_kind: 'done', object_path: path }));
+    const r = await POST(uploadForm()); expect(r.status).toBe(200); expect(saved.remove).not.toHaveBeenCalled();
+});
+it('saves eligible evidence only after the fresh check and returns the committed queue result', async () => {
+    const saved = savingDatabase({ data: { id: receipt, duplicate: false, holds: [], delivery_status: 'queued' } });
+    const r = await POST(uploadForm()); expect(r.status).toBe(202); expect((await r.json()).saved.delivery_status).toBe('queued');
+    expect(m.refresh.mock.invocationCallOrder[0]).toBeLessThan(m.rpc.mock.invocationCallOrder[m.rpc.mock.calls.findIndex(([name]) => name === 'veo_receipt_save')]); expect(saved.remove).not.toHaveBeenCalled();
+});

@@ -58,11 +58,16 @@ export async function GET(request: NextRequest) {
 }
 export async function POST(request: NextRequest) {
     let uploaded: string | null = null, requestId: string | null = null, actor: string | null = null;
+    let saveStarted = false, expected: { contact: string; seller: string; kind: string } | null = null;
     const db = getSupabaseAdmin();
     async function removeUpload() {
         if (!uploaded) return;
-        const deleted = await db.storage.from(bucket).remove([uploaded]);
-        if (!deleted.error) await db.from('veo_photo_objects').update({ deleted_at: new Date().toISOString() }).eq('object_path', uploaded);
+        try {
+            const used = await db.from('veo_receipts').select('id').eq('object_path', uploaded).maybeSingle();
+            if (used.error || used.data) return;
+            const deleted = await db.storage.from(bucket).remove([uploaded]);
+            if (!deleted.error) await db.from('veo_photo_objects').update({ deleted_at: new Date().toISOString() }).eq('object_path', uploaded);
+        } catch { /* Independent expiry cleanup retries unused objects. */ }
     }
     try {
         if (request.headers.get('origin') !== request.nextUrl.origin) throw Object.assign(Error('Same-origin request required'), { status: 403 });
@@ -108,23 +113,36 @@ export async function POST(request: NextRequest) {
         // Reject before reserving or uploading a photo; the save RPC repeats the
         // same gates atomically so direct requests cannot bypass the checklist.
         requireEligible(await requirements(db, scope.user_id, contact, String(seller), kind, order as string | null));
+        expected = { contact, seller: String(seller), kind };
         const path = `${scope.tenant_id}/${scope.user_id}/${randomUUID()}`;
         checked(await db.from('veo_photo_objects').insert({ object_path: path })); uploaded = path;
         const stored = await db.storage.from(bucket).upload(path, bytes, { contentType: file.type, upsert: false }); checked(stored);
+        saveStarted = true;
         const saved = checked(await db.rpc('veo_receipt_save', { p_actor: scope.user_id, p_data: { request_id: requestId, contact_id: contact, seller_id: seller, order_id: order, receipt_kind: kind, deal_mode: dealMode, closed_deal_id: closedId, closed_amount_minor: closedAmount, closed_currency: closedCurrency, closed_occurred_at: closedAt, notes, object_path: path, photo_sha256: createHash('sha256').update(bytes).digest('hex') } }));
         if (saved.duplicate) await removeUpload();
         return response({ saved }, saved.duplicate ? 200 : 202);
-    } catch (e) {
+    } catch (e: any) {
         if (uploaded && requestId && actor) {
-            // A lost response can follow a committed save. Retain its photo and
-            // recover by the stable request ID; never delete an uncertain save.
-            const existing = await db.from('veo_receipts').select('id').eq('request_id', requestId).eq('submitted_by', actor).maybeSingle();
-            if (!existing.error && existing.data) {
-                const recovered = await db.rpc('veo_receipt_access', { p_actor: actor, p_id: existing.data.id });
-                if (!recovered.error) return response({ saved: recovered.data });
+            if (!saveStarted) await removeUpload();
+            else {
+                // A network failure does not prove rollback. Keep an uncertain
+                // object's seven-day expiry even if the write is not visible yet.
+                try {
+                    const existing = await db.from('veo_receipts').select('id,contact_id,seller_id,receipt_kind,object_path').eq('request_id', requestId).eq('submitted_by', actor).maybeSingle();
+                    if (!existing.error && existing.data) {
+                        const row = existing.data, duplicate = row.object_path !== uploaded;
+                        if (expected && row.contact_id === expected.contact && row.seller_id === expected.seller && row.receipt_kind === expected.kind) {
+                            const recovered = await db.rpc('veo_receipt_access', { p_actor: actor, p_id: row.id });
+                            if (!recovered.error) { if (duplicate) await removeUpload(); return response({ saved: { ...recovered.data, duplicate } }); }
+                        }
+                        // A conflicting committed request proves this second
+                        // upload is unused, but must never be returned as success.
+                        if (duplicate) await removeUpload();
+                    } else if (!existing.error && !existing.data && /^[0-9A-Z]{5}$/.test(e.code || '')) await removeUpload();
+                } catch { /* Preserve the object when recovery is also uncertain. */ }
             }
-            if (!existing.error && !existing.data) await removeUpload();
         }
+        if (saveStarted && !/^[0-9A-Z]{5}$/.test(e.code || '')) return fail(Object.assign(Error('Save confirmation unavailable. Check your receipt list before retrying; the same request will not create a duplicate.'), { status: 503 }));
         return fail(e);
     }
 }

@@ -20,6 +20,8 @@ async function counts() {
 }
 try {
     await db.connect(); const before = await counts();
+    assert((await db.query("SELECT to_regprocedure('veo_facebook_stage_conflicts(uuid)') IS NOT NULL installed")).rows[0].installed, 'Known-stage conflict guard must be installed');
+    result.checks.known_stage_guard_installed = true;
     const token = await encode({ secret: process.env.NEXTAUTH_SECRET, maxAge: 300, token: { id: launch.owner } });
     const headers = { Cookie: '__Secure-next-auth.session-token=' + token, Origin: origin };
     const scope = (await db.query('SELECT veo_scope($1) s', [launch.owner])).rows[0].s;
@@ -41,7 +43,7 @@ try {
     result.checks.incomplete_submit = { status: submitted.status, saved: false, before_storage: true, blockers: rejected.requirements.blockers };
     const after = await counts(); assert.deepEqual(after, before); assert.equal(after.launch.getTime(), Date.parse(launch.launch_at));
     result.checks.records_and_launch_unchanged = true;
-    const exposed = (await db.query(`SELECT count(*)::int n FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN('veo_record_facebook_check','veo_facebook_check_context','veo_receipt_requirements','veo_submission_facebook_context','veo_receipt_save','veo_receipt_recheck','veo_handoff')
+    const exposed = (await db.query(`SELECT count(*)::int n FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN('veo_record_facebook_check','veo_facebook_check_context','veo_facebook_stage_conflicts','veo_receipt_requirements','veo_submission_facebook_context','veo_receipt_save','veo_receipt_recheck','veo_handoff')
     AND(has_function_privilege('anon',oid,'EXECUTE') OR has_function_privilege('authenticated',oid,'EXECUTE'))`)).rows[0].n;
     assert.equal(exposed, 0); result.checks.private_functions = true;
     result.checks.telegram_mapping_gaps = (await db.query(`SELECT (SELECT count(*)::int FROM veo_teams WHERE tenant_id=$1 AND telegram_chat_id IS NULL) teams,

@@ -30,7 +30,7 @@ beforeAll(async () => {
     CREATE FUNCTION cron.unschedule(bigint) RETURNS boolean LANGUAGE sql AS 'DELETE FROM cron.job WHERE jobid=$1 RETURNING true';`);
     // Build retained receipts with the previous workflow, then migrate those
     // records in the strict-gate suite below. This verifies upgrade compatibility.
-    for (const m of schemaMigrationPlan().filter(m => !/^20261107002[12]_/.test(m.name))) await db.exec(m.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- scheduler stub'));
+    for (const m of schemaMigrationPlan().filter(m => m.name < '202611070021_')) await db.exec(m.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- scheduler stub'));
     await db.query("INSERT INTO users(id,email,name) VALUES($1,'owner@example.com','CJ Lara')", [owner]);
     await db.query("INSERT INTO pages(id,fb_page_id,name,access_token) VALUES($1,'111','VEO','test')", [page]);
     await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [owner, page]);
@@ -342,7 +342,7 @@ describe('strict Facebook receipt submission after migrating retained records', 
         return { o, notice };
     }
     beforeAll(async () => {
-        for (const migration of schemaMigrationPlan().filter(m => /^20261107002[12]_/.test(m.name))) await db.exec(migration.sql);
+        for (const migration of schemaMigrationPlan().filter(m => m.name >= '202611070021_')) await db.exec(migration.sql);
     });
     beforeEach(async () => {
         await db.exec('BEGIN'); transactionalTest = true;
@@ -384,6 +384,19 @@ describe('strict Facebook receipt submission after migrating retained records', 
         await rpc('apply_messenger_lead_stage', [page, cid, 'explicit-stage', 'Order Created', 'order_created', new Date(Date.now() - 30000).toISOString()]);
         await observe({ orders: [{ invoice_id: invoice, message_id: 'a-different-invoice', total_minor: 10000, currency: 'PHP', occurred_at: new Date(Date.now() - 30000).toISOString() }] });
         expect((await requirements()).blockers).toContain('eligible_lead_required');
+    });
+    it('does not let an older Facebook Qualified notice revive a more recent disqualification hidden behind an inferred invoice stage', async () => {
+        await rpc('apply_messenger_lead_stage', [page, cid, 'newer-not-qualified', 'Not Qualified', 'not_qualified', new Date(Date.now() - 45000).toISOString()]);
+        const at = new Date(Date.now() - 30000).toISOString(), message = 'invoice-' + cid;
+        await rpc('apply_messenger_lead_stage', [page, cid, message, 'Order Created', 'order_created', at]);
+        await observe({ orders: [{ invoice_id: invoice, message_id: message, total_minor: 10000, currency: 'PHP', occurred_at: at }] });
+        expect((await requirements()).allowed).toBe(false);
+        expect((await db.query<any>('SELECT pipeline_stage FROM contacts WHERE id=$1', [cid])).rows[0].pipeline_stage).not.toBe('qualified');
+    });
+    it('rejects stale Facebook stage evidence despite a local manual Qualified correction', async () => {
+        await rpc('apply_messenger_lead_stage', [page, cid, 'newer-not-qualified', 'Not Qualified', 'not_qualified', new Date(Date.now() - 45000).toISOString()]);
+        await db.query("UPDATE contacts SET pipeline_stage='qualified',pipeline_stage_source='manual',pipeline_stage_updated_at=clock_timestamp() WHERE id=$1", [cid]);
+        await observe(); expect((await requirements()).allowed).toBe(false);
     });
     it('requires fresh evidence and cannot replace a newer failed observation with an older success', async () => {
         const older = new Date(Date.now() - 1000).toISOString(); await observe({ complete: false, error: 'Unavailable' });
@@ -454,6 +467,6 @@ describe('strict Facebook receipt submission after migrating retained records', 
     it('keeps private evidence and all strict functions inaccessible to public roles and closes the old submission bypass', async () => {
         await expect(action(member, 'submission', { order_id: id(999), object_path: path })).rejects.toThrow(/Receipts/);
         expect((await db.query<any>("SELECT has_table_privilege('anon','veo_facebook_checks','SELECT') exposed")).rows[0].exposed).toBe(false);
-        for (const fn of ['veo_record_facebook_check(uuid,uuid,timestamptz,jsonb)', 'veo_receipt_requirements(uuid,uuid,uuid,text,uuid,boolean)', 'veo_submission_facebook_context(uuid)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed", [fn])).rows[0].exposed).toBe(false);
+        for (const fn of ['veo_record_facebook_check(uuid,uuid,timestamptz,jsonb)', 'veo_receipt_requirements(uuid,uuid,uuid,text,uuid,boolean)', 'veo_submission_facebook_context(uuid)', 'veo_facebook_stage_conflicts(uuid)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed", [fn])).rows[0].exposed).toBe(false);
     });
 });
