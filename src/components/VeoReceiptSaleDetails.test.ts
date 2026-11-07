@@ -14,8 +14,8 @@ it('shows current lead stage, saved deal price, actual payments and remaining ba
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));
     await act(async () => { view = create(createElement(Details, props)); });
     const output = text(view.toJSON());
-    expect(output).toContain('Current lead stage: Qualified'); expect(output).toContain('Total price:'); expect(output).toContain('Verified payments:'); expect(output).toContain('Remaining balance:');expect(output).toContain('Balance paid (PHP)');
-    expect(view.root.findByProps({ name: 'amount' }).props.value).toBe('80.00');
+    expect(output).toContain('Current lead stage: Qualified'); expect(output).toContain('Total price:'); expect(output).toContain('Verified payments:'); expect(output).toContain('Remaining balance:');expect(output).toContain('How much the client sent (PHP)');
+    expect(output).not.toContain('Balance paid (PHP)');expect(view.root.findByProps({ name: 'amount' }).props.value).toBe('');
     expect(view.root.findByProps({ name: 'confirmed' }).props.required).toBe(true);
     expect(view.root.findAllByProps({ name: 'confirm_converted' })).toHaveLength(0);
 });
@@ -41,12 +41,13 @@ it('keeps the same request ID when retrying a balance payment after a lost respo
     const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'POST').map(([, options]) => JSON.parse(options.body));
     expect(writes).toHaveLength(2); expect(writes[0]).toMatchObject({ action: 'payment', order_id: 'order', settle_done: true, amount: '80.00' }); expect(writes[0].request_id).toBe(writes[1].request_id); expect(props.onSaved).not.toHaveBeenCalled();
 });
-it('shows the total from the earlier Closed Deal plus balance paid as the input changes', async () => {
+it('adds the earlier down payment to the actual amount sent and calculates the remaining balance', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));
     await act(async () => { view = create(createElement(Details, { ...props, order: { ...order, paid_minor: 0 }, closedDeals: [{ id: 'cd',amount_minor: 4000,currency: 'PHP',occurred_at:'2026-11-06' }],closedDealId:'cd',dealMode:'existing' })); });
-    expect(view.root.findByProps({ name:'amount' }).props.value).toBe('60.00');
+    expect(view.root.findByProps({ name:'amount' }).props.value).toBe('');
+    expect(text(view.toJSON())).toContain('Down payment: ₱40.00');
     await act(async () => { view.root.findByProps({ name:'amount' }).props.onChange({target:{value:'61.00'}}); });
-    expect(text(view.toJSON())).toContain('Difference: ₱1.00');expect(text(view.toJSON())).toContain('Total price: ₱100.00');
+    expect(text(view.toJSON())).toContain('Difference: ₱1.00');expect(text(view.toJSON())).toContain('Total price: ₱100.00');expect(text(view.toJSON())).toContain('Remaining balance (calculated): ₱0.00');
 });
 it('records an explicitly verified payment using Philippine payment time, then refreshes the chosen order', async () => {
     const fetcher = vi.fn(async (_url: string, options?: any) => new Response(JSON.stringify(options?.method === 'POST' ? { saved: { id: 'payment' } } : commission)));
