@@ -203,6 +203,7 @@ it.each([-201, -200, -100, 0, 100, 200, 201])('reconciles the Closed Deal and fi
         const cd = await rpc('veo_receipt_recheck', [member, receipt.id]); expect(cd.salary_status).toBe('counted_from_verified_ledger');
         const photo = `${tenant}/${member}/${id(request++)}`;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [photo]);
         const dd = await rpc('veo_receipt_save', [member, JSON.stringify({ request_id: id(request++), seller_id: member, contact_id: cid, receipt_kind: 'done', order_id: o.id, closed_deal_id: receipt.closed_deal_id, object_path: photo, photo_sha256: 'd'.repeat(64) })]);
+        expect(dd.done_balance_paid_minor).toBe(6000+difference);
         const handoff = await rpc('veo_handoff', [dd.delivery_submission]);expect(handoff.settlement_tolerance_minor).toBe(200);expect(handoff.paid_minor).toBe(10000 + difference);
     }
 });
@@ -232,4 +233,41 @@ it('settles a fully covered Closed Deal without inventing an extra payment, and 
     expect((await db.query('SELECT * FROM veo_payments WHERE order_id=$1', [o.id])).rows).toHaveLength(1);
     const small = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 100, currency: 'PHP', description: 'No fabricated free sale' });
     await expect(action(member, 'payment', { ...p, order_id: small.id, request_id: id(request++) })).rejects.toThrow(/actual verified payment/);
+});
+it('keeps a new client deal separate from earlier Closed Deals and imports a Facebook total idempotently',async()=>{
+    const {cid,receipt}=await stageClose(4000);
+    await rpc('veo_observe_business_orders',[member,cid,JSON.stringify([{invoice_id:String(request++),message_id:'meta-message',total_minor:10000,currency:'PHP',occurred_at:new Date().toISOString()}])]);
+    const sources=await rpc('veo_business_orders_page',[member,cid]);expect(sources.items).toHaveLength(1);expect(sources.items[0]).not.toHaveProperty('message_id');
+    const source=sources.items[0],payload={business_order_id:source.id,seller_id:member,deal_mode:'new',total_minor:1};
+    const fresh=await action(member,'import_business_order',payload);expect(fresh.total_minor).toBe(10000);expect(fresh.deal_mode).toBe('new');expect((await action(member,'import_business_order',payload)).id).toBe(fresh.id);
+    expect((await db.query<any>('SELECT order_id FROM veo_closed_deals WHERE id=$1',[receipt.closed_deal_id])).rows[0].order_id).toBeNull();
+    await expect(action(other,'import_business_order',payload)).rejects.toThrow(/branch/);
+    await expect(action(member,'payment',{request_id:id(request++),order_id:fresh.id,closed_deal_id:receipt.closed_deal_id,settle_done:true,confirmed:true,amount_minor:6000})).rejects.toThrow(/separate new deal/);
+    await action(member,'payment',{request_id:id(request++),order_id:fresh.id,settle_done:true,confirmed:true,amount_minor:10000,occurred_at:new Date().toISOString(),reference:'NEW-SALE-'+request});
+    expect((await db.query<any>('SELECT order_id FROM veo_closed_deals WHERE id=$1',[receipt.closed_deal_id])).rows[0].order_id).toBeNull();
+    const secondInvoice=String(request++);await rpc('veo_observe_business_orders',[member,cid,JSON.stringify([{invoice_id:secondInvoice,message_id:'second-meta-message',total_minor:15000,currency:'PHP',occurred_at:new Date().toISOString()}])]);
+    const second=(await rpc('veo_business_orders_page',[member,cid])).items.find((s:any)=>s.invoice_id===secondInvoice);
+    const completed=await action(member,'import_business_order',{business_order_id:second.id,seller_id:member,deal_mode:'existing',closed_deal_id:receipt.closed_deal_id});
+    expect((await db.query<any>('SELECT order_id FROM veo_closed_deals WHERE id=$1',[receipt.closed_deal_id])).rows[0].order_id).toBe(completed.id);
+    expect((await db.query<any>('SELECT count(*)::int n FROM veo_sales_facts WHERE contact_id=$1',[cid])).rows[0].n).toBe(2);
+});
+it('requires current Facebook observations and blocks price changes, cross-client sources and revoked access',async()=>{
+    const {cid}=await stageClose();const invoice=String(request++);
+    const observed={invoice_id:invoice,message_id:'source-'+invoice,total_minor:10000,currency:'PHP',occurred_at:new Date().toISOString()};
+    await rpc('veo_observe_business_orders',[member,cid,JSON.stringify([observed])]);const source=(await rpc('veo_business_orders_page',[member,cid])).items[0];
+    await db.query("UPDATE veo_business_orders SET observed_at=now()-interval '16 minutes' WHERE id=$1",[source.id]);
+    await expect(action(member,'import_business_order',{business_order_id:source.id,seller_id:member,deal_mode:'new'})).rejects.toThrow(/Fetch/);
+    await rpc('veo_observe_business_orders',[member,cid,JSON.stringify([observed])]);const order=await action(member,'import_business_order',{business_order_id:source.id,seller_id:member,deal_mode:'new'});
+    await rpc('veo_observe_business_orders',[member,cid,JSON.stringify([{...observed,total_minor:12000}])]);
+    await expect(action(member,'payment',{request_id:id(request++),order_id:order.id,confirmed:true,amount_minor:10000,occurred_at:new Date().toISOString(),reference:'WRONG-PRICE',settle_done:true})).rejects.toThrow(/price changed/);
+    await expect(rpc('veo_observe_business_orders',[member,client,JSON.stringify([observed])])).rejects.toThrow(/another client/);
+    await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2',[member,page]);
+    await expect(rpc('veo_business_orders_page',[member,cid])).rejects.toThrow(/access/);await expect(rpc('veo_observe_business_orders',[member,cid,JSON.stringify([observed])])).rejects.toThrow(/access/);
+    await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)',[member,page]);
+    for(const fn of ['veo_observe_business_orders(uuid,uuid,jsonb)','veo_business_orders_page(uuid,uuid)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') exposed",[fn])).rows[0].exposed).toBe(false);
+});
+it('accepts multiple distinct new Closed Deals for the same client without replacing the earlier amount',async()=>{
+    const {cid,receipt}=await stageClose(4000),path=`${tenant}/${member}/${id(request++)}`;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)',[path]);
+    const second=await rpc('veo_receipt_save',[member,JSON.stringify({request_id:id(request++),seller_id:member,contact_id:cid,receipt_kind:'closed',object_path:path,photo_sha256:'b'.repeat(64),closed_amount_minor:5000,closed_currency:'PHP',closed_occurred_at:new Date().toISOString(),deal_mode:'new'})]);
+    expect(second.closed_deal_id).not.toBe(receipt.closed_deal_id);expect(second.closed_amount_minor).toBe(5000);expect((await rpc('veo_receipt_access',[member,receipt.id])).closed_amount_minor).toBe(4000);
 });

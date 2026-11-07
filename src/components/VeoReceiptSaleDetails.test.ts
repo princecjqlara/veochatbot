@@ -14,8 +14,8 @@ it('shows current lead stage, saved deal price, actual payments and remaining ba
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));
     await act(async () => { view = create(createElement(Details, props)); });
     const output = text(view.toJSON());
-    expect(output).toContain('Current lead stage: Qualified'); expect(output).toContain('Deal price:'); expect(output).toContain('Verified payments:'); expect(output).toContain('Remaining balance:');
-    expect(view.root.findByProps({ name: 'amount' }).props.defaultValue).toBe('80.00');
+    expect(output).toContain('Current lead stage: Qualified'); expect(output).toContain('Total price:'); expect(output).toContain('Verified payments:'); expect(output).toContain('Remaining balance:');expect(output).toContain('Balance paid (PHP)');
+    expect(view.root.findByProps({ name: 'amount' }).props.value).toBe('80.00');
     expect(view.root.findByProps({ name: 'confirmed' }).props.required).toBe(true);
     expect(view.root.findAllByProps({ name: 'confirm_converted' })).toHaveLength(0);
 });
@@ -31,15 +31,22 @@ it('shows both quota counts and both commission scenarios, keeping 35% when only
     await act(async () => { vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...commission, done: 3, rate: 40 })))); view.update(createElement(Details, { ...props, version: 1 })); });
     expect(text(view.toJSON())).toContain('Both quotas reached · 40%');
 });
-it('creates a priced order with stable retry IDs, using the selected client and seller', async () => {
+it('keeps the same request ID when retrying a balance payment after a lost response', async () => {
     const fetcher = vi.fn(async (_url: string, options?: any) => new Response(JSON.stringify(options?.method === 'POST' ? { error: 'Connection lost' } : commission), { status: options?.method === 'POST' ? 503 : 200 }));
     vi.stubGlobal('fetch', fetcher);
-    vi.stubGlobal('FormData', class { *[Symbol.iterator]() { yield ['description', 'Offer']; yield ['amount', '100.00']; yield ['currency', 'PHP']; } });
-    await act(async () => { view = create(createElement(Details, { ...props, order: null })); });
+    vi.stubGlobal('FormData', class { *[Symbol.iterator]() { yield ['kind', 'balance'];yield ['amount', '80.00'];yield ['occurred_at','2026-11-07T14:00'];yield ['reference','BANK-123'];yield ['confirmed','on']; } });
+    await act(async () => { view = create(createElement(Details, props)); });
     const form = view.root.findByType('form');
     for (let i = 0; i < 2; i++) await act(async () => { await form.props.onSubmit({ preventDefault() {}, currentTarget: {} }); });
     const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'POST').map(([, options]) => JSON.parse(options.body));
-    expect(writes).toHaveLength(2); expect(writes[0]).toMatchObject({ action: 'order', contact_id: 'client', page_id: 'page', seller_id: 'worker', amount: '100.00' }); expect(writes[0].request_id).toBe(writes[1].request_id); expect(props.onSaved).not.toHaveBeenCalled();
+    expect(writes).toHaveLength(2); expect(writes[0]).toMatchObject({ action: 'payment', order_id: 'order', settle_done: true, amount: '80.00' }); expect(writes[0].request_id).toBe(writes[1].request_id); expect(props.onSaved).not.toHaveBeenCalled();
+});
+it('shows the total from the earlier Closed Deal plus balance paid as the input changes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));
+    await act(async () => { view = create(createElement(Details, { ...props, order: { ...order, paid_minor: 0 }, closedDeals: [{ id: 'cd',amount_minor: 4000,currency: 'PHP',occurred_at:'2026-11-06' }],closedDealId:'cd',dealMode:'existing' })); });
+    expect(view.root.findByProps({ name:'amount' }).props.value).toBe('60.00');
+    await act(async () => { view.root.findByProps({ name:'amount' }).props.onChange({target:{value:'61.00'}}); });
+    expect(text(view.toJSON())).toContain('Difference: ₱1.00');expect(text(view.toJSON())).toContain('Total price: ₱100.00');
 });
 it('records an explicitly verified payment using Philippine payment time, then refreshes the chosen order', async () => {
     const fetcher = vi.fn(async (_url: string, options?: any) => new Response(JSON.stringify(options?.method === 'POST' ? { saved: { id: 'payment' } } : commission)));

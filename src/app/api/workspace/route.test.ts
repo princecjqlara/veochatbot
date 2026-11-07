@@ -8,6 +8,14 @@ import { GET, POST } from './route';
 import { philippineDate } from '@/lib/veo-workspace';
 afterEach(() => { vi.clearAllMocks(); });
 describe('workspace work-date boundaries', () => {
+    it('requires Facebook sourced order selection and rejects manually supplied order totals',async()=>{
+        m.rpc.mockResolvedValue({data:{user_id:'owner',role:'owner',launch_at:'launched'}});
+        const request=(body:any)=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify(body)});
+        const r=await POST(request({action:'order',amount:'1.00'}));expect(r.status).toBe(400);expect((await r.json()).error).toContain('Facebook Business Suite');expect(m.rpc.mock.calls.every(([name])=>name==='veo_scope')).toBe(true);
+        const id='00000000-0000-4000-8000-000000000001';
+        expect((await POST(request({action:'import_business_order',business_order_id:id,seller_id:id,deal_mode:'new'}))).status).toBe(200);
+        expect(m.rpc).toHaveBeenCalledWith('veo_action',expect.objectContaining({p_actor:'owner',p_action:'import_business_order',p_data:expect.objectContaining({business_order_id:id})}));
+    });
     it('blocks unverified or unauthorized Telegram mappings before changing database state', async () => {
         const request = () => new NextRequest('https://veo.test/api/workspace', { method: 'POST', headers: { Origin: 'https://veo.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'mapping', user_id: 'worker', telegram_user_id: '42' }) });
         m.rpc.mockResolvedValue({ data: { user_id: 'owner', tenant_id: 'tenant', role: 'manager', launch_at: 'launched' } });

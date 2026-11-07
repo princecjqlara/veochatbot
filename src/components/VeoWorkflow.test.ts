@@ -16,6 +16,15 @@ it('shows receipt holds and rechecks them without recording payment or changing 
     await act(async () => { await view.root.findAllByType('button').find(b => text(b).includes('Recheck receipt and salary'))!.props.onClick(); });
     const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'POST'); expect(writes).toHaveLength(1); expect(JSON.parse(writes[0][1].body).action).toBe('recheck');
 });
+it('asks whether to start a new deal or complete a client Closed Deal instead of silently attaching it',async()=>{
+    const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.includes('contact_id=client')?{contact:{id:'client',page_id:'page',name:'Client',pipeline_stage:'qualified'},orders:[],payments:[],closed_deals:[{id:'closed',seller_id:'worker',amount_minor:4000,currency:'PHP',occurred_at:'2026-11-06',order_id:null}]}:url.includes('commission=1')?{target:1,closed:1,done:0,rate:35,totals:[]}:{items:[],total:0})));vi.stubGlobal('fetch',fetcher);
+    await act(async()=>{view=create(createElement(Receipts,{scope:{user_id:'worker',role:'member',launch_at:'2026-11-05'},accounts:[{id:'worker',role:'member',name:'Worker'}],initialContactId:'client'}));});
+    expect(text(view.toJSON())).toContain('Complete existing Closed Deal');expect(view.root.findAllByType('input').filter(i=>i.props.type==='radio').every(i=>!i.props.checked)).toBe(true);
+    await act(async()=>{view.root.findAllByType('input').filter(i=>i.props.type==='radio')[1].props.onChange();});
+    expect(text(view.toJSON())).toContain('Create order in Facebook Business Suite');
+    await act(async()=>{view.root.findAllByType('input').filter(i=>i.props.type==='radio')[0].props.onChange();});
+    expect(text(view.toJSON())).toContain('This sale stays separate from the earlier Closed Deals');
+});
 it('shows current warnings, overdue explanation and a link to the existing Telegram poll', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ as_of: '2026-11-07T00:00:00Z', tomorrow: '2026-11-08', workers: [{ id: 'u', name: 'Employee', role: 'member', active: true, active_tomorrow: null, poll: { poll_id: 'p', poll_url: 'https://t.me/c/123/99' }, warnings: [{ key: 'o', kind: 'overdue_without_reason', title: 'Project is overdue without an explanation', severity: 'warning', overdue_hours: 4 }] }] }))));
     await act(async () => { view = create(createElement(Warnings)); });

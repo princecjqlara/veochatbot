@@ -104,9 +104,10 @@ export async function POST(request: NextRequest) {
             if (r.error) throw Object.assign(new Error(r.error.message), { status: r.error.code === '42501' ? 403 : 400 });
             return NextResponse.json({ saved: r.data });
         }
-        if (action === 'order') body.total_minor = parseMoneyMinor(body.amount);
+        if (action === 'order') throw new Error('Create the order in Facebook Business Suite, then use Fetch Facebook orders in Receipts.');
+        if (action === 'import_business_order' && (!uuid(body.business_order_id) || !uuid(body.seller_id) || !['new', 'existing'].includes(body.deal_mode) || body.deal_mode === 'existing' && !uuid(body.closed_deal_id) || body.deal_mode === 'new' && body.closed_deal_id)) throw new Error('Choose a Facebook order, seller and New deal or existing Closed Deal');
         if (action === 'payment') body.amount_minor = body.settle_done === true && /^0(?:\.0{1,2})?$/.test(String(body.amount).trim()) ? 0 : parseMoneyMinor(body.amount);
-        if (!['assign_pages', 'order', 'payment', 'attribution', 'attendance', 'contact', 'mapping', 'staff_delete', 'claim_client', 'fulfillment', 'client_assignment', 'attendance_today'].includes(action)) throw new Error('Unknown action');
+        if (!['assign_pages', 'import_business_order', 'payment', 'attribution', 'attendance', 'contact', 'mapping', 'staff_delete', 'claim_client', 'fulfillment', 'client_assignment', 'attendance_today'].includes(action)) throw new Error('Unknown action');
         const saved = await workspaceAction(scope.user_id, action, body);
         return NextResponse.json({ saved });
     } catch (error) {

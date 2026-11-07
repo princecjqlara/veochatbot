@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
         if (!uuid(contact) || !uuid(seller) || !uuid(requestId) || order && !uuid(order) || !file || typeof file === 'string' || !['closed', 'done'].includes(String(form.get('receipt_kind')))) throw Error('Choose a client, seller, receipt type and photo');
         if (typeof notes !== 'string' || notes.length > 2000) throw Error('Notes must be at most 2000 characters');
         const kind = String(form.get('receipt_kind')), closedId = form.get('closed_deal_id') || null;
+        const dealMode = String(form.get('deal_mode') || '');if (!['new','existing'].includes(dealMode) || dealMode === 'new' && closedId) throw Error('Choose New deal or Complete existing Closed Deal');
         if (closedId && !uuid(closedId)) throw Error('Choose a Closed Deal for this client');
         const closedAmount = kind === 'closed' ? parseMoneyMinor(form.get('closed_amount')) : null;
         const closedCurrency = kind === 'closed' ? String(form.get('closed_currency') || 'PHP').toUpperCase() : null;
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
         const path = `${scope.tenant_id}/${scope.user_id}/${randomUUID()}`;
         checked(await db.from('veo_photo_objects').insert({ object_path: path })); uploaded = path;
         const stored = await db.storage.from(bucket).upload(path, bytes, { contentType: file.type, upsert: false }); checked(stored);
-        const saved = checked(await db.rpc('veo_receipt_save', { p_actor: scope.user_id, p_data: { request_id: requestId, contact_id: contact, seller_id: seller, order_id: order, receipt_kind: kind, closed_deal_id: closedId, closed_amount_minor: closedAmount, closed_currency: closedCurrency, closed_occurred_at: closedAt, notes, object_path: path, photo_sha256: createHash('sha256').update(bytes).digest('hex') } }));
+        const saved = checked(await db.rpc('veo_receipt_save', { p_actor: scope.user_id, p_data: { request_id: requestId, contact_id: contact, seller_id: seller, order_id: order, receipt_kind: kind, deal_mode: dealMode, closed_deal_id: closedId, closed_amount_minor: closedAmount, closed_currency: closedCurrency, closed_occurred_at: closedAt, notes, object_path: path, photo_sha256: createHash('sha256').update(bytes).digest('hex') } }));
         if (saved.duplicate) await removeUpload();
         return response({ saved }, saved.duplicate ? 200 : 202);
     } catch (e) {
