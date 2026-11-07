@@ -51,6 +51,7 @@ it('stores incomplete receipt evidence as a hold without creating orders, paymen
     expect((await rpc('veo_salary', [member, before.work_date])).totals).toEqual(before.totals);
     expect((await upload('closed')).id).toBe(receipt);
 });
+
 it('shows holds to the worker and their supervisors, excluding another branch and revoked Pages', async () => {
     for (const actor of [member, manager, leader, owner]) expect((await rpc('veo_receipt_access', [actor, receipt])).id).toBe(receipt);
     await expect(rpc('veo_receipt_access', [other, receipt])).rejects.toThrow(/permitted/);
@@ -502,5 +503,105 @@ describe('strict Facebook receipt submission after migrating retained records', 
         expect((await db.query('SELECT user_id FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.tomorrow])).rows).toHaveLength(0);
         expect((await rpc('veo_workflow_warnings', [owner, member])).workers[0].active_tomorrow).toBeNull();
         expect((await db.query<any>('SELECT active,source FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.today])).rows[0]).toEqual({ active: true, source: 'workspace' });
+    });
+});
+
+describe('Tokko Ready/Busy and client acceptance', () => {
+    const mate = id(80), foreign = id(81);
+    let cid: string;
+    const intake = (who: string, kind: string, extra: any = {}) => rpc('veo_intake_action', [who, kind, JSON.stringify({ request_id: id(request++), contact_id: cid, ...extra })]);
+    const ready = (who: string) => intake(who, 'readiness', { status: 'ready' });
+    const pageFor = (who: string, view = 'pool') => rpc('veo_intake_page', [who, view, null, cid, 0]);
+    beforeAll(async () => {
+        for (const [who, parentId] of [[mate, manager], [foreign, other]]) await action(owner, 'create_account', { user_id: who, parent_id: parentId, role: 'member', name: 'Intake worker ' + who, email: who + '@example.com', password_hash: 'x'.repeat(40), page_ids: [page] });
+    });
+    beforeEach(async () => {
+        await db.exec('BEGIN'); transactionalTest = true;cid = id(request++);
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'New intake client','new',clock_timestamp()-interval '1 second')", [cid, page, 'intake-' + cid]);
+        await db.query('DELETE FROM veo_intake_readiness WHERE tenant_id=$1', [tenant]);
+    });
+    afterEach(async () => { transactionalTest = false;await db.exec('ROLLBACK'); });
+    it('requires Ready, accepts once, makes the worker Busy and pauses the chatbot without a sale', async () => {
+        await expect(intake(member, 'accept')).rejects.toThrow(/Ready/);
+        await ready(member);expect((await pageFor(member)).readiness.ready).toBe(true);
+        const req = id(request++), saved = await intake(member, 'accept', { request_id: req });expect(saved.user_id).toBe(member);
+        expect((await intake(member, 'accept', { request_id: req })).duplicate).toBe(true);
+        expect((await pageFor(member, 'assigned')).items[0].owner_id).toBe(member);expect((await pageFor(member)).readiness.ready).toBe(false);
+        expect((await db.query<any>('SELECT chatbot_enabled FROM contacts WHERE id=$1', [cid])).rows[0].chatbot_enabled).toBe(false);
+        expect((await db.query('SELECT id FROM veo_orders WHERE contact_id=$1', [cid])).rows).toHaveLength(0);
+    });
+    it('reserves offers and prevents another branch or a second accept from taking them', async () => {
+        await ready(member);await ready(foreign);const offer = await intake(manager, 'offer', { user_id: member });
+        expect((await pageFor(foreign)).items).toHaveLength(0);
+        await expect(intake(other, 'offer', { user_id: foreign })).rejects.toThrow(/branch|reserved/);
+        await expect(intake(foreign, 'accept')).rejects.toThrow(/reserved|assigned/);
+        await expect(intake(foreign, 'accept', { offer_id: offer.offer_id })).rejects.toThrow(/not assigned/);
+        await intake(member, 'accept', { offer_id: offer.offer_id });await expect(intake(foreign, 'accept')).rejects.toThrow(/assigned/);
+    });
+    it('cancels incoming offers when Busy is selected and keeps tomorrow attendance unchanged', async () => {
+        const before = (await db.query('SELECT * FROM veo_attendance WHERE user_id=$1 ORDER BY work_date', [member])).rows;
+        await ready(member);const offer = await intake(owner, 'offer', { user_id: member });
+        await intake(member, 'readiness', { status: 'busy' });
+        expect((await pageFor(member, 'offers')).items).toHaveLength(0);
+        await expect(intake(member, 'accept', { offer_id: offer.offer_id })).rejects.toThrow(/ended|expired/);
+        expect((await db.query('SELECT * FROM veo_attendance WHERE user_id=$1 ORDER BY work_date', [member])).rows).toEqual(before);
+    });
+    it('allows a worker to offer their own unpaid new client to a Ready teammate and waits for acceptance', async () => {
+        await ready(member);await intake(member, 'accept');await ready(mate);
+        const offer = await intake(member, 'offer', { user_id: mate, reason: 'Teammate will handle the conversation' });
+        expect((await pageFor(member, 'assigned')).items[0].owner_id).toBe(member);
+        await intake(mate, 'accept', { offer_id: offer.offer_id });
+        expect((await pageFor(member, 'assigned')).items).toHaveLength(0);expect((await pageFor(mate, 'assigned')).items[0].owner_id).toBe(mate);
+        await expect(intake(member, 'offer', { user_id: foreign, reason: 'Outside our team' })).rejects.toThrow(/branch|authorized/);
+    });
+    it('requires a reassignment reason and current Ready, Page and supervisor access', async () => {
+        await ready(member);await intake(member, 'accept');
+        await expect(intake(manager, 'offer', { user_id: mate, reason: 'Handoff' })).rejects.toThrow(/Busy/);
+        await ready(mate);await expect(intake(manager, 'offer', { user_id: mate })).rejects.toThrow(/reason/);
+        const offer = await intake(manager, 'offer', { user_id: mate, reason: 'Supervisor reassignment' });
+        await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2', [manager, page]);
+        await expect(intake(mate, 'accept', { offer_id: offer.offer_id })).rejects.toThrow(/access|Page/);
+    });
+    it('expires Ready and offers and denies archived or opted-out contacts and the old assignment bypass', async () => {
+        await expect(action(member, 'client_assignment', { contact_id: cid, user_id: member })).rejects.toThrow(/Ready/);
+        await ready(member);const offer = await intake(owner, 'offer', { user_id: member });
+        await db.query("UPDATE veo_intake_readiness SET expires_at=now()-interval '1 minute' WHERE user_id=$1", [member]);
+        await expect(intake(member, 'accept', { offer_id: offer.offer_id })).rejects.toThrow(/Ready/);
+        await ready(member);await db.query("UPDATE veo_client_offers SET expires_at=now()-interval '1 minute' WHERE id=$1", [offer.offer_id]);
+        await expect(intake(member, 'accept', { offer_id: offer.offer_id })).rejects.toThrow(/expired/);
+        await db.query("UPDATE contacts SET last_interaction_at=now()-interval '20 days' WHERE id=$1", [cid]);await expect(intake(member, 'accept')).rejects.toThrow(/queue/);
+        await db.query("UPDATE contacts SET last_interaction_at=now(),pipeline_stage='opted_out' WHERE id=$1", [cid]);await expect(intake(member, 'accept')).rejects.toThrow(/queue/);
+    });
+    it('keeps existing order sellers and payments when a supervisor reassigns responsibility', async () => {
+        await ready(member);await intake(member, 'accept');
+        const o = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 10000, currency: 'PHP', description: 'Existing sale', deal_mode: 'new' });
+        await action(member, 'payment', { request_id: id(request++), order_id: o.id, kind: 'full', amount_minor: 10000, confirmed: true, reference: 'VERIFIED-' + cid, occurred_at: new Date(Date.now() - 5000).toISOString() });
+        await ready(mate);await expect(intake(member, 'offer', { user_id: mate, reason: 'A paid client' })).rejects.toThrow(/authorized|branch/);
+        const offer = await intake(manager, 'offer', { user_id: mate, reason: 'Reassign service only' });
+        const before = (await db.query('SELECT * FROM veo_payments WHERE order_id=$1', [o.id])).rows;
+        await intake(mate, 'accept', { offer_id: offer.offer_id });
+        expect((await db.query<any>('SELECT seller_id FROM veo_orders WHERE id=$1', [o.id])).rows[0].seller_id).toBe(member);
+        expect((await db.query('SELECT * FROM veo_payments WHERE order_id=$1', [o.id])).rows).toEqual(before);
+        expect((await db.query<any>('SELECT assignee_id FROM veo_order_work WHERE order_id=$1', [o.id])).rows[0].assignee_id).toBe(mate);
+    });
+    it('scopes the roster and keeps all intake tables and functions private', async () => {
+        const own = await pageFor(member), ids = own.roster.map((w: any) => w.id);
+        expect(ids).toEqual(expect.arrayContaining([member, manager, mate]));expect(ids).not.toContain(other);expect(ids).not.toContain(foreign);
+        await expect(intake(owner, 'readiness', { status: 'ready' })).rejects.toThrow(/Selling workers/);
+        for (const fn of ['veo_intake_page(uuid,text,uuid,text,integer)', 'veo_intake_action(uuid,text,jsonb)', 'veo_intake_recipient(uuid,uuid,uuid)', 'veo_intake_can_offer(uuid,uuid,uuid)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed", [fn])).rows[0].exposed).toBe(false);
+    });
+    it('lets the original seller complete an existing Closed Deal after responsibility is handed over', async () => {
+        await ready(member);await intake(member, 'accept');
+        await rpc('veo_record_facebook_check', [member, cid, new Date().toISOString(), JSON.stringify({ orders: [], complete: true, pages_checked: 1, stage: { stage: 'qualified', message_id: 'stage-' + cid, occurred_at: new Date(Date.now() - 60000).toISOString() } })]);
+        const path = `${tenant}/${member}/${id(request++)}`;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [path]);
+        const closed = await rpc('veo_receipt_save', [member, JSON.stringify({ request_id: id(request++), seller_id: member, contact_id: cid, receipt_kind: 'closed', deal_mode: 'new', object_path: path, photo_sha256: 'c'.repeat(64), closed_amount_minor: 4000, closed_currency: 'PHP', closed_occurred_at: new Date(Date.now() - 5000).toISOString() })]);
+        await ready(mate);const offer = await intake(manager, 'offer', { user_id: mate, reason: 'Teammate handles the conversation' });await intake(mate, 'accept', { offer_id: offer.offer_id });
+        await rpc('veo_observe_business_orders', [member, cid, JSON.stringify([{ invoice_id: String(request++), message_id: 'invoice-' + cid, total_minor: 10000, currency: 'PHP', occurred_at: new Date(Date.now() - 5000).toISOString() }])]);
+        const source = (await rpc('veo_business_orders_page', [member, cid])).items[0];
+        const o = await action(member, 'import_business_order', { business_order_id: source.id, seller_id: member, deal_mode: 'existing', closed_deal_id: closed.closed_deal_id });
+        await action(member, 'payment', { request_id: id(request++), order_id: o.id, settle_done: true, amount_minor: 6000, confirmed: true, reference: 'BALANCE-' + cid, occurred_at: new Date(Date.now() - 5000).toISOString() });
+        expect((await db.query<any>('SELECT seller_id,paid_minor FROM veo_order_facts WHERE id=$1', [o.id])).rows[0]).toEqual({ seller_id: member, paid_minor: 10000 });
+        expect((await db.query<any>('SELECT assignee_id FROM veo_order_work WHERE order_id=$1', [o.id])).rows[0].assignee_id).toBe(mate);
+        await expect(action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 10000, currency: 'PHP', description: 'Unrelated new sale', deal_mode: 'new' })).rejects.toThrow(/Claim|assigned/);
     });
 });

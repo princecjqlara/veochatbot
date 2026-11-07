@@ -19,6 +19,7 @@ async function render(role = 'member', params = 'view=dashboard') {
         if (query.pathname === '/api/pages') return new Response(JSON.stringify({ pages: [{ id: 'page-1', name: 'VEO One' }, { id: 'page-2', name: 'VEO Two' }] }));
         if (query.pathname === '/api/workspace/operations') return new Response(JSON.stringify({ summary: {}, orders: [], finance: { days: [] }, employees: [], page_rankings: [], order_page: { total: 0 }, client_assignments: [] }));
         if (query.pathname === '/api/workspace/budget') return new Response(JSON.stringify({ plans: [], saved: [], defaults: {} }));
+        if (query.pathname === '/api/workspace/new-clients') return new Response(JSON.stringify({ items: [], roster: [], readiness: { ready: false }, total: 0 }));
         if (query.pathname === '/api/workspace/contacts') {
             const search = query.searchParams.get('search') || '';
             const items = !search || 'searchable client'.includes(search.toLowerCase()) ? [{ id: 'client', page_id: 'page-2', page_name: 'VEO Two', name: 'Searchable Client', psid: '123', pipeline_stage: 'new' }] : [];
@@ -41,7 +42,7 @@ describe('workspace contacts, unified deals and Owner separation', () => {
         expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace/contacts?') && u.includes('search=searchable') && !u.includes('page_id='))).toBe(true);
         expect(JSON.stringify(view.toJSON())).toContain('Searchable Client');
         await act(async () => view.root.findAllByType('a').find(a => a.props.href === '#create-order')!.props.onClick());
-        expect(view.root.findAllByType('select').some(s => s.props.value === 'client')).toBe(true);
+        expect(view.root.findByProps({ href: '/dashboard/workspace?view=new_clients&contact_id=client' })).toBeTruthy();
     });
     it('has one Deals tab and a dropdown that requests Done or Closed milestones', async () => {
         await render('member', 'view=deals');
@@ -65,5 +66,12 @@ describe('workspace contacts, unified deals and Owner separation', () => {
         expect(links).toContain('/dashboard/workspace?view=accounts');
         expect(links.some(h => /view=(clients|deals)/.test(h))).toBe(false);
         expect(links).toContain('/dashboard/workspace?view=salary');
+        expect(links).toContain('/dashboard/workspace?view=new_clients');
+    });
+    it('opens the New Clients workspace for both sellers and Owner without sending an unsupported dashboard filter', async () => {
+        await render('owner', 'view=new_clients');
+        expect(JSON.stringify(view.toJSON())).toContain('New clients');
+        expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace/new-clients?'))).toBe(true);
+        expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace?') && u.includes('view=new_clients'))).toBe(false);
     });
 });
