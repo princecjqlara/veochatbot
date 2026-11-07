@@ -56,11 +56,12 @@ export function purchaseMetrics(purchases: PurchaseRecord[], payments: VerifiedP
             first_payment_at: firstPaid, deposit_at: depositAt, first_full_payment_at: firstFullAt,
             inquiry_to_order_hours: hoursBetween(firstInquiryAt, purchase.purchased_at),
             inquiry_to_deposit_hours: hoursBetween(firstInquiryAt, depositAt),
-            deposit_to_full_hours: hoursBetween(depositAt, firstFullAt), ever_paid: Boolean(firstPaid) };
+            deposit_to_full_hours: hoursBetween(depositAt, firstFullAt), closed_to_done_hours: hoursBetween(firstPaid, firstFullAt), ever_paid: Boolean(firstPaid) };
     });
     const firstPayment = valid.find(payment => payment.kind !== 'refund')?.occurred_at || null;
     const firstDeposit = valid.find(payment => payment.kind === 'deposit')?.occurred_at || null;
-    return { currencies: [...totals].map(([currency, amounts]) => {
+    const completedHours = orders.map(order => order.closed_to_done_hours).filter((v): v is number => v != null);
+    return { mean_closed_to_done_hours: completedHours.length ? completedHours.reduce((a, b) => a + b, 0) / completedHours.length : null, closed_to_done_orders: completedHours.length, currencies: [...totals].map(([currency, amounts]) => {
         const paidOrders = orders.filter(o => o.currency === currency && o.ever_paid);
         return { currency, ...amounts, paid_order_count: paidOrders.length,
             average_order_minor: paidOrders.length ? paidOrders.reduce((n, o) => n + o.total_minor, 0) / paidOrders.length : null,

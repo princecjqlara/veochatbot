@@ -1,0 +1,77 @@
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { receiptHoldLabels } from '@/lib/veo-receipts';
+const today = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+const field = 'block w-full rounded border border-slate-300 bg-white p-2 text-sm';
+const money = (v: number | null, c: string | null) => v == null || !c ? 'Unverified' : new Intl.NumberFormat('en-PH', { style: 'currency', currency: c }).format(v / 100);
+export default function VeoReceiptInbox({ scope, accounts, compact = false, initialContactId = '' }: { scope: any; accounts: any[]; compact?: boolean; initialContactId?: string }) {
+    const [data, setData] = useState<any>(null), [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [version, setVersion] = useState(0);
+    const [from, setFrom] = useState(() => new Date(Math.max(Date.parse(scope.launch_at), Date.now() - 29 * 86400000) + 8 * 3600000).toISOString().slice(0, 10)), [to, setTo] = useState(today), [worker, setWorker] = useState(''), [offset, setOffset] = useState(0);
+    const [search, setSearch] = useState(''), [contacts, setContacts] = useState<any[]>([]), [picked, setPicked] = useState<any>(null), [client, setClient] = useState(initialContactId), [orders, setOrders] = useState<any[]>([]), [seller, setSeller] = useState(['manager', 'member'].includes(scope.role) ? scope.user_id : '');
+    const [kind, setKind] = useState('closed'), [order, setOrder] = useState(''), [links, setLinks] = useState<Record<string, string>>({}), [photos, setPhotos] = useState<Record<string, string>>({});
+    const requestId = useRef(''), selling = accounts.filter(a => a.active !== false && ['manager', 'member'].includes(a.role));
+    useEffect(() => { requestId.current = crypto.randomUUID(); }, [client, seller, kind, order]);
+    useEffect(() => {
+        const c = new AbortController();
+        fetch('/api/workspace/receipts?' + new URLSearchParams({ from, to, offset: String(offset), ...(worker ? { worker_id: worker } : {}) }), { cache: 'no-store', signal: c.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); setData(b); }).catch(e => { if (!c.signal.aborted) setMessage(e.message); });
+        return () => c.abort();
+    }, [from, to, worker, offset, version]);
+    useEffect(() => {
+        if (compact) return;
+        const c = new AbortController(), timer = setTimeout(() => {
+            void fetch('/api/workspace/contacts?' + new URLSearchParams({ search, offset: '0' }), { signal: c.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); setContacts(b.items || []); }).catch(e => { if (!c.signal.aborted) setMessage(e.message); });
+        }, 250);
+        return () => { clearTimeout(timer); c.abort(); };
+    }, [search, compact]);
+    useEffect(() => {
+        setOrders([]); setOrder(''); if (!client) return;
+        const c = new AbortController();
+        void fetch('/api/workspace?contact_id=' + client, { signal: c.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); setOrders(b.orders || []); setPicked(b.contact); }).catch(e => { if (!c.signal.aborted) setMessage(e.message); });
+        return () => c.abort();
+    }, [client]);
+    async function recheck(id: string, selected?: string) {
+        setBusy(true); setMessage('');
+        try {
+            const r = await fetch('/api/workspace/receipts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'recheck', receipt_id: id, order_id: selected || undefined }) });
+            const b = await r.json(); if (!r.ok) throw Error(b.error);
+            setMessage(b.holds?.length ? 'Rechecked. Complete the listed steps; salary remains on hold until the verified ledger qualifies.' : 'Rechecked. Eligible evidence is queued for Jaucian; each milestone is delivered once.'); setVersion(v => v + 1);
+        } catch (e: any) { setMessage(e.message); } finally { setBusy(false); }
+    }
+    return <section aria-label="Receipt inbox and salary holds" className="rounded-xl border bg-white p-5 space-y-4">
+        <div className="flex flex-wrap justify-between gap-3"><h2 className="text-xl font-bold">Receipts and salary on hold</h2><button className="text-sm underline" onClick={() => setVersion(v => v + 1)}>Recheck list</button></div>
+        <p className="text-sm">Submit both Closed Deal (first verified payment) and Done Deal (full payment) receipts here. You may submit evidence before completing the workflow. A Converted lead, saved order and full verified payment are all required for salary. Uploading a photo never records payment.</p>
+        <p className="text-xs text-slate-500">Jaucian reminds the mapped team about outstanding steps in its scheduled updates. Only eligible receipts go to Telegram. Photos are private and expire after seven days; expired evidence requires re-upload. Financial history remains retained.</p>
+        {compact && <Link className="underline text-sm" href="/dashboard/workspace?view=receipts">Open Receipts to submit a Closed or Done Deal photo</Link>}
+        {message && <p role="status" className="rounded border bg-amber-50 p-3 text-sm">{message}</p>}
+        {!compact && <form className="grid gap-3 rounded border p-4 md:grid-cols-2" onSubmit={async e => {
+            e.preventDefault(); const form = e.currentTarget, body = new FormData(form); body.set('contact_id', client); body.set('seller_id', seller); body.set('receipt_kind', kind); body.set('request_id', requestId.current); if (order) body.set('order_id', order);
+            setBusy(true); setMessage('');
+            try { const r = await fetch('/api/workspace/receipts', { method: 'POST', body }); const b = await r.json(); if (!r.ok) throw Error(b.error); setMessage(b.saved.duplicate ? 'This receipt is already recorded; no duplicate sale or delivery was created.' : b.saved.holds.length ? 'Receipt saved on hold. Complete the checklist below, then Recheck.' : 'Receipt saved and queued for Jaucian.'); requestId.current = crypto.randomUUID(); form.reset(); setVersion(v => v + 1); }
+            catch (err: any) { setMessage(err.message); } finally { setBusy(false); }
+        }}>
+            <label className="text-sm">Find client<input className={field} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search client name, ID or saved details" /></label>
+            <label className="text-sm">Client<select required className={field} value={client} onChange={e => setClient(e.target.value)}><option value="">Choose a client</option>{(picked && !contacts.some(c => c.id === picked.id) ? [picked, ...contacts] : contacts).map(c => <option key={c.id} value={c.id}>{c.name || 'Unknown client'} · {c.page_name || 'Assigned Page'}</option>)}</select></label>
+            <label className="text-sm">Seller<select required className={field} value={seller} onChange={e => { setSeller(e.target.value); setOrder(''); }}><option value="">Choose a selling worker</option>{selling.map(a => <option key={a.id} value={a.id}>{a.name} · {a.role}</option>)}</select></label>
+            <label className="text-sm">Receipt type<select className={field} value={kind} onChange={e => setKind(e.target.value)}><option value="closed">Closed Deal receipt</option><option value="done">Done Deal receipt</option></select></label>
+            <label className="text-sm">Order (may be linked later)<select className={field} value={order} onChange={e => setOrder(e.target.value)}><option value="">No order yet — save on hold</option>{orders.filter(o => o.seller_id === seller).map(o => <option key={o.id} value={o.id}>{o.description} · {money(o.total_minor, o.currency)}</option>)}</select></label>
+            <label className="text-sm">Receipt / conversation photo<input required className={field} name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={() => { requestId.current = crypto.randomUUID(); }} /></label>
+            <button disabled={busy || !client || !seller} className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40 md:col-span-2">Submit receipt evidence</button>
+        </form>}
+        <div className="flex flex-wrap gap-3"><label className="text-sm">From<input className={field} type="date" value={from} max={to} onChange={e => { setFrom(e.target.value); setOffset(0); }} /></label><label className="text-sm">Through<input className={field} type="date" value={to} min={from} max={today()} onChange={e => { setTo(e.target.value); setOffset(0); }} /></label>{scope.role !== 'member' && <label className="text-sm">Employee<select className={field} value={worker} onChange={e => { setWorker(e.target.value); setOffset(0); }}><option value="">All staff in your branch</option>{accounts.filter(a => ['member', 'manager'].includes(a.role)).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}</div>
+        {!data && <p className="text-sm">Loading receipt evidence…</p>}
+        {data && !data.items.length && <p className="text-sm text-slate-500">No receipt evidence in these dates. Verified salary is shown separately in Salary.</p>}
+        {(data?.items || []).map((r: any) => <article key={r.id} className={`rounded border p-4 space-y-2 ${r.salary_status === 'on_hold' ? 'border-amber-300 bg-amber-50' : 'bg-slate-50'}`}>
+            <div className="flex flex-wrap justify-between gap-2"><Link className="font-semibold underline" href={`/dashboard/contacts/${r.contact_id}?pageId=${r.page_id}`}>{r.contact_name || 'Unknown client'}</Link><span className="text-xs">{r.receipt_kind === 'closed' ? 'Closed Deal receipt' : 'Done Deal receipt'} · {r.seller_name} · {r.page_name}</span></div>
+            <p className="text-sm font-semibold">Salary: {r.salary_status === 'on_hold' ? 'ON HOLD' : 'Eligible in the verified ledger — see Salary'} · Telegram: {r.delivery_status.replaceAll('_', ' ')}</p>
+            <p className="text-sm">Lead: {r.lead_stage || 'Unknown'} · Order: {r.order_description || 'Not created / linked'} · Verified payment: {money(r.paid_minor, r.currency)} / {money(r.total_minor, r.currency)}</p>
+            {!!r.salary_holds.length && <ul className="text-sm list-disc pl-5">{r.salary_holds.map((key: string) => <li key={key}>{receiptHoldLabels[key] || key}</li>)}</ul>}
+            {r.holds.filter((key: string) => !r.salary_holds.includes(key)).map((key: string) => <p className="text-xs" key={key}>{receiptHoldLabels[key] || key}</p>)}
+            {r.last_error && <p className="text-xs">{r.last_error}</p>}
+            {!r.order_id && <label className="block text-sm">Link the created order<select className={field} value={links[r.id] || ''} onChange={e => setLinks(old => ({ ...old, [r.id]: e.target.value }))}><option value="">Choose the matching order</option>{r.order_options.map((o: any) => <option key={o.id} value={o.id}>{o.description} · {money(o.total_minor, o.currency)}</option>)}</select></label>}
+            <div className="flex gap-4 text-sm"><button disabled={busy} className="underline disabled:opacity-40" onClick={() => void recheck(r.id, links[r.id])}>Recheck receipt and salary eligibility</button>{r.photo_available && <button className="underline" onClick={async () => { try { const res = await fetch(`/api/workspace/receipts?receipt_id=${r.id}&preview=1`, { cache: 'no-store' }), b = await res.json(); if (!res.ok) throw Error(b.error); setPhotos(old => ({ ...old, [r.id]: b.photo_url })); } catch (e: any) { setMessage(e.message); } }}>View private photo</button>}</div>
+            {photos[r.id] && <img className="max-h-80 max-w-full object-contain" src={photos[r.id]} alt="Privately submitted receipt evidence" />}
+        </article>)}
+        {!!data?.total && <div className="flex justify-between text-sm"><button disabled={!offset} className="underline disabled:opacity-40" onClick={() => setOffset(Math.max(0, offset - 50))}>Previous</button><span>{data.total} receipts</span><button disabled={offset + 50 >= data.total} className="underline disabled:opacity-40" onClick={() => setOffset(offset + 50)}>Next</button></div>}
+    </section>;
+}

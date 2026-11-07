@@ -18,3 +18,8 @@ export async function readVeoReport(read: (signal: AbortSignal) => PromiseLike<a
     }
     throw new DatabaseReadTimeout();
 }
+
+export const readVeoRpc = (db: any, name: string, args: Record<string, unknown>, milliseconds?: number) => readVeoReport(signal => {
+    const query = db.rpc(name, args);
+    return typeof query?.abortSignal === 'function' ? query.abortSignal(signal) : query;
+}, milliseconds);

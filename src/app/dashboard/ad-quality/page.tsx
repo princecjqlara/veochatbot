@@ -5,6 +5,7 @@ import ContactBotProjection from '@/components/ContactBotProjection';
 import AdCreativePreview from '@/components/AdCreativePreview';
 import {visibleAdRows,sortAdRows}from'@/lib/ad-quality-view';
 import ConversionPerformance from '@/components/ConversionPerformance';
+import VeoCreativePerformance from '@/components/VeoCreativePerformance';
 import LeadQualityBadge from '@/components/LeadQualityBadge';
 
 type AdRow = { ad_id: string | null; ad_name: string | null; ad_title: string | null; campaign_name: string | null; inquiries: number; qualified: number; not_qualified: number; pending: number; opted_out: number; crm_converted: number; order_created: number; not_qualified_rate: number | null; not_qualified_assessed_rate: number | null; photo_url: string | null; post_id: string | null; creative_id: string | null; legacy_dates: number };
@@ -94,6 +95,7 @@ export default function AdQualityPage() {
         </div>
         <p className="text-sm text-gray-600">Dates select when a lead first inquired. Qualification shows their current recorded pipeline stage, including changes made later. Today is partial; 7 and 30 days include today.</p>
         <p className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">Marketing analytics use saved ad delivery, spend and recorded pipeline/chat outcomes. They do not verify bank payments or determine workspace commission. View Capacity &amp; Quotas and Salary for the authoritative new-period results.</p>
+        <VeoCreativePerformance query={params().toString()} />
         <ConversionPerformance query={params().toString()} connection={connection}/>
         <div className="border border-black p-3 text-sm space-y-2"><p>{connection?.message||'Checking Facebook ad-account access…'}</p>{!connection?.readOnlyReports && <div className="flex flex-wrap gap-2"><button className="border border-black px-3 py-2 disabled:opacity-40" disabled={connection?.status!=='ready'||!connection?.accounts?.length||syncing} onClick={()=>void importAds()}>{syncing?'Importing Facebook ads…':'Import Facebook ads'}</button></div>}<p className="text-xs text-gray-600">Recorded Messenger creatives and Page-post previews appear without importing the account. Import adds ad inventory; it does not assign unknown contacts to an ad.</p></div>
         {error && <div role="alert" className="border border-red-600 bg-red-50 p-3 text-red-800">{error}{report && ' Last successful results remain below; they are not current.'}</div>}

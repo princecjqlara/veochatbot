@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { hash, compare } from 'bcryptjs';
 import { getSupabaseAdmin } from './supabase';
+import { readVeoRpc } from './veo-report-read';
 
 export const workspaceEnabled = () => process.env.VEO_WORKSPACE_ENABLED === 'true';
 export const roles = ['member', 'manager', 'team_leader', 'owner'] as const;
@@ -19,13 +20,13 @@ export async function passwordMatches(password: string, stored: string) {
     return compare(passwordInput(password), stored.slice(11));
 }
 export async function workspaceScope(userId: string): Promise<WorkspaceScope | null> {
-    const { data, error } = await getSupabaseAdmin().rpc('veo_scope', { p_actor: userId });
-    if (error) throw new Error('Workspace permissions are unavailable');
+    const { data, error } = await readVeoRpc(getSupabaseAdmin(), 'veo_scope', { p_actor: userId }, 20000);
+    if (error) throw Object.assign(new Error('Workspace permissions are temporarily unavailable. Retry shortly.'), { status: 503 });
     return data;
 }
 export async function workspaceAction(actor: string, action: string, payload: Record<string, unknown>) {
     const { data, error } = await getSupabaseAdmin().rpc('veo_action', { p_actor: actor, p_action: action, p_data: payload });
-    if (error) throw Object.assign(new Error(error.message), { status: error.code === '42501' ? 403 : error.code === '23505' ? 409 : 400 });
+    if (error) throw Object.assign(new Error(error.code === '57014' ? 'The save timed out. Recheck the saved record before trying again.' : error.message), { status: error.code === '42501' ? 403 : error.code === '23505' ? 409 : error.code === '57014' ? 503 : 400 });
     return data;
 }
 export async function createWorkspaceAccount(actor: string, body: any) {

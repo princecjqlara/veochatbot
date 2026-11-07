@@ -31,7 +31,7 @@ it('combines existing facts, saved answers and verified order metrics while reta
     expect(result!.detail_progress).toMatchObject({ required_count: 2, collected_count: 2, complete: true });
     expect(db.rpc.mock.calls.every(([name]) => ['get_contact_finance_records', 'veo_profile_detail_access'].includes(name))).toBe(true);
     const baseRpc = db.rpc.getMockImplementation()!;
-    db.rpc.mockImplementation(async (name: string) => { const result = await baseRpc(name); if (name === 'veo_profile_detail_access') result.data.saved_fields = { phone: '123' }; return result; });
+    db.rpc.mockImplementation(async (name: string) => { const result: any = await baseRpc(name); if (name === 'veo_profile_detail_access') result.data.saved_fields = { phone: '123' }; return result; });
     const extractedPurpose = await getContactProfile(db, 'page', 'client', 'active');
     expect(extractedPurpose!.detail_progress.collected_details.Purpose).toBe('Advertising');
     expect(extractedPurpose!.detail_progress.complete).toBe(true); expect(extractedPurpose!.answer_sources.Purpose).toBe('extracted');

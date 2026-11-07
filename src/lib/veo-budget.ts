@@ -1,5 +1,6 @@
 import model from './veo-budget-model';
 import { getSupabaseAdmin } from './supabase';
+import { readVeoRpc } from './veo-report-read';
 
 export function calculateVeoBudget(inputs: Record<string, any>, plan: any) {
     const profile = inputs.profile || 'aggressive';
@@ -21,8 +22,8 @@ export function calculateVeoBudget(inputs: Record<string, any>, plan: any) {
 }
 
 export async function pageBudgetData(actor: string, day: string) {
-    const db = getSupabaseAdmin(), plan = await db.rpc('veo_page_capacity', { p_actor: actor, p_day: day });
-    if (plan.error) throw Object.assign(new Error(plan.error.message), { status: plan.error.code === '42501' ? 403 : 400 });
+    const db = getSupabaseAdmin(), plan = await readVeoRpc(db, 'veo_page_capacity', { p_actor: actor, p_day: day });
+    if (plan.error) throw Object.assign(new Error('Page capacity is temporarily unavailable. Retry shortly.'), { status: plan.error.code === '42501' ? 403 : 503 });
     const ids = [...new Set<string>((plan.data.plans || []).map((p: any) => p.team_id))];
     const saved = ids.length ? await db.from('veo_ad_budget_plans').select('*').in('team_id', ids).eq('work_date', day) : { data: [], error: null };
     if (saved.error) throw new Error('Saved Page budgets are unavailable');
@@ -32,7 +33,9 @@ export async function pageBudgetData(actor: string, day: string) {
         try { return { ...row, result_current: calculateVeoBudget(row.inputs, current).result }; }
         catch { return { ...row, calculation_unavailable: true }; }
     });
-    return { ...plan.data, saved: records, presets: model.profiles, defaults: { ...model.defaults, profile: 'aggressive', startingBudget: null, currentBudget: null, yesterdayCPA: null, activePeople: null, maxPerPerson: null } };
+    const pages = [...new Set<string>((plan.data.plans || []).map((p: any) => p.page_id))];
+    const ads = pages.length ? await db.from('veo_ad_planning_state').select('*').in('page_id', pages) : { data: [], error: null };
+    return { ...plan.data, live_ads: ads.error ? null : ads.data, saved: records, presets: model.profiles, defaults: { ...model.defaults, profile: 'aggressive', startingBudget: null, currentBudget: null, yesterdayCPA: null, activePeople: null, maxPerPerson: null } };
 }
 
 export async function savePageBudget(actor: string, body: any) {

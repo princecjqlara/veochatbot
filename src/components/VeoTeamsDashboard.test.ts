@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 vi.mock('next/link', () => ({ default: ({ href, children }: any) => createElement('a', { href }, children) }));
 import VeoTeamsDashboard from './VeoTeamsDashboard';
 const text = (node: any): string => typeof node === 'string' || typeof node === 'number' ? String(node) : node.children.map(text).join('');
-it('keeps team totals and currencies separate, filters a leader branch and updates the selected worker attendance', async () => {
+it('keeps team totals and currencies separate and reads attendance from the Telegram poll', async () => {
     const attendance = vi.fn();
     const data = {
         accounts: [
@@ -28,7 +28,7 @@ it('keeps team totals and currencies separate, filters a leader branch and updat
         expect(text(first)).toContain(new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'USD' }).format(2));
         await act(async () => view.root.findAllByType('select').find((s: any) => s.props.value === '')!.props.onChange({ target: { value: 'la' } }));
         expect(view.root.findAllByType('article')).toHaveLength(1); expect(text(view.root)).not.toContain('Team BManager');
-        await act(async () => view.root.findAllByType('select').find((s: any) => s.props['aria-label'] === 'Attendance for Member A')!.props.onChange({ target: { value: 'true' } }));
-        expect(attendance).toHaveBeenCalledWith('wa', true);
+        expect(view.root.findAllByType('select').some((s: any) => s.props['aria-label'] === 'Attendance for Member A')).toBe(false);
+        expect(text(first)).toContain('Telegram poll'); expect(attendance).not.toHaveBeenCalled();
     } finally { await act(async () => view.unmount()); }
 });

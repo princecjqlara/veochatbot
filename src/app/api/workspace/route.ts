@@ -5,10 +5,12 @@ import { createWorkspaceAccount, workspaceAction, workspaceScope, uuid, philippi
 import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
 import { randomUUID } from 'node:crypto';
 import { jaucianRead, verifyWorkerMapping } from '@/lib/veo-jaucian';
+import { readVeoRpc } from '@/lib/veo-report-read';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 const bucket = 'veo-conversation-submissions';
-const errorResponse = (error: any) => NextResponse.json({ error: error.message || 'Workspace unavailable' }, { status: error.status || 400 });
+const errorResponse = (error: any) => NextResponse.json({ error: error.code === 'DATABASE_UNAVAILABLE' || error.code === '57014' ? 'Workspace report is busy. Retry shortly.' : error.message || 'Workspace unavailable' }, { status: error.status || (error.code === 'DATABASE_UNAVAILABLE' || error.code === '57014' ? 503 : 400) });
 async function actor(request: NextRequest) {
     const session = await getSessionFromRequest(request);
     if (!session?.user?.id) throw Object.assign(new Error('Sign in required'), { status: 401 });
@@ -54,9 +56,9 @@ export async function GET(request: NextRequest) {
         if ((page && !uuid(page)) || !Number.isSafeInteger(offset) || offset < 0 || offset > 10000000 || search.length > 200 ||
             !['dashboard', 'clients', 'closed', 'done', 'salary', 'accounts', 'sync'].includes(view)) throw new Error('Invalid order filters');
         const [dashboard, orders, capacity] = await Promise.all([
-            db.rpc('veo_dashboard', { p_actor: scope.user_id, p_day: day }),
-            db.rpc('veo_orders_page', { p_actor: scope.user_id, p_day: day, p_view: view, p_page: page, p_search: search, p_offset: offset, p_limit: 50 }),
-            db.rpc('veo_team_capacity', { p_actor: scope.user_id, p_day: day })
+            readVeoRpc(db, 'veo_dashboard', { p_actor: scope.user_id, p_day: day }),
+            readVeoRpc(db, 'veo_orders_page', { p_actor: scope.user_id, p_day: day, p_view: view, p_page: page, p_search: search, p_offset: offset, p_limit: 50 }),
+            readVeoRpc(db, 'veo_team_capacity', { p_actor: scope.user_id, p_day: day })
         ]);
         if (dashboard.error || orders.error || capacity.error) throw new Error(dashboard.error?.message || orders.error?.message || capacity.error?.message);
         return NextResponse.json({ ...dashboard.data, orders: orders.data?.orders || [], order_page: orders.data, capacity: capacity.data }, { headers: { 'Cache-Control': 'no-store' } });
@@ -84,6 +86,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ saved }, { status: 202 });
         }
         const body = await request.json(), action = body.action;
+        if (action === 'attendance') throw new Error('Answer Jaucian’s Telegram poll for active tomorrow. The workspace reads verified poll votes.');
         if (action === 'create_account') return NextResponse.json({ saved: await createWorkspaceAccount(scope.user_id, body) }, { status: 201 });
         if (action === 'password') return NextResponse.json({ saved: await workspaceAction(scope.user_id, 'password', { user_id: body.user_id || scope.user_id, password_hash: await passwordHash(body.password) }) });
         if (action === 'mapping' && scope.role !== 'owner') throw Object.assign(new Error('Owner access required'), { status: 403 });

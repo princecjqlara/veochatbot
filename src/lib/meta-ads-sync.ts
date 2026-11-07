@@ -1,5 +1,6 @@
 import { alignedWithPht, DAILY_INSIGHT_FIELDS, dailyDeliveryMetrics, normalizeDailySpend } from './ad-daily-spend';
 import { catalogMetadata, creativePageId, marketingConnection, readMetaAds } from './facebook-ad-catalog';
+import { pageAdPlanning } from './veo-ad-planning';
 
 const DAY = 86400000;
 const shift = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * DAY).toISOString().slice(0, 10);
@@ -51,19 +52,21 @@ export async function refreshMetaAdSpend(options: Options) {
         if (connection.status !== 'ready' || (connection as any).partial || !connection.accounts.length) throw Error('Complete connected ad-account access is unavailable');
         report.accounts = connection.accounts.length; report.account_ids = connection.accounts.map(a => a.id).sort();
         if (JSON.stringify(report.page_ids) !== JSON.stringify(options.completedPages?.slice().sort()) || JSON.stringify(report.account_ids) !== JSON.stringify(options.completedAccounts?.slice().sort())) report.completed_windows = [];
-        const accounts: Array<{ id: string; currency: string; timezone_name: string; ads: Map<string, string | null> }> = [];
+        const accounts: Array<{ id: string; currency: string; timezone_name: string; ads: Map<string, string | null> }> = [], planningRows: any[] = [];
         for (const account of connection.accounts) {
             const metadata = await read(account.id, { fields: 'id,currency,timezone_name' });
             if (metadata.id !== account.id || !/^[A-Z]{3}$/.test(metadata.currency || '') || typeof metadata.timezone_name !== 'string') throw Error('Ad-account currency or timezone could not be verified');
-            const ads = new Map<string, string | null>(), records: any[] = [];
-            await paginate(account.id + '/ads', { fields: 'id,name,account_id,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,effective_object_story_id,object_story_id,object_story_spec}', limit: '100' }, values => {
+            const ads = new Map<string, string | null>(), records: any[] = [], planningAds: any[] = [];
+            await paginate(account.id + '/ads', { fields: 'id,name,account_id,effective_status,created_time,campaign{id,name,daily_budget,lifetime_budget},adset{id,name,daily_budget,lifetime_budget,start_time,end_time},creative{id,name,thumbnail_url,effective_object_story_id,object_story_id,object_story_spec}', limit: '100' }, values => {
                 for (const ad of values) {
                     if (String(ad.account_id) !== account.id.slice(4) || !/^\d+$/.test(ad.id || '')) throw Error('Meta returned another account in its inventory');
                     const facebookPage = creativePageId(ad);
+                    if (ad.effective_status === 'ACTIVE' && !facebookPage) throw Error('An active ad has unresolved Page ownership; no-ads planning cannot be certified');
                     // Unknown ownership remains unresolved. A historical Insights row
                     // must resolve it before any complete Page coverage can be saved.
                     if (facebookPage) ads.set(ad.id, pageByFacebook.get(facebookPage) || null);
                     const page = facebookPage && pageByFacebook.get(facebookPage);
+                    planningAds.push({ ...ad, verified_page_id: page || null });
                     if (page) records.push(catalogMetadata(ad, page));
                 }
             });
@@ -73,8 +76,13 @@ export async function refreshMetaAdSpend(options: Options) {
                 if (saved.error) throw Error('Could not save verified ad inventory');
             }
             report.inventory_ads += records.length;
+            const planning = pageAdPlanning(planningAds, ids, metadata.currency, new Date().toISOString()).map(row => ({ ...row, account_id: account.id.slice(4) }));
+            planningRows.push(...planning);
             accounts.push({ ...metadata, ads }); progress();
         }
+        await guard();
+        const planned = await db.from('veo_ad_planning_state').upsert(planningRows, { onConflict: 'page_id,account_id' });
+        if (planned.error) throw Error('Could not save verified daily ad-budget planning');
         // Previously resolved historical creatives must stay in future refreshes.
         // Otherwise a later current-inventory refresh would omit their verified
         // zero rows and make its coverage disagree with retained historical rows.
@@ -129,7 +137,7 @@ export async function refreshMetaAdSpend(options: Options) {
                 for (let day = window.from; day <= window.to; day = shift(day, 1)) {
                     if (!rows.has(account.id + ':' + ad + ':' + day)) records.push({ page_id: page, ad_id: ad, account_id: account.id.slice(4), spend_date: day,
                         currency: account.currency, account_timezone: account.timezone_name, pht_aligned: alignedWithPht(day, account.timezone_name), amount: 0,
-                        impressions: 0, clicks: 0, reach: 0, link_clicks: 0, messaging_started: 0, video_plays: 0, video_thruplays: 0, video_complete: 0,
+                        impressions: 0, clicks: 0, reach: 0, frequency: null, link_clicks: 0, messaging_started: 0, video_plays: 0, video_thruplays: 0, video_complete: 0,
                         action_report_time: 'conversion', attribution_setting: 'adset_unified', checked_at: checkedAt, report_complete: day < today, reported_zero: day < today });
                 }
             }

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { VeoCapacityMetrics } from './VeoCapacitySummary';
 const money = (n: number, currency: string) => new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(n / 100);
-export default function VeoTeamsDashboard({ data, busy, onAttendance }: { data: any; busy: boolean; onAttendance: (userId: string, active: boolean) => void }) {
+export default function VeoTeamsDashboard({ data }: { data: any; busy?: boolean; onAttendance?: (userId: string, active: boolean) => void }) {
     const [leader, setLeader] = useState('');
     const leaders = data.accounts.filter((a: any) => a.role === 'team_leader' && a.active !== false);
     const teams = data.teams.filter((t: any) => (!leader || data.accounts.find((a: any) => a.id === t.manager_id)?.parent_id === leader) && (!data.capacity || data.capacity.teams?.some((c: any) => c.id === t.id && (c.workers > 0 || c.closed > 0 || c.done > 0))));
@@ -25,7 +25,7 @@ export default function VeoTeamsDashboard({ data, busy, onAttendance }: { data: 
                 <div className="text-sm">{Object.entries(totals).map(([currency, amount]) => <p key={currency}>{money(amount, currency)} team commission {salary.some((s: any) => s.provisional) ? '(provisional)' : '(final daily rate)'}</p>)}{!Object.keys(totals).length && <p>No fully paid orders for this work date.</p>}</div>
                 <details className="border-t pt-3"><summary className="cursor-pointer font-semibold">Worker results and attendance</summary><div className="mt-3 space-y-3">{workers.map((worker: any) => {
                     const s = salary.find((v: any) => v.user_id === worker.id), plan = data.tomorrow.find((v: any) => v.user_id === worker.id);
-                    return <div key={worker.id} className="border-t py-3 text-sm"><p className="font-semibold">{worker.name} {worker.telegram_username ? `(@${worker.telegram_username})` : ''}</p><p>{s ? `Closed ${s.closed}/${s.target} · Done ${s.done}/${s.target} · ${s.rate}%` : 'Results unavailable'}</p><label className="flex justify-between gap-3 mt-2">Tomorrow (target {plan?.target || 1})<select className="border rounded p-2" aria-label={`Attendance for ${worker.name}`} disabled={busy || worker.active === false} value={plan?.active == null ? '' : String(plan.active)} onChange={e => onAttendance(worker.id, e.target.value === 'true')}><option value="" disabled>Unknown</option><option value="true">Active</option><option value="false">Inactive</option></select></label></div>;
+                    return <div key={worker.id} className="border-t py-3 text-sm"><p className="font-semibold">{worker.name} {worker.telegram_username ? `(@${worker.telegram_username})` : ''}</p><p>{s ? `Closed ${s.closed}/${s.target} · Done ${s.done}/${s.target} · ${s.rate}%` : 'Results unavailable'}</p><p className="mt-2">Tomorrow (capacity {plan?.target || 1}): {plan?.active == null ? 'No verified Telegram vote' : plan.active ? 'Active — Telegram poll' : 'Inactive — Telegram poll'}</p><Link className="underline" href="/dashboard/workspace?view=warnings">View poll participation and staff warnings</Link></div>;
                 })}</div></details>
             </article>;
         })}</div>

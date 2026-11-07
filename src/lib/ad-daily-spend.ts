@@ -1,5 +1,5 @@
 const dayMs=86_400_000;
-export const DAILY_INSIGHT_FIELDS = 'ad_id,account_id,account_currency,date_start,date_stop,spend,impressions,clicks,reach,inline_link_clicks,actions,video_play_actions,video_thruplay_watched_actions,video_p100_watched_actions';
+export const DAILY_INSIGHT_FIELDS = 'ad_id,account_id,account_currency,date_start,date_stop,spend,impressions,clicks,reach,frequency,inline_link_clicks,actions,video_play_actions,video_thruplay_watched_actions,video_p100_watched_actions';
 export function actionAmount(values: unknown, kind: string): number | null {
  if(values==null)return null;
  if(!Array.isArray(values))throw Error('Facebook returned invalid action metrics');
@@ -12,7 +12,7 @@ export function actionAmount(values: unknown, kind: string): number | null {
 }
 export function dailyDeliveryMetrics(row:any){
  const count=(value:any)=>value==null?null:/^\d+$/.test(String(value))&&Number.isSafeInteger(Number(value))?Number(value):null;
- return{reach:count(row.reach),link_clicks:count(row.inline_link_clicks),messaging_started:actionAmount(row.actions,'onsite_conversion.messaging_conversation_started_7d'),
+ return{reach:count(row.reach),frequency:row.frequency != null && Number.isFinite(Number(row.frequency)) && Number(row.frequency)>=0 ? Number(row.frequency) : null,link_clicks:count(row.inline_link_clicks),messaging_started:actionAmount(row.actions,'onsite_conversion.messaging_conversation_started_7d'),
   video_plays:actionAmount(row.video_play_actions,'video_view'),video_thruplays:actionAmount(row.video_thruplay_watched_actions,'video_view'),video_complete:actionAmount(row.video_p100_watched_actions,'video_view'),
   action_report_time:'conversion',attribution_setting:'adset_unified'};
 }
