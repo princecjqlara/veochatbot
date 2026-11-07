@@ -3,6 +3,7 @@ import { contactControls } from '@/lib/contact-controls';
 import { hoursBetween, purchaseMetrics, type PurchaseRecord, type VerifiedPayment } from '@/lib/contact-profile-evidence';
 import { profileAdFields } from '@/lib/contact-profile-sources';
 import { workspaceEnabled, workspaceScope } from './veo-workspace';
+import { bestContactTime, contactIntelligence, mergeContactDetailLayers, profileFieldDefinitions, profileFieldKey } from './veo-contact-intelligence';
 
 type Db = { from: (table: string) => any; rpc: (name: string, args: Record<string, unknown>) => any };
 const jobFields = 'status,reason,requested_version,working_version,scan_started,history_complete,message_count,analyzed_count,error_message,requested_at,updated_at';
@@ -29,19 +30,20 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     const snapshot = snapshotResult.data, conversation = snapshot?.payload?.conversation || null;
     const finance = financeResult.data || { purchases: [], payments: [] };
     let manual: Record<string, string> = {};
+    let profileDetails: any = null;
     if (workspaceEnabled()) {
         const scope = actorId ? await workspaceScope(actorId) : null;
         if (!scope?.page_ids.includes(pageId)) throw new Error('Contact access is unavailable');
+        const details = await db.rpc('veo_profile_detail_access', { p_actor: actorId, p_contact: contactId });
+        if (details.error || !details.data) throw new Error('Workspace contact details unavailable');
+        profileDetails = details.data; manual = profileDetails.manual_fields || {};
+        const workers = profileDetails.branch_worker_ids || scope.worker_ids;
         if (scope.role !== 'owner') {
-            finance.purchases = finance.purchases.filter((o: any) => scope.worker_ids.includes(o.recorded_by));
-            finance.payments = finance.payments.filter((p: any) => scope.worker_ids.includes(p.verified_by));
+            finance.purchases = finance.purchases.filter((o: any) => workers.includes(o.recorded_by));
+            finance.payments = finance.payments.filter((p: any) => workers.includes(p.verified_by));
         }
-        const [details, orders] = await Promise.all([
-            db.from('veo_contact_details').select('fields').eq('contact_id', contactId).maybeSingle(),
-            db.from('veo_orders').select('*').eq('page_id', pageId).eq('contact_id', contactId).in('seller_id', scope.worker_ids)
-        ]);
-        if (details.error || orders.error) throw new Error('Workspace contact history unavailable');
-        manual = details.data?.fields || {};
+        const orders = await db.from('veo_orders').select('*').eq('page_id', pageId).eq('contact_id', contactId).in('seller_id', workers);
+        if (orders.error) throw new Error('Workspace contact history unavailable');
         const payments = orders.data?.length ? await db.from('veo_payments').select('*').in('order_id', orders.data.map((o: any) => o.id)) : { data: [], error: null };
         if (payments.error) throw new Error('Workspace payment history unavailable');
         finance.purchases = [...finance.purchases, ...(orders.data || []).map((o: any) => ({ ...o, purchased_at: o.created_at, recorded_by: o.created_by }))];
@@ -97,13 +99,21 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     for (const touch of touchesResult.data || []) events.push({ id: `ad-${touch.event_key}`, type: 'ad', at: touch.event_at, title: touch.ad_id ? `Ad touch: ${touch.ad_id}` : 'Referral touch', basis: touch.event_kind, source_event_key: touch.event_key });
     events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     const extracted = Object.fromEntries((snapshot?.payload?.extracted_answers || []).map((answer: any) => [answer.field, answer.value]));
-    const saved = getChatbotDetailProgress(configResult.data, stateResult.data?.collected_details);
-    const combinedDetails = { ...extracted, ...saved.collected_details, ...manual };
+    const saved = getChatbotDetailProgress(configResult.data, profileDetails?.saved_fields || stateResult.data?.collected_details);
+    const intelligence = profileDetails ? contactIntelligence(profileDetails, snapshot?.payload?.facts || []) : null;
+    const displayDefinitions = [...profileFieldDefinitions(configResult.data?.details_to_collect, profileDetails?.requested_fields),
+        ...(Array.isArray(configResult.data?.details_to_collect) ? configResult.data.details_to_collect.filter((v: any) => typeof v === 'string').map((label: string) => ({ key: profileFieldKey(label), label })) : [])];
+    const combinedDetails = mergeContactDetailLayers(displayDefinitions, extracted, intelligence?.details || {}, saved.collected_details, manual);
+    const answerEvidence = Object.fromEntries(Object.keys(combinedDetails).map(label => [label, intelligence?.fields.find(f => f.key === profileFieldKey(label))?.evidence || []]));
+    const answerSources = Object.fromEntries(Object.keys(combinedDetails).map(label => [label,
+        Object.keys(manual).some(k => profileFieldKey(k) === profileFieldKey(label)) ? 'manual' : Object.keys(saved.collected_details).some(k => profileFieldKey(k) === profileFieldKey(label)) ? 'saved' : 'extracted']));
     const conflicts = (snapshot?.payload?.extracted_answers || []).filter((answer: any) => saved.collected_details[answer.field] && saved.collected_details[answer.field] !== answer.value);
     return { workspace_enabled: workspaceEnabled(), contact: { ...contact, tags: (contact.contact_tags || []).map((assignment: any) => assignment.tags).filter(Boolean), contact_tags: undefined },
         page: pageResult.data, state: stateResult.data, detail_progress: getChatbotDetailProgress(configResult.data, combinedDetails),
         saved_detail_keys: [...new Set([...Object.keys(saved.collected_details), ...Object.keys(manual)])], manual_detail_keys: Object.keys(manual), answer_conflicts: conflicts,
-        snapshot, conversation_metrics: conversationMetricsResult.data, job: jobResult.data, processing_mode: 'local', source_stale: Boolean(snapshot && [contact.last_interaction_at, contact.pipeline_stage_updated_at].some(value => value && Date.parse(value) > Date.parse(snapshot.source_cutoff_at))),
+        snapshot, facts: intelligence?.facts || snapshot?.payload?.facts || [], auto_fill: intelligence, ai_answer_evidence: answerEvidence, answer_sources: answerSources,
+        best_contact_time: bestContactTime(contact, intelligence?.fields.find(f => f.key === 'best_contact_time')),
+        conversation_metrics: conversationMetricsResult.data, job: jobResult.data, processing_mode: 'local', source_stale: Boolean(snapshot && [contact.last_interaction_at, contact.pipeline_stage_updated_at].some(value => value && Date.parse(value) > Date.parse(snapshot.source_cutoff_at))),
         first_inquiry_at: firstInquiryAt, first_recorded_conversion_at: firstConvertedAt,
         inquiry_to_conversion_hours: hoursBetween(firstInquiryAt, firstConvertedAt),
         finance: { ...finance, metrics },

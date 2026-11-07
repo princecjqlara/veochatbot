@@ -22,7 +22,7 @@ describe('verified purchase and payment arithmetic', () => {
         expect(partial.orders[0]).toMatchObject({ paid_minor: 15000, outstanding_minor: 55000, payment_status: 'partially_paid', inquiry_to_deposit_hours: 4, first_full_payment_at: null });
         const full = purchaseMetrics([order], [balance, deposit], '2026-10-01T00:00:00Z');
         expect(full.orders[0]).toMatchObject({ paid_minor: 70000, outstanding_minor: 0, payment_status: 'fully_paid', deposit_to_full_hours: 48 });
-        expect(full.currencies).toEqual([{ currency: 'PHP', received_minor: 70000, refunded_minor: 0, net_minor: 70000 }]);
+        expect(full.currencies).toEqual([{ currency: 'PHP', received_minor: 70000, refunded_minor: 0, net_minor: 70000, paid_order_count: 1, average_order_minor: 70000, average_paid_minor: 70000 }]);
     });
     it('does not add full-payment labels or currencies together and preserves refund history', () => {
         const smallFull = { ...deposit, kind: 'full' as const };
@@ -37,6 +37,13 @@ describe('verified purchase and payment arithmetic', () => {
         expect(purchaseMetrics([order, { ...order, id: 'second' }], [deposit, { ...balance, purchase_id: 'second' }], null).repeat_customer).toBe(true);
         expect(hoursBetween('2026-10-02T00:00:00Z', '2026-10-01T00:00:00Z')).toBeNull();
     });
+});
+it('calculates average paid-order value once per verified order, separates currencies and includes refunds', () => {
+    const orders = [order, { ...order, id: 'second' }, { ...order, id: 'unpaid' }];
+    const records = [deposit, balance, { ...deposit, id: 'second-paid', purchase_id: 'second', amount_minor: 10000 }, { ...balance, id: 'refund', kind: 'refund' as const, amount_minor: 20000 }, { ...deposit, id: 'usd', purchase_id: null, currency: 'USD', amount_minor: 500 }];
+    const r = purchaseMetrics(orders, records, null);
+    expect(r.currencies.find(c => c.currency === 'PHP')).toMatchObject({ paid_order_count: 2, average_order_minor: 70000, average_paid_minor: 30000, net_minor: 60000 });
+    expect(r.currencies.find(c => c.currency === 'USD')).toMatchObject({ paid_order_count: 0, average_order_minor: null, net_minor: 500 });
 });
 
 describe('conversation evidence without invented payment status', () => {

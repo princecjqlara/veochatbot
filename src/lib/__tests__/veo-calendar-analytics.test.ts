@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildVeoCalendar, demographics, objections, cohortProjection } from '../veo-calendar-analytics';
+import { buildVeoCalendar, demographics, objections, cohortProjection, veoCalendarShade } from '../veo-calendar-analytics';
 const first = '2026-11-01T04:00:00Z', now = '2026-11-08T04:00:00Z';
 const lead = (id: string, stage = 'converted') => ({ id, page_id: 'page', name: id, stage, inquiry_at: first, converted_at: stage === 'converted' ? '2026-11-03T04:00:00Z' : null });
 function inputs() { return { as_of: now, scope: { role: 'owner', launch_at: '2026-10-30T00:00:00Z' }, pages: [{ id: 'page', name: 'VEO' }], leads: [lead('one'), lead('two', 'qualified')], selected_clients: [lead('one'), lead('two', 'qualified')], orders: [{ order_key: 'order', contact_id: 'one', seller_id: 'seller', currency: 'PHP', paid_minor: 10000, total_minor: 10000, commission_minor: 3500, financial_source: 'workspace', closed_at: '2026-11-03T04:00:00Z', closed_date: '2026-11-03', done_at: '2026-11-05T04:00:00Z', done_date: '2026-11-05' }], cash: [{ contact_id: 'one', currency: 'PHP', amount_minor: 3000, paid_day: '2026-11-03' }, { contact_id: 'one', currency: 'PHP', amount_minor: 7000, paid_day: '2026-11-05' }], spend: [{ page_id: 'page', currency: 'PHP', spend_date: '2026-11-01', amount_minor: 2000, complete: true }, { page_id: 'page', currency: 'PHP', spend_date: '2026-11-05', amount_minor: 1000, complete: true }], peer_lag_hours: [], messages: [], message_coverage: [], page_plans: [], team_plans: [], employees: [{ id: 'seller', name: 'Seller' }], missing_inquiry_dates: 3 }; }
@@ -50,6 +50,34 @@ describe('restored daily activity and eventual inquiry cohort analytics', () => 
         expect(r.selected.cohort.paid_customers).toBe(0); expect(r.selected.cohort.finance[0].received_minor).toBe(0);
         expect(r.days.find(d => d.work_date === '2026-11-05')?.finance[0].received_minor).toBe(7000);
     });
+});
+it('shades actual net profit or loss by one currency and calculates net ROAS after salary', () => {
+    const input = inputs();
+    const salary = [{ user_id: 'seller', work_date: '2026-11-05', done: 1, rate: 35, totals: [{ currency: 'PHP', gross_minor: 10000, commission_minor: 3500 }] }];
+    const r = buildVeoCalendar(input, { salary_days: salary }, '2026-11', '2026-11-05');
+    expect(r.selected.finance[0]).toMatchObject({ net_minor: 5500, net_roas: 6.5 });
+    expect(veoCalendarShade(r.selected, 'net', 'PHP')).toBe(5500);
+    expect(veoCalendarShade(r.selected, 'net', 'USD')).toBeNull();
+    expect(r.selected.salary_rates[0]).toMatchObject({ rate: 35, workers: 1 });
+    const inquiry = r.days.find(d => d.work_date === '2026-11-01')!;
+    expect(veoCalendarShade(inquiry, 'net', 'PHP')).toBe(-2000);
+    expect(veoCalendarShade(inquiry, 'cohort_net', 'PHP')).toBe(4500);
+    expect(inquiry.cohort_finance[0].net_roas).toBe(3.25);
+    input.spend[1].amount_minor = 10000;
+    expect(buildVeoCalendar(input, { salary_days: salary }, '2026-11', '2026-11-05').selected.finance[0]).toMatchObject({ net_minor: -3500, net_roas: .65 });
+});
+it('keeps mixed salary rates distinct and refuses unknown salary, zero-spend ROAS or incomplete costs', () => {
+    const input: any = inputs();
+    input.orders.push({ ...input.orders[0], order_key: 'two', seller_id: 'second', commission_minor: 4000 });
+    const salary = [35, 40].map((rate, i) => ({ user_id: `seller-${i}`, work_date: '2026-11-05', done: 1, rate, totals: [{ currency: 'PHP', commission_minor: rate * 100, gross_minor: 10000 }] }));
+    expect(buildVeoCalendar(input, { salary_days: salary }, '2026-11', '2026-11-05').selected.salary_rates.map(r => r.rate)).toEqual([35, 40]);
+    input.orders[0].commission_minor = null;
+    const unknown = buildVeoCalendar(input, {}, '2026-11', '2026-11-05').selected;
+    expect(unknown.finance[0].net_roas).toBeNull(); expect(veoCalendarShade(unknown, 'net', 'PHP')).toBeNull();
+    input.orders[0].commission_minor = 3500; input.spend[1].amount_minor = 0;
+    expect(buildVeoCalendar(input, {}, '2026-11', '2026-11-05').selected.finance[0].net_roas).toBeNull();
+    input.spend[1].complete = false;
+    expect(veoCalendarShade(buildVeoCalendar(input, {}, '2026-11', '2026-11-05').selected, 'net', 'PHP')).toBeNull();
 });
 it('uses recorded demographics with explicit unknown percentages and manual correction priority', () => {
     const rows = demographics([{ manual_fields: { gender: '', age: '22' }, saved_fields: { gender: 'Male', city: 'Manila' } }, { manual_fields: { gender: 'Female', age: '34' } }]);

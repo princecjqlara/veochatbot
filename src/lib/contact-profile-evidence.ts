@@ -60,7 +60,12 @@ export function purchaseMetrics(purchases: PurchaseRecord[], payments: VerifiedP
     });
     const firstPayment = valid.find(payment => payment.kind !== 'refund')?.occurred_at || null;
     const firstDeposit = valid.find(payment => payment.kind === 'deposit')?.occurred_at || null;
-    return { currencies: [...totals].map(([currency, amounts]) => ({ currency, ...amounts })), orders,
+    return { currencies: [...totals].map(([currency, amounts]) => {
+        const paidOrders = orders.filter(o => o.currency === currency && o.ever_paid);
+        return { currency, ...amounts, paid_order_count: paidOrders.length,
+            average_order_minor: paidOrders.length ? paidOrders.reduce((n, o) => n + o.total_minor, 0) / paidOrders.length : null,
+            average_paid_minor: paidOrders.length ? paidOrders.reduce((n, o) => n + o.paid_minor, 0) / paidOrders.length : null };
+    }), orders,
         purchase_count: orders.filter(order => order.ever_paid).length, recorded_order_count: orders.length,
         repeat_customer: orders.filter(order => order.ever_paid).length > 1,
         verified_payment_count: valid.filter(payment => payment.kind !== 'refund').length,

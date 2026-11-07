@@ -66,7 +66,10 @@ function financials(orders: any[], cash: any[], spend: any[], pageCount: number,
             spend_checked_at: ads.map(r => r.checked_at).filter(Boolean).sort()[0] || null,
             mean_order_minor: mean(values), median_order_minor: median(values), done_orders: done.length, net_minor: !mixedRevenue && spendComplete && salary != null ? gross - salary - amount! : null,
             cash_net_minor: !mixedRevenue && spendComplete && salary != null ? received - salary - amount! : null, gross_roas: !mixedRevenue && spendComplete ? ratio(gross, amount!) : null,
-            cash_roas: !mixedRevenue && spendComplete ? ratio(received, amount!) : null, legacy_salary_unknown: done.filter(r => r.commission_minor == null).length };
+            cash_roas: !mixedRevenue && spendComplete ? ratio(received, amount!) : null,
+            net_roas: !mixedRevenue && spendComplete && salary != null ? ratio(gross - salary, amount!) : null,
+            cash_net_roas: !mixedRevenue && spendComplete && salary != null ? ratio(received - salary, amount!) : null,
+            legacy_salary_unknown: done.filter(r => r.commission_minor == null).length };
     });
 }
 function quotaProgress(actual: number, target: number | null) { return { actual, target, percent: target != null ? ratio(actual, target) : null, remaining: target == null ? null : Math.max(0, target - actual), surplus: target == null ? null : Math.max(0, actual - target), status: target == null || target === 0 ? 'unavailable' : actual > target ? 'surpassed' : actual === target ? 'reached' : 'below' }; }
@@ -81,7 +84,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
         const converted = clients.filter((c: any) => c.converted_at || c.stage === 'converted'), payers = new Set(co.filter((o: any) => o.closed_at).map((o: any) => o.contact_id));
         const money = financials(co, cash, spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay && !co.some((o: any) => o.financial_source === 'workspace' && o.done_at)).map(f => ({ ...f,
             acquisition_cost_minor: f.spend_complete ? ratio(f.ad_spend_minor!, payers.size) : null, cost_per_inquiry_minor: f.spend_complete ? ratio(f.ad_spend_minor!, clients.length) : null,
-            paid_customers: payers.size, net_minor: f.cash_net_minor, gross_roas: f.cash_roas }));
+            paid_customers: payers.size, net_minor: f.cash_net_minor, gross_roas: f.cash_roas, net_roas: f.cash_net_roas }));
         return { inquiries: clients.length, converted: converted.length, converted_later: converted.filter((c: any) => c.converted_at && dayOf(c.converted_at) > day).length,
             conversion_time_unknown: converted.filter((c: any) => !c.converted_at).length, conversion_rate: ratio(converted.length, clients.length), paid_customers: payers.size, paid_rate: ratio(payers.size, clients.length),
             qualified: clients.filter((c: any) => c.stage === 'qualified').length, not_qualified: clients.filter((c: any) => c.stage === 'not_qualified').length,
@@ -99,8 +102,11 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
         const fullCoverage = input.pages.length > 0 && input.pages.every((p: any) => input.message_coverage.some((c: any) => c.page_id === p.id && Date.parse(c.capture_from) <= start));
         const summary = cohort(day);
         const archivedClosed = orders.filter((o: any) => o.closed_date === day && o.financial_source === 'retained').length, archivedDone = dailyOrders.filter((o: any) => o.financial_source === 'retained').length;
+        const salaryRates = (finance.salary_days || []).filter((d: any) => d.work_date === day && d.done > 0 && [35, 40].includes(d.rate));
         return { work_date: day, future: day > range.today, before_launch: day < launchDay, provisional: day === range.today, closed, done, archived_closed: archivedClosed, archived_done: archivedDone,
-            inquiries: summary.inquiries, cohort_converted: summary.converted, converted_later: summary.converted_later,
+            inquiries: summary.inquiries, cohort_converted: summary.converted, converted_later: summary.converted_later, cohort_finance: summary.finance,
+            salary_rates: [...new Set<number>(salaryRates.map((d: any) => d.rate))].sort().map(rate => ({ rate, workers: salaryRates.filter((d: any) => d.rate === rate).length,
+                totals: salaryRates.filter((d: any) => d.rate === rate).flatMap((d: any) => d.totals.map((t: any) => ({ user_id: d.user_id, ...t }))) })),
             finance: financials(dailyOrders, payments.filter((p: any) => p.paid_day === day), spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay),
             quota: { closed: quotaProgress(closed - archivedClosed, target), done: quotaProgress(done - archivedDone, target) }, staffing: { available: active, unknown, roster: plans.length && !pageId ? sum(plans, 'workers') : null, capacity: plans.length ? sum(plans, pageId ? 'full_capacity' : 'capacity') : null },
             response: { inbound: rate ? Number(rate.inbound) : fullCoverage ? 0 : null, answered: rate ? Number(rate.answered) : fullCoverage ? 0 : null, rate: rate ? ratio(Number(rate.answered), Number(rate.inbound)) : null, coverage_complete: fullCoverage } };
@@ -139,4 +145,15 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
             response_definition: 'Customer messages received on this Philippine date with a Page reply after that message and before that date’s midnight. Includes bot and human Page replies. Daily metadata coverage is shown separately from cohort-history reply rates.',
             demographics: 'Recorded manual details take precedence over saved and evidence-backed extracted answers. Unknown values stay in the percentage denominator; age and gender are never inferred from names or photos.',
             projection: 'Empirical 30-day stage-conversion estimate from earlier cohorts with at least 30 days of observed history. Requires 30 comparable unconverted peers; interval is a 95% Wilson sampling range, not a sales guarantee. Later conversions remain possible after 30 days.' } };
+}
+
+/** Financial heat never combines currencies or replaces missing costs with zero. */
+export function veoCalendarShade(day: any, metric: string, currency: string): number | null {
+    if (day.future) return null;
+    if (['net', 'cohort_net'].includes(metric)) {
+        const row = (metric === 'cohort_net' ? day.cohort_finance : day.finance)?.find((f: any) => f.currency === currency);
+        const value = row?.net_minor;
+        return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    }
+    return typeof day[metric] === 'number' ? day[metric] : null;
 }

@@ -127,3 +127,32 @@ it('reads historical and current Page inputs in a read-only transaction without 
     expect((await db.query<any>('SELECT veo_calendar_prepare($1) r', [owner])).rows[0].r).toBe(true);
     await expect(db.query('SELECT veo_calendar_prepare($1)', [manager])).rejects.toThrow(/denied/);
 });
+it('requests additional profile details idempotently, preserves proof and manual corrections, and leaves finance untouched', async () => {
+    const count = async () => (await db.query<any>('SELECT (SELECT count(*) FROM veo_payments)::int AS payments,(SELECT count(*) FROM veo_orders)::int AS orders')).rows[0];
+    const before = await count();
+    const fields = JSON.stringify([{ key: 'delivery_deadline', label: 'Delivery deadline' }]);
+    await db.query('SELECT veo_profile_detail_request($1,$2,$3)', [manager, client, fields]);
+    await db.query('SELECT veo_profile_detail_request($1,$2,$3)', [manager, client, fields]);
+    const current = (await db.query<any>('SELECT veo_profile_detail_access($1,$2) r', [owner, client])).rows[0].r;
+    expect(current.requested_fields).toHaveLength(1); expect(current.branch_worker_ids).toContain(manager);
+    expect(current.manual_fields.city).toBe('Cebu');
+    const payload = { entry: [{ id: '111', messaging: [{ sender: { id: 'client' }, recipient: { id: '111' }, message: { mid: 'profile-purpose-source', text: 'I need Video ads. Deliver by Friday.' } }] }] };
+    await db.query("INSERT INTO veo_event_inbox(event_key,page_id,occurred_at,payload) VALUES('profile-purpose-event',$1,now(),$2)", [page, JSON.stringify(payload)]);
+    await db.query("UPDATE veo_event_inbox SET status='done' WHERE event_key='profile-purpose-event'");
+    const job = (await db.query<any>('SELECT * FROM veo_demographic_claim(1)')).rows[0]; expect(job.contact_id).toBe(client);
+    const sources = (await db.query<any>('SELECT veo_demographic_sources($1,$2) r', [client, job.claim_token])).rows[0].r;
+    expect(sources.requested_fields[0]).toEqual({ key: 'delivery_deadline', label: 'Delivery deadline' }); expect(Array.isArray(sources.chatbot_fields)).toBe(true);
+    expect(sources.messages.some((m: any) => m.id === 'profile-purpose-source' && m.text.includes('Video ads'))).toBe(true);
+    await db.query('SELECT veo_profile_detail_request($1,$2,$3)', [manager, client, JSON.stringify([{ key: 'video_style', label: 'Preferred video style' }])]);
+    await db.query('SELECT veo_demographic_finish($1,$2,$3,$4)', [client, job.claim_token, JSON.stringify([{ field: 'buying_purpose', value: 'Video ads', evidence: [{ message_id: 'profile-purpose-source', quote: 'I need Video ads.', at: new Date().toISOString() }] }]), 'b'.repeat(64)]);
+    expect((await db.query<any>('SELECT status,next_attempt_at<=now() due FROM veo_contact_demographics WHERE contact_id=$1', [client])).rows[0]).toEqual({ status: 'queued', due: true });
+    expect((await db.query<any>('SELECT veo_profile_detail_access($1,$2) r', [manager, client])).rows[0].r.analysis.fields.some((f: any) => f.field === 'buying_purpose')).toBe(true);
+    expect(await count()).toEqual(before);
+    await expect(db.query('SELECT veo_profile_detail_request($1,$2,$3)', [owner, client, JSON.stringify([{ key: 'paid_amount', label: 'Paid amount' }])])).rejects.toThrow(/financial/);
+});
+it('blocks profile auto-fill access after Page revocation and keeps the new RPCs private', async () => {
+    await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2', [manager, page]);
+    try { await expect(db.query('SELECT veo_profile_detail_access($1,$2)', [manager, client])).rejects.toThrow(/denied/); }
+    finally { await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [manager, page]); }
+    expect((await db.query<any>("SELECT has_function_privilege('anon','veo_profile_detail_access(uuid,uuid)','EXECUTE') OR has_function_privilege('authenticated','veo_profile_detail_request(uuid,uuid,jsonb)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+});
