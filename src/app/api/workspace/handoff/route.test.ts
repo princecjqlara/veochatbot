@@ -6,6 +6,11 @@ vi.mock('@/lib/veo-jaucian', () => ({ connectedVeoTenant: m.connected, veoDirect
 import { GET, POST } from './route';
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
 describe('temporary photo access for Jaucian', () => {
+    it('reports an explicit deleted receipt as permanent cancellation without signing its photo',async()=>{
+        vi.stubEnv('VEO_JAUCIAN_SECRET','test-key');m.rpc.mockImplementation(async name=>({data:name==='veo_handoff'?null:true,error:null}));
+        const r=await GET(new NextRequest('https://veo.test/api/workspace/handoff?submission_id=00000000-0000-4000-8000-000000000001',{headers:{Authorization:'Bearer test-key'}}));
+        expect(r.status).toBe(410);expect((await r.json()).code).toBe('RECEIPT_DELETED');expect(m.storage.from).not.toHaveBeenCalled();
+    });
     it('authenticates workforce writes and verifies the connected tenant before accepting observations', async () => {
         vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');
         const payload = { resource: 'workforce', tenant_id: '00000000-0000-4000-8000-000000000001', workers: [] };

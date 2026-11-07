@@ -22,7 +22,7 @@ try {
     assert.equal((await get('/api/workspace/business-orders')).status, 401);
     const receipts = await get('/api/workspace/receipts?' + new URLSearchParams({ from: new Date(Date.parse(launch.launch_at) + 8 * 3600000).toISOString().slice(0, 10), to: today }), root);
     assert.equal(receipts.status, 200, receipts.body.error); assert(Array.isArray(receipts.body.items));
-    for (const r of receipts.body.items) { assert(!('object_path' in r)); assert(!('photo_sha256' in r)); if (r.salary_status === 'counted_from_verified_ledger') assert.equal(r.salary_holds.length, 0); }
+    for (const r of receipts.body.items) { assert(!r.deleted_at); assert(!('object_path' in r)); assert(!('photo_sha256' in r)); if (r.salary_status === 'counted_from_verified_ledger') assert.equal(r.salary_holds.length, 0); }
     result.checks.receipts = { scoped_count: receipts.body.total, ms: receipts.ms, private_metadata: true };
     const warnings = await get('/api/workspace/warnings', root); assert.equal(warnings.status, 200, warnings.body.error); assert(Array.isArray(warnings.body.workers));
     result.checks.warnings = { workers: warnings.body.workers.length, obligations: warnings.body.workers.reduce((n, w) => n + w.warnings.length, 0), ms: warnings.ms };
@@ -59,7 +59,7 @@ try {
     const quota = (await db.query(`SELECT count(*)::int AS snapshots,count(*) FILTER(WHERE quota=0)::int AS no_work_quota,
  count(*) FILTER(WHERE quota>capacity OR quota<0)::int AS invalid FROM veo_operating_quotas WHERE work_date=veo_today()`)).rows[0]; assert.equal(quota.invalid, 0);
     result.checks.quota = quota;
-    const privateFns = (await db.query(`SELECT count(*)::int AS exposed FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN('veo_receipt_save','veo_receipt_recheck','veo_receipt_note','veo_receipt_commission','veo_observe_business_orders','veo_business_orders_page','veo_workflow_warnings','veo_creative_inputs','veo_supply_target') AND(has_function_privilege('anon',oid,'EXECUTE') OR has_function_privilege('authenticated',oid,'EXECUTE'))`)).rows[0]; assert.equal(privateFns.exposed, 0);
+    const privateFns = (await db.query(`SELECT count(*)::int AS exposed FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN('veo_receipt_save','veo_receipt_recheck','veo_receipt_delete','veo_receipt_note','veo_receipt_commission','veo_observe_business_orders','veo_business_orders_page','veo_workflow_warnings','veo_creative_inputs','veo_supply_target') AND(has_function_privilege('anon',oid,'EXECUTE') OR has_function_privilege('authenticated',oid,'EXECUTE'))`)).rows[0]; assert.equal(privateFns.exposed, 0);
     const after = await counts(); assert.equal(after.retained_payments, before.retained_payments); assert.equal(after.archive, before.archive); assert.equal(after.launch.getTime(), before.launch.getTime());
     result.checks.retained_finance_and_launch_unchanged = true; result.checks.private_functions = true; result.passed = true;
 } catch (e) { result.error = e.message; process.exitCode = 1; }

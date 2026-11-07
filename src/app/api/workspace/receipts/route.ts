@@ -61,6 +61,10 @@ export async function POST(request: NextRequest) {
         const scope = await access(request); actor = scope.user_id;
         if (!request.headers.get('content-type')?.includes('multipart/form-data')) {
             const body = await request.json();
+            if (body.action === 'delete') {
+                if (!uuid(body.receipt_id) || typeof body.reason !== 'string' || body.reason.trim().length < 3 || body.reason.length > 500 || body.cancel_closed != null && typeof body.cancel_closed !== 'boolean') throw Error('Choose a receipt and enter a deletion reason of 3 to 500 characters');
+                return response(checked(await db.rpc('veo_receipt_delete', { p_actor: scope.user_id, p_id: body.receipt_id, p_reason: body.reason.trim(), p_cancel_closed: body.cancel_closed === true })));
+            }
             if (body.action === 'notes') {
                 if (!uuid(body.receipt_id) || typeof body.notes !== 'string' || body.notes.length > 2000) throw Error('Choose a receipt and notes of at most 2000 characters');
                 return response(checked(await db.rpc('veo_receipt_note', { p_actor: scope.user_id, p_id: body.receipt_id, p_notes: body.notes })));

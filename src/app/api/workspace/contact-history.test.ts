@@ -19,7 +19,7 @@ beforeEach(() => {
         let data: any = table === 'contacts' ? { id: 'contact', page_id: 'page' } : table === 'veo_contact_details' ? { fields: {} } : table === 'veo_order_facts' ? [
             { id: 'current-order', seller_id: 'active', currency: 'PHP', paid_minor: 10000 }, { id: 'former-order', seller_id: 'former', currency: 'PHP', paid_minor: 20000 }, { id: 'private-order', seller_id: 'outside', currency: 'PHP', paid_minor: 90000 }
         ] : [];
-        const chain: any = { select: () => chain, eq: () => chain, order: () => chain, maybeSingle: () => chain,
+        const chain: any = { select: () => chain, eq: () => chain, is: () => chain, order: () => chain, maybeSingle: () => chain,
             in: (key: string, values: string[]) => { if (table === 'veo_order_facts') { m.sellerFilter = values; data = data.filter((o: any) => values.includes(o[key])); } return chain; },
             then: (resolve: (value: any) => any) => Promise.resolve({ data }).then(resolve) };
         return chain;

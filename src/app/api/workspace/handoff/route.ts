@@ -44,7 +44,12 @@ export async function GET(request: NextRequest) {
     if (!uuid(id)) return NextResponse.json({ error: 'Invalid submission' }, { status: 400 });
     const db = getSupabaseAdmin(), result = await db.rpc('veo_handoff', { p_submission: id });
     if (result.error) return NextResponse.json({ error: 'Eligibility unavailable' }, { status: 503 });
-    if (!result.data) return NextResponse.json({ error: 'Submission ineligible or expired' }, { status: 409 });
+    if (!result.data) {
+        const deleted = await db.rpc('veo_submission_receipt_deleted', {p_submission:id});
+        if (deleted.error) return NextResponse.json({error:'Submission state unavailable'},{status:503});
+        if (deleted.data === true) return NextResponse.json({error:'Receipt deleted; delivery cancelled',code:'RECEIPT_DELETED'},{status:410});
+        return NextResponse.json({ error: 'Submission ineligible or expired' }, { status: 409 });
+    }
     const s = await db.from('veo_submissions').select('object_path,status,deleted_at').eq('id', id).single();
     if (s.error) return NextResponse.json({ error: 'Submission state unavailable' }, { status: 503 });
     if (!s.data || ['blocked', 'expired'].includes(s.data.status)) return NextResponse.json({ error: 'Submission was blocked or expired; review and re-upload' }, { status: 409 });

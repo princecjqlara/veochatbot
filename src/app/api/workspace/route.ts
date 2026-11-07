@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
                 db.from('veo_contact_details').select('*').eq('contact_id', contactId).maybeSingle(),
                 db.from('veo_order_facts').select('*').eq('contact_id', contactId).in('seller_id', workers),
                 db.rpc('get_contact_finance_records', { p_page_id: contact.data.page_id, p_contact_id: contactId }),
-                db.from('veo_closed_deals').select('id,order_id,amount_minor,currency,occurred_at,verified_payment_id,seller_id').eq('contact_id', contactId).in('seller_id', workers)
+                db.from('veo_closed_deals').select('id,order_id,amount_minor,currency,occurred_at,verified_payment_id,seller_id').eq('contact_id', contactId).is('voided_at', null).in('seller_id', workers)
             ]);
             if (details.error || orders.error || legacy.error || closedDeals.error) throw new Error('Contact financial history unavailable');
             const payments = orders.data?.length ? await db.from('veo_payments').select('*').in('order_id', orders.data.map(o => o.id)).order('occurred_at') : { data: [], error: null };

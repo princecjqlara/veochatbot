@@ -271,3 +271,48 @@ it('accepts multiple distinct new Closed Deals for the same client without repla
     const second=await rpc('veo_receipt_save',[member,JSON.stringify({request_id:id(request++),seller_id:member,contact_id:cid,receipt_kind:'closed',object_path:path,photo_sha256:'b'.repeat(64),closed_amount_minor:5000,closed_currency:'PHP',closed_occurred_at:new Date().toISOString(),deal_mode:'new'})]);
     expect(second.closed_deal_id).not.toBe(receipt.closed_deal_id);expect(second.closed_amount_minor).toBe(5000);expect((await rpc('veo_receipt_access',[member,receipt.id])).closed_amount_minor).toBe(4000);
 });
+it('lets staff delete their own receipt, stops forwarding and retains the sale and audit unless cancellation is chosen',async()=>{
+    const {cid,receipt}=await stageClose(),before=(await db.query<{n:number}>('SELECT count(*)::int n FROM veo_payments')).rows[0].n;
+    const deleted=await rpc('veo_receipt_delete',[member,receipt.id,'Uploaded the wrong photo',false]);
+    expect(deleted.deleted_by).toBe(member);expect(deleted.salary_status).toBe('deleted');expect(deleted.photo_available).toBe(false);expect(deleted.holds).toEqual(['receipt_deleted']);
+    expect(await rpc('veo_handoff',[receipt.delivery_submission])).toBeNull();
+    expect((await db.query<any>('SELECT status FROM veo_submissions WHERE id=$1',[receipt.delivery_submission])).rows[0].status).toBe('blocked');
+    expect((await db.query<any>('SELECT count(*)::int n FROM veo_sales_facts WHERE contact_id=$1',[cid])).rows[0].n).toBe(1);
+    const day=new Date(Date.now()+8*3600000).toISOString().slice(0,10),list=await rpc('veo_receipts_page',[owner,day,day,null,null,0]);expect(list.items.some((r:any)=>r.id===receipt.id)).toBe(false);
+    const warnings=await rpc('veo_workflow_warnings',[member,null]);expect(warnings.workers[0].warnings.some((w:any)=>w.receipt_id===receipt.id)).toBe(false);
+    await expect(rpc('veo_receipt_recheck',[member,receipt.id,null])).rejects.toThrow(/Deleted/);await expect(rpc('veo_receipt_note',[member,receipt.id,'Change'])).rejects.toThrow(/read-only/);
+    await rpc('veo_receipt_delete',[member,receipt.id,'Retry of the same deletion',false]);
+    expect((await db.query<any>("SELECT count(*)::int n FROM veo_audit WHERE entity_id=$1 AND action='receipt_deleted'",[receipt.id])).rows[0].n).toBe(1);
+    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM veo_payments')).rows[0].n).toBe(before);
+});
+it('allows managers, leaders and Owner to delete receipts in their branch while blocking other branches and revoked Pages',async()=>{
+    for(const actor of [manager,leader,owner]){const {receipt}=await stageClose();expect((await rpc('veo_receipt_delete',[actor,receipt.id,'Duplicate evidence',false])).deleted_by).toBe(actor);}
+    const {receipt}=await stageClose();await expect(rpc('veo_receipt_delete',[other,receipt.id,'Other branch',false])).rejects.toThrow(/permitted/);
+    await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2',[manager,page]);await expect(rpc('veo_receipt_delete',[manager,receipt.id,'Revoked access',false])).rejects.toThrow(/permitted/);await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)',[manager,page]);
+    await expect(rpc('veo_receipt_delete',[member,receipt.id,'',false])).rejects.toThrow(/reason/);
+    expect((await db.query<any>("SELECT has_function_privilege('anon','veo_receipt_delete(uuid,uuid,text,boolean)','EXECUTE') OR has_function_privilege('authenticated','veo_receipt_delete(uuid,uuid,text,boolean)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+});
+it('can explicitly cancel a mistaken order-free Closed Deal, and prevents it being linked or counted again',async()=>{
+    const {cid,receipt,at}=await stageClose(),day=new Date(Date.parse(at)+8*3600000).toISOString().slice(0,10),before=await rpc('veo_salary',[member,day]);
+    await rpc('veo_receipt_delete',[manager,receipt.id,'Wrong client selected; cancel this deal',true]);
+    expect((await db.query<any>('SELECT count(*)::int n FROM veo_sales_facts WHERE contact_id=$1',[cid])).rows[0].n).toBe(0);expect((await rpc('veo_salary',[member,day])).closed).toBe(before.closed-1);
+    const o=await action(member,'order',{request_id:id(request++),seller_id:member,page_id:page,contact_id:cid,total_minor:10000,currency:'PHP',description:'A different real deal',deal_mode:'new'});
+    await expect(rpc('veo_link_closed_deal',[member,receipt.closed_deal_id,o.id])).rejects.toThrow(/same client/);
+    expect((await db.query<any>('SELECT voided_by FROM veo_closed_deals WHERE id=$1',[receipt.closed_deal_id])).rows[0].voided_by).toBe(manager);
+});
+it('does not let receipt deletion cancel a linked deal or change verified payments and commission',async()=>{
+    const {cid,receipt}=await stageClose(),o=await action(member,'order',{request_id:id(request++),seller_id:member,page_id:page,contact_id:cid,total_minor:10000,currency:'PHP',description:'Actual paid order',closed_deal_id:receipt.closed_deal_id});
+    await action(member,'payment',{request_id:id(request++),order_id:o.id,settle_done:true,confirmed:true,amount_minor:6000,reference:'REAL-'+request,occurred_at:new Date().toISOString()});
+    const day=new Date(Date.now()+8*3600000).toISOString().slice(0,10),before=await rpc('veo_salary',[member,day]);
+    await expect(rpc('veo_receipt_delete',[manager,receipt.id,'Cannot erase an actual sale',true])).rejects.toThrow(/unlinked/);
+    await rpc('veo_receipt_delete',[member,receipt.id,'Remove incorrect evidence only',false]);expect(await rpc('veo_salary',[member,day])).toEqual(before);
+    expect((await db.query('SELECT * FROM veo_payments WHERE order_id=$1',[o.id])).rows).toHaveLength(2);
+});
+it('lets another active receipt replace a never-sent deleted photo without reviving the deleted receipt',async()=>{
+    const {cid,receipt}=await stageClose(),path=`${tenant}/${member}/${id(request++)}`;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)',[path]);
+    const alternative=await rpc('veo_receipt_save',[member,JSON.stringify({request_id:id(request++),contact_id:cid,seller_id:member,receipt_kind:'closed',closed_deal_id:receipt.closed_deal_id,object_path:path,photo_sha256:'a'.repeat(64)})]);
+    expect(alternative.delivery_submission).toBe(receipt.delivery_submission);
+    await rpc('veo_receipt_delete',[member,receipt.id,'Use clearer evidence',false]);await rpc('veo_receipt_recheck',[member,alternative.id,null]);
+    expect((await rpc('veo_handoff',[alternative.delivery_submission])).closed_deal_id).toBe(receipt.closed_deal_id);
+    await expect(rpc('veo_receipt_recheck',[member,receipt.id,null])).rejects.toThrow(/Deleted/);
+});

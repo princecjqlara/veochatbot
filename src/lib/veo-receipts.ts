@@ -1,4 +1,5 @@
 export const receiptHoldLabels: Record<string, string> = {
+    receipt_deleted: 'Receipt deleted; it cannot be forwarded or rechecked',
     eligible_lead_required: 'Set the contact lead stage to Qualified or Converted',
     converted_lead_required: 'Set the contact lead stage to Converted',
     create_and_link_order: 'Create an order and link it to this receipt',

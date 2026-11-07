@@ -29,3 +29,10 @@ it('denies cross-origin notes, oversized notes and revoked receipt access', asyn
     expect((await post({ action: 'notes', receipt_id: receipt, notes: 'a'.repeat(2001) })).status).toBe(400); expect(m.rpc).not.toHaveBeenCalled();
     m.rpc.mockResolvedValue({ error: { code: '42501', message: 'Receipt outside your branch' } }); expect((await post({ action: 'notes', receipt_id: receipt, notes: 'Edit' })).status).toBe(403);
 });
+it('deletes only through the session actor and validates reasons, Page access and request origin',async()=>{
+    expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo',cancel_closed:false})).status).toBe(200);
+    expect(m.rpc).toHaveBeenCalledWith('veo_receipt_delete',{p_actor:worker,p_id:receipt,p_reason:'Wrong photo',p_cancel_closed:false});
+    m.rpc.mockClear();expect((await post({action:'delete',receipt_id:receipt,reason:'',cancel_closed:false})).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled();
+    expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo'},'https://other.test')).status).toBe(403);
+    m.rpc.mockResolvedValue({error:{code:'42501',message:'Receipt outside your permitted branch'}});expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo'})).status).toBe(403);
+});
