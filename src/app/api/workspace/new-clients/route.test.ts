@@ -9,6 +9,10 @@ const worker = '00000000-0000-4000-8000-000000000001', client = '00000000-0000-4
 const post = (body: any, origin = 'https://veo.test') => POST(new NextRequest('https://veo.test/api/workspace/new-clients', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
 beforeEach(() => { m.session.mockResolvedValue({ user: { id: worker } });m.scope.mockResolvedValue({ user_id: worker, launch_at: '2026-11-05' });m.rpc.mockResolvedValue({ data: { saved: true } }); });
 afterEach(() => vi.clearAllMocks());
+it('loads the current scope without querying sales, contact history or the client queue', async () => {
+    const r = await GET(new NextRequest('https://veo.test/api/workspace/new-clients?context=1'));
+    expect(r.status).toBe(200);expect((await r.json()).scope.user_id).toBe(worker);expect(m.rpc).not.toHaveBeenCalled();
+});
 it('authenticates the current actor and passes bounded Page/search filters to the scoped read', async () => {
     const get = () => GET(new NextRequest('https://veo.test/api/workspace/new-clients?view=offers&search=Client&page_id=' + client));
     m.session.mockResolvedValueOnce(null);expect((await get()).status).toBe(401);expect(m.rpc).not.toHaveBeenCalled();

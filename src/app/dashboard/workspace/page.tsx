@@ -38,11 +38,11 @@ function Workspace() {
     async function refresh() {
         const generation = ++refreshGeneration.current;
         const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : ['profile', 'capacity', 'calendar', 'budget', 'performance', 'rankings', 'receipts', 'warnings', 'new_clients'].includes(view) ? 'dashboard' : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
-        const r = await fetch(`/api/workspace?${filters}`);
+        const r = await fetch(view === 'new_clients' ? '/api/workspace/new-clients?context=1' : `/api/workspace?${filters}`);
         const body = await r.json();
         if (!r.ok) throw new Error(body.error);
         if (generation !== refreshGeneration.current) return;
-        setData(body);
+        setData(view === 'new_clients' ? { scope: body.scope, accounts: [], tomorrow: [] } : body);
     }
     useEffect(() => {
         const controller = new AbortController();
@@ -58,11 +58,11 @@ function Workspace() {
         return () => { current = false; refreshGeneration.current++; clearTimeout(timer); };
     }, [day, view, dealStatus, page, query, offset]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
-        const id = params.get('contact_id'); if (!id) return;
+        const id = params.get('contact_id'); if (!id || view === 'new_clients') return;
         const controller = new AbortController();
         fetch(`/api/workspace?contact_id=${encodeURIComponent(id)}`, { signal: controller.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw new Error(b.error); if (b.contact) setPicked({ ...b.contact, page_name: pages.find(p => p.id === b.contact.page_id)?.name || 'Assigned Page' }); }).catch(e => { if (e.name !== 'AbortError') setMessage(e.message); });
         return () => controller.abort();
-    }, [params.get('contact_id')]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [params.get('contact_id'), view]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (!data || ['owner', 'team_leader'].includes(data.scope.role) || view !== 'dashboard') return;
         setContactsLoading(true);

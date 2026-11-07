@@ -33,10 +33,13 @@ try {
     for (const actor of expectations) {
         const token = await encode({ secret: process.env.NEXTAUTH_SECRET, maxAge: 600, token: { id: actor.user_id } });
         const headers = { Cookie: `__Secure-next-auth.session-token=${token}; next-auth.session-token=${token}` };
+        const context = await read('/api/workspace/new-clients?context=1', headers);
+        assert.equal(context.status, 200, 'Intake context failed');
+        const current = await context.json();assert.equal(current.scope.user_id, actor.user_id);assert.equal(current.scope.tenant_id, launch.id);
         for (const view of ['pool', 'offers', 'assigned']) {
             const started = Date.now(), response = await read('/api/workspace/new-clients?view=' + view, headers);
+            assert.equal(response.status, 200, 'Intake read failed with HTTP ' + response.status);
             const data = await response.json();
-            assert.equal(response.status, 200, data.error || 'Intake read failed');
             assert.equal(response.headers.get('cache-control'), 'no-store');
             assert.equal(data.role, actor.role);assert.equal(typeof data.readiness.ready, 'boolean');
             assert(Array.isArray(data.items) && Array.isArray(data.roster));

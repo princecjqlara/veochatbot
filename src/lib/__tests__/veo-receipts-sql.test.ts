@@ -521,6 +521,27 @@ describe('Tokko Ready/Busy and client acceptance', () => {
         await db.query('DELETE FROM veo_intake_readiness WHERE tenant_id=$1', [tenant]);
     });
     afterEach(async () => { transactionalTest = false;await db.exec('ROLLBACK'); });
+    it('keeps the private queue current with contact edits, exclusions and deletion', async () => {
+        expect((await db.query('SELECT id FROM veo_intake_contacts WHERE id=$1', [cid])).rows).toHaveLength(1);
+        await db.query("UPDATE contacts SET name='Updated intake name',psid='updated-intake-psid',pipeline_stage='qualified' WHERE id=$1", [cid]);
+        const changed = await rpc('veo_intake_page', [member, 'pool', null, 'Updated intake name', 0]);
+        expect(changed.items[0]).toMatchObject({ id: cid, name: 'Updated intake name', psid: 'updated-intake-psid', pipeline_stage: 'qualified' });
+        await db.query("UPDATE contacts SET pipeline_stage='not_qualified' WHERE id=$1", [cid]);expect((await pageFor(member)).items).toHaveLength(0);
+        await db.query("UPDATE contacts SET last_interaction_at=now()-interval '20 days' WHERE id=$1", [cid]);
+        expect((await db.query('SELECT id FROM veo_intake_contacts WHERE id=$1', [cid])).rows).toHaveLength(0);
+        await db.query("UPDATE contacts SET pipeline_stage='qualified',last_interaction_at=now() WHERE id=$1", [cid]);expect((await pageFor(member)).total).toBe(1);
+        await db.query('DELETE FROM contacts WHERE id=$1', [cid]);expect((await db.query('SELECT id FROM veo_intake_contacts WHERE id=$1', [cid])).rows).toHaveLength(0);
+        expect((await db.query<any>("SELECT has_table_privilege('anon','veo_intake_contacts','SELECT') OR has_table_privilege('authenticated','veo_intake_contacts','SELECT') exposed")).rows[0].exposed).toBe(false);
+    });
+    it('searches and paginates queue clients before loading display details, including uppercase client IDs', async () => {
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) SELECT gen_random_uuid(),$1,'intake-extra-'||i,'Queue row '||i,'new',now() FROM generate_series(1,52) i", [page]);
+        const first = await rpc('veo_intake_page', [member, 'pool', null, 'Queue row', 0]);
+        const second = await rpc('veo_intake_page', [member, 'pool', null, 'Queue row', 50]);
+        expect(first.total).toBe(52);expect(first.items).toHaveLength(50);expect(second.items).toHaveLength(2);
+        const all = [...first.items, ...second.items];expect(new Set(all.map((c: any) => c.id)).size).toBe(52);
+        const exact = await rpc('veo_intake_page', [member, 'pool', page, first.items[0].id.toUpperCase(), 0]);
+        expect(exact.total).toBe(1);expect(exact.items[0].id).toBe(first.items[0].id);expect(exact.items[0].page_name).toBeTruthy();
+    });
     it('requires Ready, accepts once, makes the worker Busy and pauses the chatbot without a sale', async () => {
         await expect(intake(member, 'accept')).rejects.toThrow(/Ready/);
         await ready(member);expect((await pageFor(member)).readiness.ready).toBe(true);

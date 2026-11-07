@@ -4,7 +4,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, uuid } from '@/lib/veo-workspace';
 import { readVeoRpc } from '@/lib/veo-report-read';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 120;
 const response = (data: any, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 async function access(request: NextRequest) {
     const session = await getSessionFromRequest(request);
@@ -21,9 +21,10 @@ const fail = (e: any) => response({ error: e.code === 'DATABASE_UNAVAILABLE' ? '
 export async function GET(request: NextRequest) {
     try {
         const scope = await access(request), q = request.nextUrl.searchParams;
+        if (q.get('context') === '1') return response({ scope });
         const page = q.get('page_id') || null, search = (q.get('search') || '').trim(), view = q.get('view') || 'pool', offset = Number(q.get('offset') || 0);
         if (page && !uuid(page) || search.length > 200 || !['pool', 'offers', 'assigned'].includes(view) || !Number.isSafeInteger(offset) || offset < 0 || offset > 100000) throw Error('Choose valid client filters');
-        return response(checked(await readVeoRpc(getSupabaseAdmin(), 'veo_intake_page', { p_actor: scope.user_id, p_view: view, p_page: page, p_search: search, p_offset: offset })));
+        return response(checked(await readVeoRpc(getSupabaseAdmin(), 'veo_intake_page', { p_actor: scope.user_id, p_view: view, p_page: page, p_search: search, p_offset: offset }, 35000)));
     } catch (e) { return fail(e); }
 }
 export async function POST(request: NextRequest) {
