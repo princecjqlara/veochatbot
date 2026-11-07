@@ -103,7 +103,10 @@ export async function getContactProfile(db: Db, pageId: string, contactId: strin
     const intelligence = profileDetails ? contactIntelligence(profileDetails, snapshot?.payload?.facts || []) : null;
     const displayDefinitions = [...profileFieldDefinitions(configResult.data?.details_to_collect, profileDetails?.requested_fields),
         ...(Array.isArray(configResult.data?.details_to_collect) ? configResult.data.details_to_collect.filter((v: any) => typeof v === 'string').map((label: string) => ({ key: profileFieldKey(label), label })) : [])];
-    const combinedDetails = mergeContactDetailLayers(displayDefinitions, extracted, intelligence?.details || {}, saved.collected_details, manual);
+    const filledProfileFields = Object.fromEntries((intelligence?.fields || []).filter(f => f.source !== 'unknown' && f.value !== 'Unknown'
+        && (!['buying_purpose', 'problems_encountered', 'best_contact_time'].includes(f.key) || displayDefinitions.some(d => d.key === f.key && configResult.data?.details_to_collect?.includes(d.label))))
+        .map(f => [f.label, f.value]));
+    const combinedDetails = mergeContactDetailLayers(displayDefinitions, extracted, filledProfileFields, saved.collected_details, manual);
     const answerEvidence = Object.fromEntries(Object.keys(combinedDetails).map(label => [label, intelligence?.fields.find(f => f.key === profileFieldKey(label))?.evidence || []]));
     const answerSources = Object.fromEntries(Object.keys(combinedDetails).map(label => [label,
         Object.keys(manual).some(k => profileFieldKey(k) === profileFieldKey(label)) ? 'manual' : Object.keys(saved.collected_details).some(k => profileFieldKey(k) === profileFieldKey(label)) ? 'saved' : 'extracted']));

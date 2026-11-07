@@ -7,7 +7,7 @@ export const profileInsightFields: ProfileFieldDefinition[] = [
 ];
 const flat = (v: string) => v.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
 const aliases = new Map<string, string>([
-    ...['purpose', 'purposeofbuying', 'buyingpurpose', 'goal', 'goals', 'purchasepurpose'].map(k => [k, 'buying_purpose'] as const),
+    ...['purpose', 'purposeofbuying', 'buyingpurpose', 'goal', 'goals', 'purchasepurpose', 'purposeofvideo', 'videopurpose', 'goalngvideo', 'purposengvideo'].map(k => [k, 'buying_purpose'] as const),
     ...['problem', 'problems', 'problemsencountered', 'issues', 'painpoints'].map(k => [k, 'problems_encountered'] as const),
     ...['bestcontacttime', 'besttimetocontact', 'statedbesttimetocontact', 'preferredcontacttime', 'preferredtime'].map(k => [k, 'best_contact_time'] as const),
     ...['phone', 'phonenumber', 'mobile', 'mobilenumber', 'contactnumber'].map(k => [k, 'phone'] as const),

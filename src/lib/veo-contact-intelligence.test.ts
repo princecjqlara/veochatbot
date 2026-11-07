@@ -6,6 +6,7 @@ it('deduplicates existing labels and aliases while blocking financial control fi
     expect(defs.filter(f => f.key === 'phone')).toHaveLength(1); expect(defs.filter(f => f.key === 'company_name')).toHaveLength(1);
     expect(defs.filter(f => f.key === 'buying_purpose')).toHaveLength(1); expect(defs.some(f => f.key === 'age')).toBe(false);
     expect(profileFieldKey("Client's gender")).toBe('gender');
+    expect(profileFieldKey('Goal ng video')).toBe('buying_purpose');
     for (const label of ['Paid amount', 'Lead stage', 'Average order value', 'Salary rate', 'Account password']) expect(allowedProfileField(label)).toBe(false);
 });
 it('accepts only exact customer disclosures with traceable evidence and allows real negative problem statements', () => {

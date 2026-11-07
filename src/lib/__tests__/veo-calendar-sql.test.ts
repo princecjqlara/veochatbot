@@ -143,6 +143,9 @@ it('requests additional profile details idempotently, preserves proof and manual
     const sources = (await db.query<any>('SELECT veo_demographic_sources($1,$2) r', [client, job.claim_token])).rows[0].r;
     expect(sources.requested_fields[0]).toEqual({ key: 'delivery_deadline', label: 'Delivery deadline' }); expect(Array.isArray(sources.chatbot_fields)).toBe(true);
     expect(sources.messages.some((m: any) => m.id === 'profile-purpose-source' && m.text.includes('Video ads'))).toBe(true);
+    expect((await db.query<any>("SELECT indexdef FROM pg_indexes WHERE indexname='veo_event_profile_sources'")).rows[0].indexdef).toContain('page_id');
+    expect((await db.query<any>("SELECT proconfig FROM pg_proc WHERE oid='veo_demographic_sources_base(uuid,uuid)'::regprocedure")).rows[0].proconfig).toContain('plan_cache_mode=force_custom_plan');
+    expect((await db.query<any>("SELECT indexname FROM pg_indexes WHERE indexname IN('veo_calendar_contact_base','veo_calendar_meta_stages','veo_calendar_crm_stages')")).rows).toHaveLength(3);
     await db.query('SELECT veo_profile_detail_request($1,$2,$3)', [manager, client, JSON.stringify([{ key: 'video_style', label: 'Preferred video style' }])]);
     await db.query('SELECT veo_demographic_finish($1,$2,$3,$4)', [client, job.claim_token, JSON.stringify([{ field: 'buying_purpose', value: 'Video ads', evidence: [{ message_id: 'profile-purpose-source', quote: 'I need Video ads.', at: new Date().toISOString() }] }]), 'b'.repeat(64)]);
     expect((await db.query<any>('SELECT status,next_attempt_at<=now() due FROM veo_contact_demographics WHERE contact_id=$1', [client])).rows[0]).toEqual({ status: 'queued', due: true });
