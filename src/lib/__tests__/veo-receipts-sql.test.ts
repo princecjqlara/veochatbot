@@ -127,3 +127,15 @@ it('creative inputs enforce executive Page access and retain authoritative finan
     expect(Array.isArray(report.clients)).toBe(true); expect(Array.isArray(report.spend)).toBe(true); expect(report.page_id).toBe(page);
     expect((await db.query<any>("SELECT has_function_privilege('anon','veo_creative_inputs(uuid,uuid,date,date,text)','EXECUTE') AS exposed")).rows[0].exposed).toBe(false);
 });
+it('allocates Page quota toward supplied Pages while conserving each worker target', async () => {
+    const otherPage = id(900);
+    await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,veo_tenant_id,veo_enabled) VALUES($1,'333','Funded Page','test',$2,true)", [otherPage, tenant]);
+    for (const user of [owner, other]) await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [user, otherPage]);
+    await db.query("UPDATE veo_ad_planning_state SET active_ads=0,allocated_daily_budget_minor=0,checked_at=now() WHERE page_id=$1", [page]);
+    await db.query("INSERT INTO veo_ad_planning_state VALUES($1,'99','PHP',1,20000,'daily',now(),'Verified fixture inventory')", [otherPage]);
+    expect(await rpc('veo_page_supply_weight', [other, page])).toBe(0); expect(await rpc('veo_page_supply_weight', [other, otherPage])).toBe(1);
+    const plans = (await rpc('veo_page_capacity', [owner, new Date(Date.now() + 32 * 3600000).toISOString().slice(0, 10)])).plans;
+    const allocations = plans.flatMap((p: any) => p.workers.filter((w: any) => w.user_id === other).map((w: any) => ({ page: p.page_id, target: w.page_target })));
+    expect(allocations.find((a: any) => a.page === page).target).toBe(0); expect(allocations.find((a: any) => a.page === otherPage).target).toBe(1);
+    expect(allocations.reduce((n: number, a: any) => n + a.target, 0)).toBe(1);
+});
