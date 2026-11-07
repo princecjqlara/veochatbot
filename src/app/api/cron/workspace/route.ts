@@ -4,6 +4,7 @@ import { processWorkspaceEvents } from '@/lib/veo-events';
 import { POST as processFacebookWebhook } from '@/app/api/facebook/webhook/route';
 import { syncTelegramWorkforce } from '@/lib/veo-telegram-sync';
 import { refreshPageBudgets } from '@/lib/veo-budget';
+import { refreshSubmissionFacebook } from '@/lib/veo-facebook-check';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -47,6 +48,10 @@ export async function GET(request: NextRequest) {
         for (const s of claimed.data || []) {
             let status = 'queued', failure: string | null = null;
             try {
+                // Leave time to finish the lease after a bounded Facebook read
+                // and Jaucian request; later items retry on the next cron run.
+                if (Date.now() - startedAt > 240000) throw new Error('Delivery budget exhausted');
+                await refreshSubmissionFacebook(db, s.id);
                 const eligibility = await db.rpc('veo_handoff', { p_submission: s.id });
                 if (eligibility.error) throw new Error('Eligibility read failed');
                 if (!eligibility.data) { status = 'blocked'; failure = 'Eligibility or page access changed; review and resubmit'; }

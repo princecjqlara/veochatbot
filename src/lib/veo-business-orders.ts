@@ -1,6 +1,17 @@
 import { parseMoneyMinor } from './money-minor';
 import type { MessengerHistoryMessage } from './messaging-auto-tag';
 export type BusinessOrderNotice = { invoice_id: string; message_id: string; total_minor: number; currency: 'PHP'; occurred_at: string };
+export type BusinessStageNotice = { stage: string; message_id: string; occurred_at: string };
+/** Order notices and customer-written text cannot establish a lead stage. */
+export function parseBusinessStageNotice(message: MessengerHistoryMessage, pageId: string, launchAt: string): BusinessStageNotice | null {
+    const at = Date.parse(message.created_time || '');
+    if (message.from?.id !== pageId || !message.id || !Number.isFinite(at) || at < Date.parse(launchAt) || at > Date.now()) return null;
+    const match = /^Lead stage set to ([^\r\n]{1,80}?)\.?$/i.exec(message.message?.trim() || '');
+    if (!match) return null;
+    const key = match[1].trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const stages: Record<string, string> = { qualified: 'qualified', converted: 'converted', not_qualified: 'not_qualified', unqualified: 'not_qualified', disqualified: 'not_qualified', intake: 'new', new: 'new', contacted: 'engaged', engaged: 'engaged', interested: 'engaged', collecting_details: 'collecting_details', order_created: 'order_created', opted_out: 'opted_out' };
+    return { stage: stages[key] || 'unknown', message_id: message.id, occurred_at: new Date(at).toISOString() };
+}
 /** An exact Page-authored Meta order notice is an order source, never payment proof. */
 export function parseBusinessOrderNotice(message: MessengerHistoryMessage, pageId: string, launchAt: string): BusinessOrderNotice | null {
     if (message.from?.id !== pageId || !message.id) return null;
@@ -15,11 +26,11 @@ export function parseBusinessOrderNotice(message: MessengerHistoryMessage, pageI
     } catch { return null; }
 }
 
-export async function fetchBusinessOrderNotices(input: { pageId: string; psid: string; token: string; launchAt: string }) {
+export async function fetchBusinessOrderNotices(input: { pageId: string; psid: string; token: string; launchAt: string; timeoutMs?: number }) {
     const start = new URL(`https://graph.facebook.com/v21.0/${encodeURIComponent(input.pageId)}/conversations`);
     start.searchParams.set('user_id', input.psid);
     start.searchParams.set('fields', 'id,participants,messages.limit(100){id,message,from,created_time}');
-    const headers = { Authorization: `Bearer ${input.token}` }, deadline = Date.now() + 25000;
+    const headers = { Authorization: `Bearer ${input.token}` }, deadline = Date.now() + Math.min(25000, Math.max(1, input.timeoutMs || 25000));
     async function read(url: URL) {
         if (url.protocol !== 'https:' || url.hostname !== 'graph.facebook.com') throw Error('Unexpected Facebook pagination');
         url.searchParams.delete('access_token');
@@ -30,8 +41,9 @@ export async function fetchBusinessOrderNotices(input: { pageId: string; psid: s
     const body = await read(start);
     if (!Array.isArray(body.data)) throw Error('Facebook conversation data unavailable');
     const thread = body.data.find((c: any) => c.participants?.data?.some((p: any) => String(p.id) === input.psid));
-    if (!thread) return { orders: [] as BusinessOrderNotice[], complete: true, pages_checked: 0, coverage: 'No accessible Facebook conversation for this client.' };
+    if (!thread) return { orders: [] as BusinessOrderNotice[], stage: null as BusinessStageNotice | null, complete: false, pages_checked: 0, coverage: 'No accessible Facebook conversation for this client.' };
     let batch = thread.messages, pages = 0, complete = false;
+    let stage: BusinessStageNotice | null = null;
     const orders = new Map<string, BusinessOrderNotice>(), visited = new Set<string>();
     while (batch && pages < 5 && Date.now() < deadline) {
         if (!Array.isArray(batch.data)) throw Error('Facebook message data unavailable');
@@ -39,6 +51,8 @@ export async function fetchBusinessOrderNotices(input: { pageId: string; psid: s
         for (const m of batch.data) {
             const order = parseBusinessOrderNotice(m, input.pageId, input.launchAt);
             if (order && !orders.has(order.invoice_id)) orders.set(order.invoice_id, order);
+            const event = parseBusinessStageNotice(m, input.pageId, input.launchAt);
+            if (event && (!stage || event.occurred_at > stage.occurred_at)) stage = event;
         }
         const reachedCutoff = batch.data.some((m: any) => Date.parse(m.created_time) < Date.parse(input.launchAt));
         if (!batch.paging?.next || reachedCutoff) { complete = true; break; }
@@ -47,5 +61,5 @@ export async function fetchBusinessOrderNotices(input: { pageId: string; psid: s
         const url = new URL(next);url.searchParams.set('fields', 'id,message,from,created_time');
         batch = await read(url);
     }
-    return { orders: [...orders.values()], complete, pages_checked: pages, coverage: complete ? 'Available order notices since launch checked. Meta may omit order details.' : 'Partial Facebook order-notice scan; older notices may be unavailable. Fetch again or check Business Suite.' };
+    return { orders: [...orders.values()], stage, complete, pages_checked: pages, coverage: complete ? 'Available Facebook notices since launch checked. Meta may omit Business Suite stage and order details; missing evidence blocks receipt submission.' : 'Partial Facebook notice scan. Receipt submission is blocked until a complete check succeeds.' };
 }

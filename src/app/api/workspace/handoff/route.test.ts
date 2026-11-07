@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), connected: vi.fn(), storage: { from: vi.fn() } }));
+const m = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), connected: vi.fn(), refresh: vi.fn(), storage: { from: vi.fn() } }));
+vi.mock('@/lib/veo-facebook-check', () => ({ refreshSubmissionFacebook: m.refresh }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
 vi.mock('@/lib/veo-jaucian', () => ({ connectedVeoTenant: m.connected, veoDirectory: vi.fn() }));
 import { GET, POST } from './route';
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
 describe('temporary photo access for Jaucian', () => {
+    it('refuses to release a photo when the last-minute Facebook refresh fails', async () => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key'); m.refresh.mockRejectedValueOnce(Error('Facebook unavailable'));
+        const r = await GET(new NextRequest('https://veo.test/api/workspace/handoff?submission_id=00000000-0000-4000-8000-000000000001', { headers: { Authorization: 'Bearer test-key' } }));
+        expect(r.status).toBe(503); expect(m.rpc).not.toHaveBeenCalled(); expect(m.storage.from).not.toHaveBeenCalled();
+    });
     it('reports an explicit deleted receipt as permanent cancellation without signing its photo',async()=>{
         vi.stubEnv('VEO_JAUCIAN_SECRET','test-key');m.rpc.mockImplementation(async name=>({data:name==='veo_handoff'?null:true,error:null}));
         const r=await GET(new NextRequest('https://veo.test/api/workspace/handoff?submission_id=00000000-0000-4000-8000-000000000001',{headers:{Authorization:'Bearer test-key'}}));

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), remove: vi.fn(), events: vi.fn(), sync: vi.fn(), budget: vi.fn() }));
+const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), remove: vi.fn(), events: vi.fn(), sync: vi.fn(), budget: vi.fn(), refresh: vi.fn() }));
+vi.mock('@/lib/veo-facebook-check', () => ({ refreshSubmissionFacebook: m.refresh }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => ({ from: m.from, rpc: m.rpc, storage: { from: () => ({ remove: m.remove }) } }) }));
 vi.mock('@/lib/veo-events', () => ({ processWorkspaceEvents: m.events }));
 vi.mock('@/lib/veo-telegram-sync', () => ({ syncTelegramWorkforce: m.sync }));
@@ -9,6 +10,16 @@ vi.mock('@/app/api/facebook/webhook/route', () => ({ POST: vi.fn() }));
 import { GET } from './route';
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 describe('private photo cleanup during unrelated worker failures', () => {
+    it('retries a Facebook outage without dispatching to Jaucian or blocking the receipt permanently', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true'); vi.stubEnv('CRON_SECRET', 'cron');
+        m.from.mockImplementation(() => { const q: any = { select: () => q, is: () => q, or: () => q, lte: () => q, limit: async () => ({ data: [] }) }; return q; });
+        m.rpc.mockImplementation(async name => ({ data: name === 'veo_claim_submissions' ? [{ id: 'submission', claim_token: 'lease' }] : true }));
+        m.refresh.mockRejectedValueOnce(Error('Facebook unavailable')); m.events.mockResolvedValue(0);
+        const response = await GET(new NextRequest('https://veo.test/api/cron/workspace', { headers: { Authorization: 'Bearer cron' } }));
+        expect(response.status).toBe(200); expect(m.refresh).toHaveBeenCalled();
+        expect(m.rpc.mock.calls.some(([name]) => name === 'veo_handoff')).toBe(false);
+        expect(m.rpc).toHaveBeenCalledWith('veo_finish_submission', { p_id: 'submission', p_claim: 'lease', p_status: 'queued', p_error: 'Delivery pending; automatic retry scheduled' });
+    });
     it('continues new-event collection during Telegram and planning outages and reports retry health', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true'); vi.stubEnv('CRON_SECRET', 'cron');
         m.from.mockImplementation(() => { const q: any = { select: () => q, is: () => q, or: () => q, lte: () => q, limit: async () => ({ data: [] }) }; return q; });

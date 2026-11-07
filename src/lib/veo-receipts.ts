@@ -1,4 +1,8 @@
 export const receiptHoldLabels: Record<string, string> = {
+    facebook_check_required: 'Complete a fresh Facebook check; unavailable or partial evidence cannot be submitted',
+    facebook_stage_unavailable: 'Facebook did not expose a lead-stage notice for this client; submission is blocked',
+    facebook_eligible_lead_required: 'Set the Facebook Business Suite lead stage to Qualified or Converted, then check again',
+    facebook_matching_order_required: 'Create the matching order in Facebook Business Suite, fetch and link it, then check again',
     receipt_deleted: 'Receipt deleted; it cannot be forwarded or rechecked',
     eligible_lead_required: 'Set the contact lead stage to Qualified or Converted',
     converted_lead_required: 'Set the contact lead stage to Converted',

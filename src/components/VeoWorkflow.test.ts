@@ -45,6 +45,22 @@ it('shows current warnings, overdue explanation and a link to the existing Teleg
     await act(async () => { view = create(createElement(Warnings)); });
     expect(text(view.toJSON())).toContain('1 warnings'); expect(text(view.toJSON())).toContain('4 hours overdue'); expect(view.root.findByProps({ href: 'https://t.me/c/123/99' })).toBeTruthy();
 });
+it('disables Submit until the selected deal passes its Facebook check and invalidates it on deal changes', async () => {
+    let allowed = false;
+    const fetcher = vi.fn(async (url: string, options?: any) => new Response(JSON.stringify(options?.method === 'POST' ? { allowed, blockers: allowed ? [] : ['facebook_stage_unavailable'], facebook: { stage: allowed ? 'qualified' : null, complete: true, checked_at: new Date().toISOString(), started_at: new Date().toISOString(), coverage: 'Available notices checked' } } : url.includes('contact_id=client') ? { contact: { id: 'client', name: 'Client', pipeline_stage: 'qualified' }, orders: [], payments: [], closed_deals: [] } : url.includes('commission=1') ? { target: 1, closed: 0, done: 0, rate: 35, totals: [] } : { items: [], total: 0 })));
+    vi.stubGlobal('fetch', fetcher);
+    await act(async () => { view = create(createElement(Receipts, { scope: { user_id: 'worker', role: 'member', launch_at: '2026-11-05' }, accounts: [{ id: 'worker', role: 'member', name: 'Worker' }], initialContactId: 'client' })); });
+    const submit = () => view.root.findAllByType('button').find(b => text(b) === 'Submit receipt evidence')!;
+    const check = () => view.root.findAllByType('button').find(b => text(b) === 'Check Facebook requirements')!;
+    expect(submit().props.disabled).toBe(true);
+    await act(async () => { check().props.onClick(); });
+    expect(submit().props.disabled).toBe(true); expect(text(view.toJSON())).toContain('Submission blocked');
+    allowed = true; await act(async () => { check().props.onClick(); });
+    expect(submit().props.disabled).toBe(false);
+    await act(async () => { view.root.findAllByType('button').find(b => text(b) === 'New fully paid deal')!.props.onClick(); });
+    expect(submit().props.disabled).toBe(true);
+    expect(fetcher.mock.calls.filter(([, o]) => o?.method === 'POST').every(([, o]) => JSON.parse(o.body).action === 'check')).toBe(true);
+});
 it('renders creative profit and cohort trends with demographics and explicit frequency coverage', async () => {
     const f = { currency: 'PHP', gross_minor: 10000, salary_minor: 4000, ad_spend_minor: 3000, net_minor: 3000, net_roas: 2, completed_order_gross_minor: 10000, spend_complete: true, average_daily_spend_minor: 3000, average_order_minor: 10000, cost_per_purchase_minor: 3000, cost_per_acquisition_minor: 3000 };
     const ad = { ad_id: '1', ad: { ad_name: 'Creative' }, inquiries: 2, converted: 1, conversion_rate: .5, finance: [f], demographics: [{ key: 'industry', total: 2, rows: [{ label: 'Food', count: 1, percent: .5 }] }] };

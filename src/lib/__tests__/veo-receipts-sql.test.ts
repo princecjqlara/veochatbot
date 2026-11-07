@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, expect, it } from 'vitest';
+import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { uuid_ossp } from '@electric-sql/pglite/contrib/uuid_ossp';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
@@ -6,8 +6,15 @@ import { vector } from '@electric-sql/pglite-pgvector';
 import { schemaMigrationPlan } from '../../../scripts/lib/database-migration-safety.mjs';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const owner = id(1), page = id(2), client = id(3), leader = id(4), manager = id(5), member = id(6), other = id(7);
-let db: PGlite, tenant: string, receipt: string, order: string;
-const rpc = async (name: string, args: unknown[]) => (await db.query<any>(`SELECT ${name}(${args.map((_, i) => '$' + (i + 1)).join(',')}) AS r`, args)).rows[0].r;
+let db: PGlite, tenant: string, receipt: string, order: string, transactionalTest = false;
+const rpc = async (name: string, args: unknown[]) => {
+    if (transactionalTest) await db.exec('SAVEPOINT rpc_check');
+    try {
+        const result = (await db.query<any>(`SELECT ${name}(${args.map((_, i) => '$' + (i + 1)).join(',')}) AS r`, args)).rows[0].r;
+        if (transactionalTest) await db.exec('RELEASE SAVEPOINT rpc_check');
+        return result;
+    } catch (e) { if (transactionalTest) await db.exec('ROLLBACK TO SAVEPOINT rpc_check; RELEASE SAVEPOINT rpc_check'); throw e; }
+};
 const action = (actor: string, kind: string, data: any) => rpc('veo_action', [actor, kind, JSON.stringify(data)]);
 let request = 100;
 async function upload(kind: string, orderId: string | null = null, hash = 'a'.repeat(64)) {
@@ -21,7 +28,9 @@ beforeAll(async () => {
     CREATE TABLE cron.job(jobid bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,jobname text);CREATE TABLE cron.job_run_details(end_time timestamptz);
     CREATE FUNCTION cron.schedule(text,text,text) RETURNS bigint LANGUAGE sql AS 'INSERT INTO cron.job(jobname) VALUES($1) RETURNING jobid';
     CREATE FUNCTION cron.unschedule(bigint) RETURNS boolean LANGUAGE sql AS 'DELETE FROM cron.job WHERE jobid=$1 RETURNING true';`);
-    for (const m of schemaMigrationPlan()) await db.exec(m.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- scheduler stub'));
+    // Build retained receipts with the previous workflow, then migrate those
+    // records in the strict-gate suite below. This verifies upgrade compatibility.
+    for (const m of schemaMigrationPlan().filter(m => !m.name.startsWith('202611070021_'))) await db.exec(m.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- scheduler stub'));
     await db.query("INSERT INTO users(id,email,name) VALUES($1,'owner@example.com','CJ Lara')", [owner]);
     await db.query("INSERT INTO pages(id,fb_page_id,name,access_token) VALUES($1,'111','VEO','test')", [page]);
     await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [owner, page]);
@@ -315,4 +324,122 @@ it('lets another active receipt replace a never-sent deleted photo without reviv
     await rpc('veo_receipt_delete',[member,receipt.id,'Use clearer evidence',false]);await rpc('veo_receipt_recheck',[member,alternative.id,null]);
     expect((await rpc('veo_handoff',[alternative.delivery_submission])).closed_deal_id).toBe(receipt.closed_deal_id);
     await expect(rpc('veo_receipt_recheck',[member,receipt.id,null])).rejects.toThrow(/Deleted/);
+});
+
+describe('strict Facebook receipt submission after migrating retained records', () => {
+    let cid: string, path: string, payload: any, invoice: string;
+    const observe = (scan: any = {}) => rpc('veo_record_facebook_check', [member, cid, new Date().toISOString(), JSON.stringify({
+        orders: [], stage: { stage: 'qualified', message_id: 'stage-' + cid, occurred_at: new Date(Date.now() - 60000).toISOString() }, complete: true, pages_checked: 1, coverage: 'Available notices checked', ...scan
+    })]);
+    const requirements = (kind = 'closed', oid: string | null = null) => rpc('veo_receipt_requirements', [member, cid, member, kind, oid, true]);
+    const save = (extra: any = {}) => rpc('veo_receipt_save', [member, JSON.stringify({ ...payload, ...extra })]);
+    async function facebookOrder(paid = false, difference = 0) {
+        const notice = { invoice_id: invoice, message_id: 'order-' + cid, total_minor: 10000, currency: 'PHP', occurred_at: new Date(Date.now() - 30000).toISOString() };
+        await observe({ orders: [notice] });
+        const source = (await rpc('veo_business_orders_page', [member, cid])).items[0];
+        const o = await action(member, 'import_business_order', { business_order_id: source.id, seller_id: member, deal_mode: 'new' });
+        if (paid) await action(member, 'payment', { request_id: id(request++), order_id: o.id, kind: 'full', amount_minor: 10000 + difference, settle_done: true, confirmed: true, reference: 'BANK-' + cid, occurred_at: new Date(Date.now() - 5000).toISOString() });
+        return { o, notice };
+    }
+    beforeAll(async () => {
+        const migration = schemaMigrationPlan().find(m => m.name.startsWith('202611070021_'))!;
+        await db.exec(migration.sql);
+    });
+    beforeEach(async () => {
+        await db.exec('BEGIN'); transactionalTest = true;
+        cid = id(request++); path = `${tenant}/${member}/${id(request++)}`; invoice = String(request++);
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage) VALUES($1,$2,$3,'Fresh client','qualified')", [cid, page, 'psid-' + cid]);
+        await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [path]);
+        await db.query('UPDATE veo_teams SET telegram_chat_id=-100123 WHERE manager_id=$1', [manager]);
+        await db.query('INSERT INTO veo_worker_mappings(user_id,telegram_user_id) VALUES($1,12345) ON CONFLICT(user_id) DO UPDATE SET telegram_user_id=12345', [member]);
+        payload = { request_id: id(request++), contact_id: cid, seller_id: member, receipt_kind: 'closed', deal_mode: 'new', object_path: path, photo_sha256: 'a'.repeat(64), closed_amount_minor: 4000, closed_currency: 'PHP', closed_occurred_at: new Date(Date.now() - 5000).toISOString() };
+    });
+    afterEach(async () => { transactionalTest = false; await db.exec('ROLLBACK'); });
+    it('blocks direct RPC submission without Facebook evidence and creates no receipt, deal or queue', async () => {
+        expect((await requirements()).blockers).toContain('facebook_check_required');
+        await expect(save({ facebook: { stage: 'qualified' } })).rejects.toThrow(/not submitted/);
+        for (const table of ['veo_receipts', 'veo_closed_deals', 'veo_orders']) expect((await db.query(`SELECT id FROM ${table} WHERE contact_id=$1`, [cid])).rows).toHaveLength(0);
+    });
+    it('rejects unavailable or partial Facebook stage evidence even when the local contact is Qualified', async () => {
+        for (const scan of [{ stage: null }, { complete: false }, { error: 'Page connection expired', complete: false }]) {
+            await observe(scan); expect((await requirements()).allowed).toBe(false); await expect(save()).rejects.toThrow(/not submitted/);
+        }
+    });
+    it('checks the latest Facebook stage and preserves a newer manual correction in VEO', async () => {
+        await observe({ stage: { stage: 'not_qualified', message_id: 'disqualified', occurred_at: new Date(Date.now() - 5000).toISOString() } });
+        expect((await requirements()).blockers).toContain('facebook_eligible_lead_required');
+        await db.query("UPDATE contacts SET pipeline_stage='new',pipeline_stage_source='manual',pipeline_stage_updated_at=clock_timestamp() WHERE id=$1", [cid]);
+        await observe(); expect((await requirements()).blockers).toContain('eligible_lead_required');
+    });
+    it('requires fresh evidence and cannot replace a newer failed observation with an older success', async () => {
+        const older = new Date(Date.now() - 1000).toISOString(); await observe({ complete: false, error: 'Unavailable' });
+        await rpc('veo_record_facebook_check', [member, cid, older, JSON.stringify({ orders: [], stage: { stage: 'qualified', message_id: 'older', occurred_at: older }, complete: true, pages_checked: 1 })]);
+        expect((await requirements()).allowed).toBe(false);
+        await observe(); await db.query("UPDATE veo_facebook_checks SET started_at=now()-interval '3 minutes' WHERE contact_id=$1", [cid]);
+        expect((await requirements()).blockers).toContain('facebook_check_required'); await expect(save()).rejects.toThrow(/not submitted/);
+    });
+    it('accepts an eligible Closed Deal without an order and retains explicit salary prerequisites', async () => {
+        await observe(); const r = await save();
+        expect(r.holds).toEqual([]); expect(r.delivery_status).toBe('queued'); expect(r.closed_deal_id).toBeTruthy(); expect(r.order_id).toBeNull(); expect(r.salary_holds).toContain('create_and_link_order');
+        expect(r.facebook_evidence.stage).toBe('qualified'); expect((await rpc('veo_handoff', [r.delivery_submission])).receipt_kind).toBe('closed');
+        expect((await save()).duplicate).toBe(true); expect((await db.query('SELECT id FROM veo_closed_deals WHERE contact_id=$1', [cid])).rows).toHaveLength(1);
+    });
+    it('blocks Done without a matching Facebook order and blocks a matching but unpaid order', async () => {
+        await observe(); expect((await requirements('done')).blockers).toContain('create_and_link_order');
+        const { o } = await facebookOrder(); expect((await requirements('done', o.id)).blockers).toContain('verify_full_payment');
+        await expect(save({ receipt_kind: 'done', order_id: o.id })).rejects.toThrow(/not submitted/);
+        const local = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 10000, currency: 'PHP', description: 'Local only', deal_mode: 'new' });
+        expect((await requirements('done', local.id)).blockers).toContain('facebook_matching_order_required');
+    });
+    it.each([-200, 0, 200])('accepts verified Done with a %i-cent difference, queues once and retains immutable evidence', async difference => {
+        const { o } = await facebookOrder(true, difference);
+        expect((await requirements('done', o.id)).allowed).toBe(true);
+        const r = await save({ receipt_kind: 'done', order_id: o.id });
+        expect(r.holds).toEqual([]); expect(r.salary_holds).toEqual([]); expect((await save({ receipt_kind: 'done', order_id: o.id })).id).toBe(r.id);
+        expect((await rpc('veo_handoff', [r.delivery_submission])).order_id).toBe(o.id);
+        expect((await db.query('SELECT id FROM veo_receipts WHERE contact_id=$1', [cid])).rows).toHaveLength(1);
+    });
+    it('requires the matching invoice in the current check, and blocks changed Facebook prices', async () => {
+        const { o, notice } = await facebookOrder(true); await observe();
+        expect((await requirements('done', o.id)).blockers).toContain('facebook_matching_order_required');
+        await observe({ orders: [{ ...notice, total_minor: 11000 }] });
+        expect((await requirements('done', o.id)).blockers).toContain('facebook_matching_order_required');
+    });
+    it('turns an eligible Closed Deal into Done using its down payment and the amount actually sent, without duplicate CD counts', async () => {
+        await observe(); const cd = await save();
+        const notice = { invoice_id: invoice, message_id: 'order-' + cid, total_minor: 10000, currency: 'PHP', occurred_at: new Date(Date.now() - 30000).toISOString() };
+        await observe({ orders: [notice] }); const source = (await rpc('veo_business_orders_page', [member, cid])).items[0];
+        const o = await action(member, 'import_business_order', { business_order_id: source.id, seller_id: member, deal_mode: 'existing', closed_deal_id: cd.closed_deal_id });
+        await action(member, 'payment', { request_id: id(request++), order_id: o.id, closed_deal_id: cd.closed_deal_id, amount_minor: 6000, settle_done: true, confirmed: true, reference: 'BALANCE-' + cid, occurred_at: new Date(Date.now() - 5000).toISOString() });
+        const donePath = `${tenant}/${member}/${id(request++)}`; await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [donePath]);
+        const dd = await save({ request_id: id(request++), receipt_kind: 'done', order_id: o.id, deal_mode: 'existing', closed_deal_id: cd.closed_deal_id, object_path: donePath, photo_sha256: 'b'.repeat(64) });
+        expect(dd.holds).toEqual([]); expect(dd.paid_minor).toBe(10000); expect(dd.done_balance_paid_minor).toBe(6000);
+        expect((await db.query('SELECT id FROM veo_sales_facts WHERE contact_id=$1', [cid])).rows).toHaveLength(1);
+        expect((await db.query('SELECT id FROM veo_payments WHERE order_id=$1', [o.id])).rows).toHaveLength(2);
+    });
+    it.each([-201, 201])('rejects a %i-cent settlement difference before a Done receipt can be accepted', async difference => {
+        await expect(facebookOrder(true, difference)).rejects.toThrow(/match|difference|price|exceed/i);
+        expect((await db.query('SELECT id FROM veo_receipts WHERE contact_id=$1', [cid])).rows).toHaveLength(0);
+    });
+    it('blocks revoked Pages, other seller branches and missing Telegram mappings', async () => {
+        await observe(); await expect(rpc('veo_receipt_requirements', [other, cid, member, 'closed', null, true])).rejects.toThrow(/branch/);
+        await db.query('DELETE FROM veo_worker_mappings WHERE user_id=$1', [member]); expect((await requirements()).blockers).toContain('telegram_mapping_required');
+        await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2', [member, page]);
+        await expect(save()).rejects.toThrow(/access denied/);
+    });
+    it('rechecks Facebook before handoff, rejects stale or failed checks, and recovers without duplicate receipts', async () => {
+        const { o, notice } = await facebookOrder(true), r = await save({ receipt_kind: 'done', order_id: o.id });
+        await observe({ complete: false, error: 'Facebook unavailable' }); expect(await rpc('veo_handoff', [r.delivery_submission])).toBeNull();
+        await expect(rpc('veo_receipt_recheck', [member, r.id, null])).rejects.toThrow(/ineligible/);
+        await observe({ orders: [notice] }); expect((await rpc('veo_receipt_recheck', [member, r.id, null])).delivery_submission).toBe(r.delivery_submission);
+        await db.query("UPDATE veo_facebook_checks SET started_at=now()-interval '3 minutes' WHERE contact_id=$1", [cid]); expect(await rpc('veo_handoff', [r.delivery_submission])).toBeNull();
+        await observe({ orders: [notice] }); expect((await rpc('veo_handoff', [r.delivery_submission])).order_id).toBe(o.id);
+        await action(manager, 'payment', { request_id: id(request++), order_id: o.id, kind: 'refund', amount_minor: 5000, confirmed: true, reason: 'Verified returned funds', reference: 'REFUND-' + cid, occurred_at: new Date(Date.now() - 5000).toISOString() });
+        expect(await rpc('veo_handoff', [r.delivery_submission])).toBeNull();
+    });
+    it('keeps private evidence and all strict functions inaccessible to public roles and closes the old submission bypass', async () => {
+        await expect(action(member, 'submission', { order_id: id(999), object_path: path })).rejects.toThrow(/Receipts/);
+        expect((await db.query<any>("SELECT has_table_privilege('anon','veo_facebook_checks','SELECT') exposed")).rows[0].exposed).toBe(false);
+        for (const fn of ['veo_record_facebook_check(uuid,uuid,timestamptz,jsonb)', 'veo_receipt_requirements(uuid,uuid,uuid,text,uuid,boolean)', 'veo_submission_facebook_context(uuid)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed", [fn])).rows[0].exposed).toBe(false);
+    });
 });

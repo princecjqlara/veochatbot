@@ -1,8 +1,22 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { fetchBusinessOrderNotices, parseBusinessOrderNotice } from '../veo-business-orders';
+import { fetchBusinessOrderNotices, parseBusinessOrderNotice, parseBusinessStageNotice } from '../veo-business-orders';
 const launch = '2026-11-05T00:00:00Z',at = '2026-11-06T01:00:00Z';
 const notice = { id:'message',from:{id:'page'},created_time:at,message:'You created an order for PHP1,299.50. View: fb-pma://payments/orderdetails/?invoice_id=12345' };
 afterEach(() => { vi.unstubAllGlobals(); });
+it('accepts explicit Page stage notices only, and does not mistake orders or customer text for qualification', () => {
+    const stage = { ...notice, message: 'Lead stage set to Qualified.' };
+    expect(parseBusinessStageNotice(stage, 'page', launch)?.stage).toBe('qualified');
+    expect(parseBusinessStageNotice({ ...stage, message: 'Lead stage set to Not Qualified.' }, 'page', launch)?.stage).toBe('not_qualified');
+    expect(parseBusinessStageNotice({ ...stage, message: 'Lead stage set to A new unknown label.' }, 'page', launch)?.stage).toBe('unknown');
+    for (const m of [notice, { ...stage, from: { id: 'client' } }, { ...stage, created_time: '2026-11-01' }, { ...stage, created_time: '2099-01-01' }]) expect(parseBusinessStageNotice(m, 'page', launch)).toBeNull();
+});
+it('uses the newest explicit stage across message pages, including a later disqualification', async () => {
+    const newer = { ...notice, id: 'later', message: 'Lead stage set to Not Qualified.', created_time: '2026-11-06T02:00:00Z' };
+    const older = { ...notice, id: 'earlier', message: 'Lead stage set to Qualified.' };
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(++calls === 1 ? { data: [{ participants: { data: [{ id: 'client' }] }, messages: { data: [notice, newer], paging: { next: 'https://graph.facebook.com/messages?after=1' } } }] } : { data: [older] }))));
+    expect((await fetchBusinessOrderNotices({ pageId: 'page', psid: 'client', token: 'private', launchAt: launch })).stage?.stage).toBe('not_qualified');
+});
 it('extracts invoice and exact total only from Page-authored Facebook notices since launch', () => {
     expect(parseBusinessOrderNotice(notice,'page',launch)).toMatchObject({invoice_id:'12345',total_minor:129950,currency:'PHP'});
     expect(parseBusinessOrderNotice({...notice,message:'You requested ₱699. View: fb-pma://payments/orderdetails/?invoice_id=99'},'page',launch)?.total_minor).toBe(69900);

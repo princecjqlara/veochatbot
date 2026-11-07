@@ -4,13 +4,14 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, philippineDate, uuid } from '@/lib/veo-workspace';
 import { readVeoRpc } from '@/lib/veo-report-read';
-import { receiptPhoto } from '@/lib/veo-receipts';
+import { receiptPhoto, receiptHoldLabels } from '@/lib/veo-receipts';
+import { refreshReceiptFacebook } from '@/lib/veo-facebook-check';
 import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 const bucket = 'veo-conversation-submissions';
 const response = (body: any, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
-const fail = (e: any) => response({ error: e.code === 'DATABASE_UNAVAILABLE' || e.code === '57014' ? 'Receipt report is busy. Retry shortly.' : e.message || 'Receipt service unavailable' }, e.status || (e.code === 'DATABASE_UNAVAILABLE' || e.code === '57014' ? 503 : 400));
+const fail = (e: any) => response({ error: e.code === 'DATABASE_UNAVAILABLE' || e.code === '57014' ? 'Receipt report is busy. Retry shortly.' : e.message || 'Receipt service unavailable', ...(e.requirements ? { requirements: e.requirements } : {}) }, e.status || (e.code === 'DATABASE_UNAVAILABLE' || e.code === '57014' ? 503 : 400));
 async function access(r: NextRequest) {
     const session = await getSessionFromRequest(r);
     if (!session?.user?.id) throw Object.assign(Error('Sign in required'), { status: 401 });
@@ -21,6 +22,13 @@ async function access(r: NextRequest) {
 function checked(result: any) {
     if (result.error) throw Object.assign(Error(result.error.code === '57014' ? 'Receipt service is busy. Recheck before trying again.' : result.error.message || 'Receipt service unavailable'), { code: result.error.code, status: result.error.code === '42501' ? 403 : result.error.code === '23505' ? 409 : result.error.code === '57014' ? 503 : 400 });
     return result.data;
+}
+async function requirements(db: any, actor: string, contact: string, seller: string, kind: string, order: string | null) {
+    await refreshReceiptFacebook(db, actor, contact);
+    return checked(await db.rpc('veo_receipt_requirements', { p_actor: actor, p_contact: contact, p_seller: seller, p_kind: kind, p_order: order, p_fresh: true }));
+}
+function requireEligible(data: any) {
+    if (!data.allowed) throw Object.assign(Error('Receipt not submitted. ' + data.blockers.map((key: string) => receiptHoldLabels[key] || key).join('. ')), { status: 422, requirements: data });
 }
 export async function GET(request: NextRequest) {
     try {
@@ -69,7 +77,15 @@ export async function POST(request: NextRequest) {
                 if (!uuid(body.receipt_id) || typeof body.notes !== 'string' || body.notes.length > 2000) throw Error('Choose a receipt and notes of at most 2000 characters');
                 return response(checked(await db.rpc('veo_receipt_note', { p_actor: scope.user_id, p_id: body.receipt_id, p_notes: body.notes })));
             }
+            if (body.action === 'check') {
+                if (!uuid(body.contact_id) || !uuid(body.seller_id) || !['closed', 'done'].includes(body.receipt_kind) || body.order_id && !uuid(body.order_id)) throw Error('Choose a client, seller, receipt type and valid order');
+                if (!scope.worker_ids.includes(body.seller_id)) throw Object.assign(Error('Seller outside your branch'), { status: 403 });
+                return response(await requirements(db, scope.user_id, body.contact_id, body.seller_id, body.receipt_kind, body.order_id || null));
+            }
             if (body.action !== 'recheck' || !uuid(body.receipt_id) || body.order_id && !uuid(body.order_id)) throw Error('Choose a receipt and valid order');
+            const receipt = checked(await db.rpc('veo_receipt_access', { p_actor: scope.user_id, p_id: body.receipt_id }));
+            if (receipt.deleted_at) throw Error('Deleted receipts cannot be rechecked');
+            requireEligible(await requirements(db, scope.user_id, receipt.contact_id, receipt.seller_id, receipt.receipt_kind, body.order_id || receipt.order_id || null));
             return response(checked(await db.rpc('veo_receipt_recheck', { p_actor: scope.user_id, p_id: body.receipt_id, p_order: body.order_id || null })));
         }
         const form = await request.formData(), file = form.get('photo'), contact = form.get('contact_id'), seller = form.get('seller_id') || scope.user_id, order = form.get('order_id') || null, notes = form.get('notes') || '';
@@ -88,6 +104,10 @@ export async function POST(request: NextRequest) {
         // Recheck Page and seller grants before storing a private object.
         const contactAccess = checked(await db.rpc('veo_profile_detail_access', { p_actor: scope.user_id, p_contact: contact }));
         if (!scope.worker_ids.includes(String(seller)) || !contactAccess) throw Object.assign(Error('Seller outside your branch'), { status: 403 });
+        // Always refresh on Submit, even if the browser just ran its checklist.
+        // Reject before reserving or uploading a photo; the save RPC repeats the
+        // same gates atomically so direct requests cannot bypass the checklist.
+        requireEligible(await requirements(db, scope.user_id, contact, String(seller), kind, order as string | null));
         const path = `${scope.tenant_id}/${scope.user_id}/${randomUUID()}`;
         checked(await db.from('veo_photo_objects').insert({ object_path: path })); uploaded = path;
         const stored = await db.storage.from(bucket).upload(path, bytes, { contentType: file.type, upsert: false }); checked(stored);

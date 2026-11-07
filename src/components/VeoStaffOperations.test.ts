@@ -14,15 +14,15 @@ const record = { id: 'order', contact_id: 'client', page_id: 'page', contact_nam
 const payload = () => ({ employees: [], summary: {}, finance: { days: [salary] }, orders: [record], order_page: { total: 1 }, page_rankings: [], client_assignments: [] });
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-06T04:00:00Z')); });
 afterEach(async () => { if (view) await act(async () => view.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
-it('shows actual daily commission and date-filtered clients, and blocks a paid but unconverted receipt', async () => {
+it('shows actual daily commission and date-filtered clients, and routes receipt uploads through the strict checklist', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify(payload()))); vi.stubGlobal('fetch', fetcher);
     await act(async () => { view = create(createElement(Operations, { scope, pages: [], busy: false, submit: vi.fn(), mode: 'salary' })); });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     const text = flatten(view.toJSON()); expect(text).toContain('Previous Client'); expect(text).toContain('0.81'); expect(text).toContain('40%'); expect(text).toContain('Provisional');
     await act(async () => view.root.findAllByType('button').find(b => flatten(b).includes('Payment, receipt'))!.props.onClick());
-    const receipt = view.root.findAllByType('button').find(b => flatten(b).includes('Submit eligible receipt'))!;
-    expect(receipt.props.disabled).toBe(true);
-    expect(flatten(view.toJSON())).toContain('Confirm Converted lead');
+    expect(view.root.findAllByProps({ name: 'photo' })).toHaveLength(0);
+    expect(view.root.findByProps({ href: '/dashboard/workspace?view=receipts&contact_id=client' })).toBeTruthy();
+    expect(flatten(view.toJSON())).toContain('check Facebook lead-stage and order evidence');
     const from = view.root.findAllByType('input').find(i => i.props.type === 'date')!;
     await act(async () => from.props.onChange({ target: { value: '2026-11-05' } }));
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
@@ -33,7 +33,7 @@ it('keeps a removed seller receipt blocked even if settlement and conversion are
     await act(async () => { view = create(createElement(Operations, { scope, pages: [], busy: false, submit: vi.fn() })); });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     await act(async () => view.root.findAllByType('button').find(b => flatten(b).includes('Payment, receipt'))!.props.onClick());
-    expect(view.root.findAllByType('button').find(b => flatten(b).includes('Submit eligible receipt'))!.props.disabled).toBe(true);
+    expect(view.root.findAllByProps({ name: 'photo' })).toHaveLength(0);
     expect(flatten(view.toJSON())).toContain('A supervisor must review attribution');
 });
 it('restores inquiry and cohort metrics beside actual salary and keeps missing ad costs unavailable', async () => {

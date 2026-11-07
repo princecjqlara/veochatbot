@@ -3,13 +3,11 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { createWorkspaceAccount, workspaceAction, workspaceScope, uuid, philippineDate, passwordHash } from '@/lib/veo-workspace';
 import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
-import { randomUUID } from 'node:crypto';
 import { jaucianRead, verifyWorkerMapping } from '@/lib/veo-jaucian';
 import { readVeoRpc } from '@/lib/veo-report-read';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
-const bucket = 'veo-conversation-submissions';
 const errorResponse = (error: any) => NextResponse.json({ error: error.code === 'DATABASE_UNAVAILABLE' || error.code === '57014' ? 'Workspace report is busy. Retry shortly.' : error.message || 'Workspace unavailable' }, { status: error.status || (error.code === 'DATABASE_UNAVAILABLE' || error.code === '57014' ? 503 : 400) });
 async function actor(request: NextRequest) {
     const session = await getSessionFromRequest(request);
@@ -66,26 +64,10 @@ export async function GET(request: NextRequest) {
     } catch (error) { return errorResponse(error); }
 }
 export async function POST(request: NextRequest) {
-    let uploadedPath: string | null = null;
     try {
         if (request.headers.get('origin') !== request.nextUrl.origin) throw Object.assign(new Error('Same-origin request required'), { status: 403 });
         const scope = await actor(request), db = getSupabaseAdmin();
-        if (request.headers.get('content-type')?.includes('multipart/form-data')) {
-            const form = await request.formData(), file = form.get('photo'), orderId = form.get('order_id');
-            if (!uuid(orderId) || !file || typeof file === 'string' || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024 || file.size === 0) throw new Error('Choose a JPG, PNG or WebP photo up to 3 MB');
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            const valid = file.type === 'image/jpeg' ? bytes[0] === 255 && bytes[1] === 216 : file.type === 'image/png' ? bytes.slice(0, 8).join(',') === '137,80,78,71,13,10,26,10' : String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP';
-            if (!valid) throw new Error('Photo contents do not match its image type');
-            const path = `${scope.tenant_id}/${scope.user_id}/${randomUUID()}`;
-            const reserved = await db.from('veo_photo_objects').insert({ object_path: path });
-            if (reserved.error) throw new Error('Could not reserve private photo storage');
-            uploadedPath = path;
-            const stored = await db.storage.from(bucket).upload(path, bytes, { contentType: file.type, upsert: false });
-            if (stored.error) throw new Error('Private photo storage is unavailable');
-            uploadedPath = path;
-            const saved = await workspaceAction(scope.user_id, 'submission', { order_id: orderId, object_path: path });
-            return NextResponse.json({ saved }, { status: 202 });
-        }
+        if (request.headers.get('content-type')?.includes('multipart/form-data')) throw new Error('Submit through Receipts after checking the Facebook requirements');
         const body = await request.json(), action = body.action;
         if (action === 'attendance') throw new Error('Answer Jaucian’s Telegram poll for active tomorrow. The workspace reads verified poll votes.');
         if (action === 'create_account') return NextResponse.json({ saved: await createWorkspaceAccount(scope.user_id, body) }, { status: 201 });
@@ -111,10 +93,6 @@ export async function POST(request: NextRequest) {
         const saved = await workspaceAction(scope.user_id, action, body);
         return NextResponse.json({ saved });
     } catch (error) {
-        if (uploadedPath) {
-            const db = getSupabaseAdmin(), removed = await db.storage.from(bucket).remove([uploadedPath]);
-            if (!removed.error) await db.from('veo_photo_objects').update({ deleted_at: new Date().toISOString() }).eq('object_path', uploadedPath);
-        }
         return errorResponse(error);
     }
 }
