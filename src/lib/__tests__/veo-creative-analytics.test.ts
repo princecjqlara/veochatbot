@@ -15,6 +15,11 @@ it('counts later conversions and deposit/balance once, with authoritative gross,
     expect(r.daily.find((d: any) => d.ad_id === '1' && d.day === '2026-11-01')).toMatchObject({ converted: 1, inquiries: 1 });
     expect(ad.demographics.find((d: any) => d.key === 'industry')?.rows).toEqual(expect.arrayContaining([{ label: 'Food', count: 1, percent: .5 }, { label: 'Unknown', count: 1, percent: .5 }]));
 });
+it('uses verified Done milestones within the approved tolerance and excludes reported-only Closed amounts from payers', () => {
+    const data: any = input();data.orders[0].paid_minor = 9800;
+    data.orders.push({ id: 'unlinked', contact_id: 'd', currency: 'PHP', total_minor: 0, paid_minor: 0, closed_at: '2026-11-02', done_at: null });
+    const ad = buildCreativeReport(data).ads[0];expect(ad.done_orders).toBe(1);expect(ad.paying_clients).toBe(1);expect(ad.paid_orders).toBe(1);
+});
 it('does not fabricate retained salary, complete cost coverage, zero-denominator CPA or whole-period unique frequency', () => {
     const data: any = input(); data.orders[0].commission_minor = null;
     expect(buildCreativeReport(data).ads[0].finance[0].net_minor).toBeNull();

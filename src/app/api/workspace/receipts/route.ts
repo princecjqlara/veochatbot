@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, philippineDate, uuid } from '@/lib/veo-workspace';
 import { readVeoRpc } from '@/lib/veo-report-read';
 import { receiptPhoto } from '@/lib/veo-receipts';
+import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 const bucket = 'veo-conversation-submissions';
@@ -71,6 +72,12 @@ export async function POST(request: NextRequest) {
         requestId = String(form.get('request_id') || '');
         if (!uuid(contact) || !uuid(seller) || !uuid(requestId) || order && !uuid(order) || !file || typeof file === 'string' || !['closed', 'done'].includes(String(form.get('receipt_kind')))) throw Error('Choose a client, seller, receipt type and photo');
         if (typeof notes !== 'string' || notes.length > 2000) throw Error('Notes must be at most 2000 characters');
+        const kind = String(form.get('receipt_kind')), closedId = form.get('closed_deal_id') || null;
+        if (closedId && !uuid(closedId)) throw Error('Choose a Closed Deal for this client');
+        const closedAmount = kind === 'closed' ? parseMoneyMinor(form.get('closed_amount')) : null;
+        const closedCurrency = kind === 'closed' ? String(form.get('closed_currency') || 'PHP').toUpperCase() : null;
+        const closedAt = kind === 'closed' ? String(form.get('closed_occurred_at') || '') : null;
+        if (kind === 'closed' && (!/^[A-Z]{3}$/.test(closedCurrency!) || !closedAt || !Number.isFinite(Date.parse(closedAt)))) throw Error('Enter the Closed Deal amount, currency and Philippine payment time');
         if (file.size > 3 * 1024 * 1024) throw Error('Choose a receipt up to 3 MB');
         const bytes = new Uint8Array(await file.arrayBuffer()); receiptPhoto(file, bytes);
         // Recheck Page and seller grants before storing a private object.
@@ -79,7 +86,7 @@ export async function POST(request: NextRequest) {
         const path = `${scope.tenant_id}/${scope.user_id}/${randomUUID()}`;
         checked(await db.from('veo_photo_objects').insert({ object_path: path })); uploaded = path;
         const stored = await db.storage.from(bucket).upload(path, bytes, { contentType: file.type, upsert: false }); checked(stored);
-        const saved = checked(await db.rpc('veo_receipt_save', { p_actor: scope.user_id, p_data: { request_id: requestId, contact_id: contact, seller_id: seller, order_id: order, receipt_kind: form.get('receipt_kind'), notes, object_path: path, photo_sha256: createHash('sha256').update(bytes).digest('hex') } }));
+        const saved = checked(await db.rpc('veo_receipt_save', { p_actor: scope.user_id, p_data: { request_id: requestId, contact_id: contact, seller_id: seller, order_id: order, receipt_kind: kind, closed_deal_id: closedId, closed_amount_minor: closedAmount, closed_currency: closedCurrency, closed_occurred_at: closedAt, notes, object_path: path, photo_sha256: createHash('sha256').update(bytes).digest('hex') } }));
         if (saved.duplicate) await removeUpload();
         return response({ saved }, saved.duplicate ? 200 : 202);
     } catch (e) {

@@ -31,12 +31,13 @@ export async function GET(request: NextRequest) {
             const profile = await db.rpc('veo_profile_detail_access', { p_actor: scope.user_id, p_contact: contactId });
             if (profile.error || !Array.isArray(profile.data?.branch_worker_ids)) throw Object.assign(new Error('Contact financial history unavailable'), { status: profile.error?.code === '42501' ? 403 : 503 });
             const workers = profile.data.branch_worker_ids;
-            const [details, orders, legacy] = await Promise.all([
+            const [details, orders, legacy, closedDeals] = await Promise.all([
                 db.from('veo_contact_details').select('*').eq('contact_id', contactId).maybeSingle(),
                 db.from('veo_order_facts').select('*').eq('contact_id', contactId).in('seller_id', workers),
-                db.rpc('get_contact_finance_records', { p_page_id: contact.data.page_id, p_contact_id: contactId })
+                db.rpc('get_contact_finance_records', { p_page_id: contact.data.page_id, p_contact_id: contactId }),
+                db.from('veo_closed_deals').select('id,order_id,amount_minor,currency,occurred_at,verified_payment_id,seller_id').eq('contact_id', contactId).in('seller_id', workers)
             ]);
-            if (details.error || orders.error || legacy.error) throw new Error('Contact financial history unavailable');
+            if (details.error || orders.error || legacy.error || closedDeals.error) throw new Error('Contact financial history unavailable');
             const payments = orders.data?.length ? await db.from('veo_payments').select('*').in('order_id', orders.data.map(o => o.id)).order('occurred_at') : { data: [], error: null };
             if (payments.error) throw new Error('Payment history unavailable');
             const sellerIds = [...new Set((orders.data || []).map(o => o.seller_id))];
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
             for (const p of retainedPayments) if (!p.voided_at) ltv[p.currency] = (ltv[p.currency] || 0) + Number(p.amount_minor) * (p.kind === 'refund' ? -1 : 1);
             for (const o of orders.data || []) ltv[o.currency] = (ltv[o.currency] || 0) + Number(o.paid_minor);
             // Shared-page contacts are shared; personal order attribution stays visible on the contact profile.
-            return NextResponse.json({ contact: contact.data, details: details.data, orders: (orders.data || []).map(o => ({ ...o, seller_name: names.get(o.seller_id) || null })), payments: payments.data, lifetime_value: ltv,
+            return NextResponse.json({ contact: contact.data, details: details.data, orders: (orders.data || []).map(o => ({ ...o, seller_name: names.get(o.seller_id) || null })), payments: payments.data, closed_deals: closedDeals.data || [], lifetime_value: ltv,
                 coverage: (retainedPayments.length ? 'Verified retained payments plus payments recorded since launch' : `Recorded since launch (${scope.launch_at}); earlier financial history is unavailable`) + (scope.role === 'owner' ? '' : '. Financial history is limited to your seller branch; other branches are excluded.') }, { headers: { 'Cache-Control': 'no-store' } });
         }
         const params = request.nextUrl.searchParams, page = params.get('page_id');
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ saved: r.data });
         }
         if (action === 'order') body.total_minor = parseMoneyMinor(body.amount);
-        if (action === 'payment') body.amount_minor = parseMoneyMinor(body.amount);
+        if (action === 'payment') body.amount_minor = body.settle_done === true && /^0(?:\.0{1,2})?$/.test(String(body.amount).trim()) ? 0 : parseMoneyMinor(body.amount);
         if (!['assign_pages', 'order', 'payment', 'attribution', 'attendance', 'contact', 'mapping', 'staff_delete', 'claim_client', 'fulfillment', 'client_assignment', 'attendance_today'].includes(action)) throw new Error('Unknown action');
         const saved = await workspaceAction(scope.user_id, action, body);
         return NextResponse.json({ saved });

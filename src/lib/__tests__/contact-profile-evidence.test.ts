@@ -7,6 +7,11 @@ const deposit = { id: 'dp', purchase_id: 'order', kind: 'deposit' as const, amou
 const balance = { id: 'balance', purchase_id: 'order', kind: 'balance' as const, amount_minor: 55000, currency: 'PHP', occurred_at: '2026-10-03T04:00:00Z', reference: 'GCASH-BALANCE' };
 
 describe('verified purchase and payment arithmetic', () => {
+    it('shows the approved PHP two-peso settlement consistently in contact history', () => {
+        const metrics = purchaseMetrics([{ ...order, settlement_tolerance_minor: 200 }], [deposit, { ...balance, amount_minor: 54800 }], '2026-10-01T00:00:00Z');
+        expect(metrics.orders[0].payment_status).toBe('fully_paid'); expect(metrics.orders[0].outstanding_minor).toBe(0); expect(metrics.orders[0].closed_to_done_hours).toBe(48);
+        expect(purchaseMetrics([{ ...order, settlement_tolerance_minor: 200 }], [deposit, { ...balance, amount_minor: 54799 }], null).orders[0].payment_status).toBe('partially_paid');
+    });
     it('uses integer minor units and rejects ambiguous or unsafe amounts', () => {
         expect(parseMoneyMinor('1,234.50')).toBe(123450);
         expect(parseMoneyMinor('0.01')).toBe(1);

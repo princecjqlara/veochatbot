@@ -6,14 +6,15 @@ import VeoReceiptSaleDetails from './VeoReceiptSaleDetails';
 const today = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
 const field = 'block w-full rounded border border-slate-300 bg-white p-2 text-sm';
 const money = (v: number | null, c: string | null) => v == null || !c ? 'Unverified' : new Intl.NumberFormat('en-PH', { style: 'currency', currency: c }).format(v / 100);
-export default function VeoReceiptInbox({ scope, accounts, compact = false, initialContactId = '' }: { scope: any; accounts: any[]; compact?: boolean; initialContactId?: string }) {
+export default function VeoReceiptInbox({ scope, accounts, compact = false, initialContactId = '', initialKind = 'closed' }: { scope: any; accounts: any[]; compact?: boolean; initialContactId?: string; initialKind?: 'closed' | 'done' }) {
     const [data, setData] = useState<any>(null), [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [version, setVersion] = useState(0);
     const [from, setFrom] = useState(() => new Date(Math.max(Date.parse(scope.launch_at), Date.now() - 29 * 86400000) + 8 * 3600000).toISOString().slice(0, 10)), [to, setTo] = useState(today), [worker, setWorker] = useState(''), [offset, setOffset] = useState(0);
     const [search, setSearch] = useState(''), [contacts, setContacts] = useState<any[]>([]), [picked, setPicked] = useState<any>(null), [client, setClient] = useState(initialContactId), [orders, setOrders] = useState<any[]>([]), [seller, setSeller] = useState(['manager', 'member'].includes(scope.role) ? scope.user_id : '');
-    const [kind, setKind] = useState('closed'), [order, setOrder] = useState(''), [links, setLinks] = useState<Record<string, string>>({}), [photos, setPhotos] = useState<Record<string, string>>({});
-    const [payments, setPayments] = useState<any[]>([]), [loadingClient, setLoadingClient] = useState(false);
+    const [kind, setKind] = useState(initialKind), [order, setOrder] = useState(''), [links, setLinks] = useState<Record<string, string>>({}), [photos, setPhotos] = useState<Record<string, string>>({});
+    const [payments, setPayments] = useState<any[]>([]), [loadingClient, setLoadingClient] = useState(false), [closedDeals, setClosedDeals] = useState<any[]>([]), [closedDeal, setClosedDeal] = useState('');
+    const selectedClosed = closedDeals.find(d => d.seller_id === seller && order && d.order_id === order) || closedDeals.find(d => d.id === closedDeal && d.seller_id === seller) || (kind === 'done' ? closedDeals.find(d => d.seller_id === seller && !d.order_id) : undefined);
     const requestId = useRef(''), selling = accounts.filter(a => a.active !== false && ['manager', 'member'].includes(a.role));
-    useEffect(() => { requestId.current = crypto.randomUUID(); }, [client, seller, kind, order]);
+    useEffect(() => { requestId.current = crypto.randomUUID(); }, [client, seller, kind, order, selectedClosed?.id]);
     useEffect(() => {
         const c = new AbortController();
         fetch('/api/workspace/receipts?' + new URLSearchParams({ from, to, offset: String(offset), ...(worker ? { worker_id: worker } : {}) }), { cache: 'no-store', signal: c.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); setData(b); }).catch(e => { if (!c.signal.aborted) setMessage(e.message); });
@@ -26,15 +27,17 @@ export default function VeoReceiptInbox({ scope, accounts, compact = false, init
         }, 250);
         return () => { clearTimeout(timer); c.abort(); };
     }, [search, compact]);
-    useEffect(() => { setOrder(''); setPicked(null); setOrders([]); setPayments([]); }, [client]);
+    useEffect(() => { setOrder(''); setPicked(null); setOrders([]); setPayments([]); setClosedDeals([]); setClosedDeal(''); }, [client]);
     useEffect(() => {
         if (!client) { setLoadingClient(false); return; } setLoadingClient(true);
         const c = new AbortController();
-        void fetch('/api/workspace?contact_id=' + client, { cache: 'no-store', signal: c.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); if (!c.signal.aborted) { setOrders(b.orders || []); setPicked(b.contact); setPayments(b.payments || []); } }).catch(e => { if (!c.signal.aborted) { setPicked(null); setOrders([]); setPayments([]); setMessage(e.message); } }).finally(() => { if (!c.signal.aborted) setLoadingClient(false); });
+        void fetch('/api/workspace?contact_id=' + client, { cache: 'no-store', signal: c.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); if (!c.signal.aborted) { setOrders(b.orders || []); setPicked(b.contact); setPayments(b.payments || []); setClosedDeals(b.closed_deals || []); } }).catch(e => { if (!c.signal.aborted) { setPicked(null); setOrders([]); setPayments([]); setClosedDeals([]); setMessage(e.message); } }).finally(() => { if (!c.signal.aborted) setLoadingClient(false); });
         return () => c.abort();
     }, [client, version]);
     async function uploadReceipt(e: FormEvent<HTMLFormElement>) {
         e.preventDefault(); const form = e.currentTarget, body = new FormData(form); body.set('contact_id', client); body.set('seller_id', seller); body.set('receipt_kind', kind); body.set('request_id', requestId.current); if (order) body.set('order_id', order);
+        if (kind === 'closed') body.set('closed_occurred_at', new Date(String(body.get('closed_occurred_at')) + '+08:00').toISOString());
+        if (kind === 'done' && selectedClosed) body.set('closed_deal_id', selectedClosed.id);
         setBusy(true); setMessage('');
         try { const r = await fetch('/api/workspace/receipts', { method: 'POST', body }); const b = await r.json(); if (!r.ok) throw Error(b.error); setMessage(b.saved.duplicate ? 'This receipt is already recorded; no duplicate sale or delivery was created. Its existing notes are retained; use Edit receipt notes to change them.' : b.saved.holds.length ? 'Receipt saved on hold. Complete the checklist below, then Recheck.' : 'Receipt saved and queued for Jaucian.'); requestId.current = crypto.randomUUID(); form.reset(); setVersion(v => v + 1); }
         catch (err: any) { setMessage(err.message); } finally { setBusy(false); }
@@ -49,19 +52,20 @@ export default function VeoReceiptInbox({ scope, accounts, compact = false, init
     }
     return <section aria-label="Receipt inbox and salary holds" className="rounded-xl border bg-white p-5 space-y-4">
         <div className="flex flex-wrap justify-between gap-3"><h2 className="text-xl font-bold">Receipts and salary on hold</h2><button className="text-sm underline" onClick={() => setVersion(v => v + 1)}>Recheck list</button></div>
-        <p className="text-sm">Submit both Closed Deal (first verified payment) and Done Deal (full payment) receipts here. You may submit evidence before completing the workflow. A Converted lead, saved order and full verified payment are all required for salary. Uploading a photo never records payment.</p>
+        <p className="text-sm">Closed Deal: submit the receipt with the lead stage Qualified or Converted; no order is required. Done Deal: a Qualified or Converted lead, created order and reconciled verified payments are required. The Closed Deal amount plus additional payments must match the deal price within ₱2 for PHP; other currencies must match exactly. Uploading evidence alone does not earn salary.</p>
         <p className="text-xs text-slate-500">Jaucian reminds the mapped team about outstanding steps in its scheduled updates. Only eligible receipts go to Telegram. Photos are private and expire after seven days; expired evidence requires re-upload. Financial history remains retained.</p>
         {compact && <Link className="underline text-sm" href="/dashboard/workspace?view=receipts">Open Receipts to submit a Closed or Done Deal photo</Link>}
         {message && <p role="status" className="rounded border bg-amber-50 p-3 text-sm">{message}</p>}
         {!compact && <><div className="grid gap-3 rounded border p-4 md:grid-cols-2">
             <label className="text-sm">Find client<input className={field} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search client name, ID or saved details" /></label>
             <label className="text-sm">Client<select required className={field} value={client} onChange={e => setClient(e.target.value)}><option value="">Choose a client</option>{(picked && !contacts.some(c => c.id === picked.id) ? [picked, ...contacts] : contacts).map(c => <option key={c.id} value={c.id}>{c.name || 'Unknown client'} · {c.page_name || 'Assigned Page'}</option>)}</select></label>
-            <label className="text-sm">Seller<select required className={field} value={seller} onChange={e => { setSeller(e.target.value); setOrder(''); }}><option value="">Choose a selling worker</option>{selling.map(a => <option key={a.id} value={a.id}>{a.name} · {a.role}</option>)}</select></label>
-            <label className="text-sm">Receipt type<select className={field} value={kind} onChange={e => setKind(e.target.value)}><option value="closed">Closed Deal receipt</option><option value="done">Done Deal receipt</option></select></label>
-            <label className="text-sm">Order (may be linked later)<select className={field} value={order} onChange={e => setOrder(e.target.value)}><option value="">No order yet — save on hold</option>{orders.filter(o => o.seller_id === seller).map(o => <option key={o.id} value={o.id}>{o.description} · {money(o.total_minor, o.currency)}</option>)}</select></label>
+            <label className="text-sm">Seller<select required className={field} value={seller} onChange={e => { setSeller(e.target.value); setOrder(''); setClosedDeal(''); }}><option value="">Choose a selling worker</option>{selling.map(a => <option key={a.id} value={a.id}>{a.name} · {a.role}</option>)}</select></label>
+            <label className="text-sm">Receipt type<select className={field} value={kind} onChange={e => setKind(e.target.value as 'closed' | 'done')}><option value="closed">Closed Deal receipt</option><option value="done">Done Deal receipt</option></select></label>
+            <label className="text-sm">Order ({kind === 'closed' ? 'not required for Closed Deals' : 'required to qualify as Done'})<select className={field} value={order} onChange={e => { setOrder(e.target.value); setClosedDeal(''); }}><option value="">{kind === 'closed' ? 'No order needed' : 'Choose or create an order below'}</option>{orders.filter(o => o.seller_id === seller).map(o => <option key={o.id} value={o.id}>{o.description} · {money(o.total_minor, o.currency)}</option>)}</select></label>
         </div>
-        <VeoReceiptSaleDetails contact={picked} seller={seller} order={orders.find(o => o.id === order && o.seller_id === seller)} payments={payments} kind={kind} version={version} loading={loadingClient} onSaved={id => { setOrder(id); setVersion(v => v + 1); }} />
-        <form className="grid gap-3 rounded border p-4 md:grid-cols-2" onSubmit={e => void uploadReceipt(e)}>
+        <VeoReceiptSaleDetails contact={picked} seller={seller} order={orders.find(o => o.id === order && o.seller_id === seller)} payments={payments} closedDeals={closedDeals.filter(d => d.seller_id === seller)} closedDealId={selectedClosed?.id || ''} onClosedChange={setClosedDeal} kind={kind} version={version} loading={loadingClient} onSaved={id => { setOrder(id); setVersion(v => v + 1); }} />
+        <form key={`${client}:${seller}:${kind}:${order}:${selectedClosed?.id || ''}`} className="grid gap-3 rounded border p-4 md:grid-cols-2" onSubmit={e => void uploadReceipt(e)}>
+            {kind === 'closed' && <><label className="text-sm">Closed Deal payment amount<input required name="closed_amount" inputMode="decimal" className={field} placeholder="0.00" /></label><label className="text-sm">Closed Deal currency<input required name="closed_currency" pattern="[A-Za-z]{3}" defaultValue="PHP" className={field} /></label><label className="text-sm">Closed Deal payment time (PHT)<input required name="closed_occurred_at" type="datetime-local" defaultValue={new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 16)} className={field} /></label><p className="text-xs self-center">This records the receipt amount for later reconciliation. It does not create an order or a verified financial payment.</p></>}
             <label className="text-sm">Receipt / conversation photo<input required className={field} name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={() => { requestId.current = crypto.randomUUID(); }} /></label>
             <label className="text-sm">Receipt notes (optional)<textarea name="notes" className={field} maxLength={2000} rows={3} placeholder="Payment context, client instructions, or steps still pending" /></label>
             <button disabled={busy || !client || !seller} className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40 md:col-span-2">Submit receipt evidence</button>
@@ -72,7 +76,10 @@ export default function VeoReceiptInbox({ scope, accounts, compact = false, init
         {(data?.items || []).map((r: any) => <article key={r.id} className={`rounded border p-4 space-y-2 ${r.salary_status === 'on_hold' ? 'border-amber-300 bg-amber-50' : 'bg-slate-50'}`}>
             <div className="flex flex-wrap justify-between gap-2"><Link className="font-semibold underline" href={`/dashboard/contacts/${r.contact_id}?pageId=${r.page_id}`}>{r.contact_name || 'Unknown client'}</Link><span className="text-xs">{r.receipt_kind === 'closed' ? 'Closed Deal receipt' : 'Done Deal receipt'} · {r.seller_name} · {r.page_name}</span></div>
             <p className="text-sm font-semibold">Salary: {r.salary_status === 'on_hold' ? 'ON HOLD' : 'Eligible in the verified ledger — see Salary'} · Telegram: {r.delivery_status.replaceAll('_', ' ')}</p>
+            {r.receipt_kind === 'closed' && r.closed_deal_id && <p className="text-sm">Closed Deal: {['qualified', 'converted'].includes(r.lead_stage) ? 'Stage qualified; no order required. Counted once as a Closed Deal.' : 'Waiting for the lead stage to be Qualified or Converted.'} Any order/payment steps below apply to Salary and Done Deal completion.</p>}
             <p className="text-sm">Lead: {r.lead_stage || 'Unknown'} · Order: {r.order_description || 'Not created / linked'} · Verified payment: {money(r.paid_minor, r.currency)} / {money(r.total_minor, r.currency)}</p>
+            {r.closed_amount_minor != null && <p className="text-sm">Closed Deal receipt amount: {money(r.closed_amount_minor, r.currency)} · {r.closed_payment_verified ? 'Reconciled against verified payment records' : 'Pending financial verification / reconciliation'}</p>}
+            {r.receipt_kind === 'done' && r.settlement_difference_minor != null && <p className="text-sm">Payment difference from deal price: {money(r.settlement_difference_minor, r.currency)} · maximum allowed difference: {money(r.settlement_tolerance_minor, r.currency)}</p>}
             <p className="text-sm whitespace-pre-wrap">Notes: {r.notes || 'None recorded'}</p>
             <details><summary className="cursor-pointer text-sm underline">Edit receipt notes</summary><form key={`${r.id}:${r.notes || ''}`} className="space-y-2 mt-2" onSubmit={async e => {
                 e.preventDefault(); const notes = String(new FormData(e.currentTarget).get('notes') || ''); setBusy(true); setMessage('');

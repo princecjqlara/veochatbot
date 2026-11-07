@@ -1,4 +1,5 @@
 export const receiptHoldLabels: Record<string, string> = {
+    eligible_lead_required: 'Set the contact lead stage to Qualified or Converted',
     converted_lead_required: 'Set the contact lead stage to Converted',
     create_and_link_order: 'Create an order and link it to this receipt',
     verify_full_payment: 'Verify the full payment and mark the order paid',

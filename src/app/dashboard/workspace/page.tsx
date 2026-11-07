@@ -103,7 +103,7 @@ function Workspace() {
         {(activeView === 'capacity' || (executive && activeView === 'dashboard')) && <label className="block max-w-xs">Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => setDay(e.target.value)} /></label>}
         {!executive && activeView === 'deals' && <label className="block max-w-xs font-semibold">Deal type<select className={field} value={dealStatus} onChange={e => { setOffset(0); setOrder(''); router.replace(`/dashboard/workspace?view=deals&status=${e.target.value}`); }}><option value="closed">Closed Deals</option><option value="done">Done Deals</option></select></label>}
         {message && <p role="status" className="rounded border bg-amber-50 p-3">{message}</p>}
-        {['receipts', 'salary'].includes(activeView) && <VeoReceiptInbox scope={data.scope} accounts={data.accounts} compact={activeView === 'salary'} initialContactId={params.get('contact_id') || ''} />}
+        {['receipts', 'salary'].includes(activeView) && <VeoReceiptInbox scope={data.scope} accounts={data.accounts} compact={activeView === 'salary'} initialContactId={params.get('contact_id') || ''} initialKind={params.get('receipt_kind') === 'done' ? 'done' : 'closed'} />}
         {['warnings', 'dashboard'].includes(activeView) && <VeoStaffWarnings compact={activeView === 'dashboard'} refreshToken={data} />}
         {activeView === 'calendar' && executive && <VeoWorkCalendar scope={data.scope} pages={pages} />}
         {executive && ['dashboard', 'budget'].includes(activeView) && <VeoPageBudget refreshToken={data} scope={data.scope} compact={activeView === 'dashboard'} submit={submit} />}

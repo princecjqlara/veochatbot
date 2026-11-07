@@ -17,7 +17,7 @@ export function buildCreativeReport(input: any) {
     function report(ad: string, selectedDay?: string): any {
         const cohort = clients.filter((c: any) => c.ad_id === ad && (!selectedDay || day(c.inquiry_at) === selectedDay)), contacts = new Set(cohort.map((c: any) => c.id));
         const ownOrders = orders.filter((o: any) => contacts.has(o.contact_id)), payments = cash.filter((p: any) => contacts.has(p.contact_id)), ads = spend.filter((s: any) => s.ad_id === ad && (!selectedDay || s.spend_date === selectedDay));
-        const paid = ownOrders.filter((o: any) => o.closed_at && o.paid_minor > 0), done = ownOrders.filter((o: any) => o.done_at && o.paid_minor >= o.total_minor), payers = new Set(paid.map((o: any) => o.contact_id));
+        const paid = ownOrders.filter((o: any) => o.closed_at && o.paid_minor > 0), done = ownOrders.filter((o: any) => o.done_at), payers = new Set(paid.map((o: any) => o.contact_id));
         const converted = cohort.filter((c: any) => c.converted_at || c.stage === 'converted').length;
         const currencies = new Set<string>([...ads.map((s: any) => s.currency), ...payments.map((p: any) => p.currency), ...ownOrders.map((o: any) => o.currency)]);
         const money = [...currencies].map(currency => {

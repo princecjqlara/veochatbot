@@ -1,7 +1,7 @@
 import { administrative, paymentSignal, explicitAmount } from './conversion-runtime/evidence.js';
 
 export type ProfileMessage = { id: string; at: string; sender: 'customer' | 'page' | 'unknown'; text: string; attachments: number; images?: number };
-export type PurchaseRecord = { id: string; description: string; total_minor: number; currency: string; purchased_at: string; reference?: string | null };
+export type PurchaseRecord = { id: string; description: string; total_minor: number; currency: string; purchased_at: string; reference?: string | null; settlement_tolerance_minor?: number };
 export type VerifiedPayment = { id: string; purchase_id: string | null; kind: 'deposit' | 'balance' | 'full' | 'refund'; amount_minor: number; currency: string; occurred_at: string; reference: string; voided_at?: string | null };
 export type ProfileEvidence = { message_id: string; quote: string };
 export type ConversationPaymentEvidence = { kind: string; acknowledgment: boolean; amount: number | null; amount_basis?: string | null; at: string; message_id: string; quote: string; related_message_ids: string[]; payment_type: 'downpayment' | 'full_payment' | 'unspecified' };
@@ -43,16 +43,18 @@ export function purchaseMetrics(purchases: PurchaseRecord[], payments: VerifiedP
     }
     const orders = purchases.map(purchase => {
         const entries = valid.filter(payment => payment.purchase_id === purchase.id && payment.currency === purchase.currency);
+        const tolerance = purchase.currency === 'PHP' ? Math.min(200, Math.max(0, Number(purchase.settlement_tolerance_minor || 0))) : 0;
         let net = 0, firstFullAt: string | null = null;
         for (const entry of entries) {
             net += Number(entry.amount_minor) * (entry.kind === 'refund' ? -1 : 1);
-            if (net >= Number(purchase.total_minor) && !firstFullAt) firstFullAt = entry.occurred_at;
+            if ((net >= Number(purchase.total_minor) || (['full', 'balance'].includes(entry.kind) && Math.abs(net - Number(purchase.total_minor)) <= tolerance)) && !firstFullAt) firstFullAt = entry.occurred_at;
         }
         const firstPaid = entries.find(entry => entry.kind !== 'refund')?.occurred_at || null;
         const depositAt = entries.find(entry => entry.kind === 'deposit')?.occurred_at || null;
+        const settled = net >= Number(purchase.total_minor) || Boolean(firstFullAt && Math.abs(net - Number(purchase.total_minor)) <= tolerance);
         return { ...purchase, total_minor: Number(purchase.total_minor), paid_minor: net,
-            outstanding_minor: net < 0 ? null : Math.max(0, Number(purchase.total_minor) - net), overpaid_minor: Math.max(0, net - Number(purchase.total_minor)),
-            payment_status: net >= Number(purchase.total_minor) ? 'fully_paid' : net > 0 ? 'partially_paid' : firstPaid ? 'refunded_or_reversed' : 'no_verified_payment',
+            outstanding_minor: net < 0 ? null : settled ? 0 : Math.max(0, Number(purchase.total_minor) - net), overpaid_minor: Math.max(0, net - Number(purchase.total_minor)),
+            payment_status: settled ? 'fully_paid' : net > 0 ? 'partially_paid' : firstPaid ? 'refunded_or_reversed' : 'no_verified_payment',
             first_payment_at: firstPaid, deposit_at: depositAt, first_full_payment_at: firstFullAt,
             inquiry_to_order_hours: hoursBetween(firstInquiryAt, purchase.purchased_at),
             inquiry_to_deposit_hours: hoursBetween(firstInquiryAt, depositAt),

@@ -17,7 +17,12 @@ it('shows current lead stage, saved deal price, actual payments and remaining ba
     expect(output).toContain('Current lead stage: Qualified'); expect(output).toContain('Deal price:'); expect(output).toContain('Verified payments:'); expect(output).toContain('Remaining balance:');
     expect(view.root.findByProps({ name: 'amount' }).props.defaultValue).toBe('80.00');
     expect(view.root.findByProps({ name: 'confirmed' }).props.required).toBe(true);
-    expect(view.root.findByProps({ name: 'confirm_converted' })).toBeTruthy();
+    expect(view.root.findAllByProps({ name: 'confirm_converted' })).toHaveLength(0);
+});
+it('allows the Closed Deal receipt workflow without displaying a create-order or verified-payment form', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));
+    await act(async () => { view = create(createElement(Details, { ...props, order: null, kind: 'closed' })); });
+    expect(text(view.toJSON())).toContain('No order is required for a Closed Deal'); expect(view.root.findAllByType('form')).toHaveLength(0);
 });
 it('shows both quota counts and both commission scenarios, keeping 35% when only one quota is reached', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));

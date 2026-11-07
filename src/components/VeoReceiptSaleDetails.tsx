@@ -8,12 +8,15 @@ const localTime = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0
 const money = (v: number, c: string) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: c }).format(v / 100);
 const stage = (v?: string) => v ? v.replaceAll('_', ' ').replace(/\b\w/g, m => m.toUpperCase()) : 'Unknown';
 
-export default function VeoReceiptSaleDetails({ contact, seller, order, payments = [], kind, version, loading, onSaved }: {
-    contact: any; seller: string; order: any; payments?: any[]; kind: string; version: number; loading: boolean; onSaved: (orderId: string) => void;
+export default function VeoReceiptSaleDetails({ contact, seller, order, payments = [], closedDeals = [], closedDealId = '', onClosedChange, kind, version, loading, onSaved }: {
+    contact: any; seller: string; order: any; payments?: any[]; closedDeals?: any[]; closedDealId?: string; onClosedChange?: (id: string) => void; kind: string; version: number; loading: boolean; onSaved: (orderId: string) => void;
 }) {
     const [commission, setCommission] = useState<any>(null), [commissionError, setCommissionError] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
     const requests = useRef(new Map<string, string>()), day = today();
-    const context = `${contact?.id || ''}:${seller}:${order?.id || ''}`, activeContext = useRef(context); activeContext.current = context;
+    const context = `${contact?.id || ''}:${seller}:${order?.id || ''}:${closedDealId}`, activeContext = useRef(context); activeContext.current = context;
+    const closed = closedDeals.find(d => d.id === closedDealId), availableClosed = closedDeals.filter(d => !d.order_id || d.order_id === order?.id);
+    const settled = order?.done_at && Math.abs(Number(order.paid_minor) - Number(order.total_minor)) <= Number(order.settlement_tolerance_minor || 0);
+    const closedSelect = <label className="text-sm md:col-span-2">Earlier Closed Deal<select name="closed_deal_id" className={field} value={closedDealId} disabled={!!closed?.order_id} onChange={e => onClosedChange?.(e.target.value)}><option value="">No earlier Closed Deal / immediate full payment</option>{availableClosed.map(d => <option key={d.id} value={d.id}>{money(d.amount_minor, d.currency)} · {new Date(d.occurred_at).toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' })}</option>)}</select>{closed?.order_id && <input type="hidden" name="closed_deal_id" value={closed.id} />}</label>;
     useEffect(() => {
         setCommission(null); setCommissionError(''); if (!seller) return;
         const controller = new AbortController();
@@ -26,7 +29,7 @@ export default function VeoReceiptSaleDetails({ contact, seller, order, payments
     async function save(e: FormEvent<HTMLFormElement>, action: 'order' | 'payment') {
         e.preventDefault(); const form = e.currentTarget, fields = Object.fromEntries(new FormData(form));
         const payload = action === 'order' ? { ...fields, action, page_id: contact.page_id, contact_id: contact.id, seller_id: seller }
-            : { ...fields, action, order_id: order.id, confirmed: fields.confirmed === 'on', confirm_converted: fields.confirm_converted === 'on', occurred_at: new Date(String(fields.occurred_at) + '+08:00').toISOString() };
+            : { ...fields, action, order_id: order.id, settle_done: true, confirmed: fields.confirmed === 'on', confirm_converted: fields.confirm_converted === 'on', occurred_at: new Date(String(fields.occurred_at) + '+08:00').toISOString() };
         const key = JSON.stringify(payload); if (!requests.current.has(key)) requests.current.set(key, crypto.randomUUID());
         setBusy(true); setMessage('');
         try {
@@ -49,35 +52,41 @@ export default function VeoReceiptSaleDetails({ contact, seller, order, payments
                 {commission.rate !== 40 && <p className="text-sm">Still needed: {Math.max(0, commission.target - commission.closed)} Closed Deals and {Math.max(0, commission.target - commission.done)} Done Deals.</p>}
                 {(commission.totals || []).map((t: any) => <div key={t.currency} className="rounded border bg-white p-3 text-sm"><p>Eligible fully paid sales: <strong>{money(t.gross_minor, t.currency)}</strong></p><p>Current commission at {commission.rate}%: <strong>{money(t.commission_minor, t.currency)}</strong></p><p>At 35% if either quota is missed: {money(Math.floor(t.gross_minor * 35 / 100), t.currency)} (estimate)</p><p>At 40% if both quotas are reached: {money(Math.floor(t.gross_minor * 40 / 100), t.currency)} (estimate)</p></div>)}
                 {!commission.totals?.length && <p className="text-sm">0 recorded commission. No eligible fully paid sales for this date.</p>}
-                <p className="text-xs text-slate-600">{commission.provisional ? 'Provisional until Philippine midnight. The final daily rate applies to all eligible fully paid order totals for this date.' : 'Completed Philippine work date.'} Deposits and receipt uploads alone do not earn commission. <Link className="underline" href="/dashboard/workspace?view=salary">Open daily Salary history</Link></p>
+                <p className="text-xs text-slate-600">{commission.provisional ? 'Provisional until Philippine midnight. The final daily rate applies to eligible completed orders for this date.' : 'Completed Philippine work date.'} A Qualified or Converted Closed Deal can count without an order; commission still requires a created order and verified settlement. <Link className="underline" href="/dashboard/workspace?view=salary">Open daily Salary history</Link></p>
             </>}
         </section>}
         {loading && <p className="text-sm" role="status">Refreshing client stage, deal price and payments…</p>}
         {contact && !loading && <section aria-label="Selected client deal and payment" className="rounded border p-4 space-y-3">
             <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{contact.name || 'Unknown client'} · Current lead stage: {stage(contact.pipeline_stage)}</h3><Link className="text-sm underline" href={`/dashboard/contacts/${contact.id}?pageId=${contact.page_id}`}>Open contact / update lead stage</Link></div>
             {message && <p role="status" className="rounded bg-amber-50 p-3 text-sm">{message}</p>}
-            {!order && seller && <form key={`order:${contact.id}:${seller}`} className="grid gap-3 md:grid-cols-2" onSubmit={e => void save(e, 'order')}>
+            {kind === 'closed' && <p className="rounded bg-slate-50 p-3 text-sm">No order is required for a Closed Deal. Set the lead to Qualified or Converted, then submit the receipt and its payment amount below. The amount is financially verified when reconciling the Done Deal.</p>}
+            {!order && seller && kind === 'done' && <form key={`order:${contact.id}:${seller}`} className="grid gap-3 md:grid-cols-2" onSubmit={e => void save(e, 'order')}>
                 <h4 className="font-semibold md:col-span-2">Create the deal / order</h4>
                 <p className="text-xs md:col-span-2">Choose an existing order above, or save a new deal price here. A receipt can also be uploaded on hold before an order is created.</p>
                 <label className="text-sm md:col-span-2">Deal / offer details<input name="description" required maxLength={500} className={field} /></label>
+                {availableClosed.length > 0 && closedSelect}
                 <label className="text-sm">Deal price<input name="amount" required inputMode="decimal" placeholder="0.00" className={field} /></label>
                 <label className="text-sm">Currency<input name="currency" required defaultValue="PHP" pattern="[A-Za-z]{3}" className={field} /></label>
                 <button disabled={busy} className={button}>Save deal and create order</button>
             </form>}
             {order && <>
-                <div className="grid gap-2 rounded bg-slate-50 p-3 text-sm sm:grid-cols-3"><p>Deal price: <strong>{money(order.total_minor, order.currency)}</strong></p><p>Verified payments: <strong>{money(order.paid_minor, order.currency)}</strong></p><p>Remaining balance: <strong>{money(Math.max(0, order.total_minor - order.paid_minor), order.currency)}</strong></p></div>
-                <p className="text-xs">Potential commission on this deal after Converted status and verified full payment: {money(Math.floor(order.total_minor * 35 / 100), order.currency)} at 35%, or {money(Math.floor(order.total_minor * 40 / 100), order.currency)} at 40%. The actual rate uses the full-payment Philippine date and that day&apos;s two quotas. Refunds and corrections can adjust earnings.</p>
+                <div className="grid gap-2 rounded bg-slate-50 p-3 text-sm sm:grid-cols-3"><p>Deal price: <strong>{money(order.total_minor, order.currency)}</strong></p><p>Verified payments: <strong>{money(order.paid_minor, order.currency)}</strong></p><p>Remaining balance: <strong>{money(settled ? 0 : Math.max(0, order.total_minor - order.paid_minor), order.currency)}</strong></p></div>
+                <p className="text-xs">Potential commission after a Qualified or Converted lead and verified settlement: {money(Math.floor(order.total_minor * 35 / 100), order.currency)} at 35%, or {money(Math.floor(order.total_minor * 40 / 100), order.currency)} at 40%. Final earnings use actual verified net payments and that day&apos;s two quotas. Refunds and corrections can adjust earnings.</p>
                 {payments.some(p => p.order_id === order.id) && <details><summary className="cursor-pointer text-sm">Saved payments for this order</summary>{payments.filter(p => p.order_id === order.id).map(p => <p className="text-xs py-1" key={p.id}>{p.kind} · {money(p.amount_minor, order.currency)} · {new Date(p.occurred_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })} PHT · {p.reference}</p>)}</details>}
-                {Number(order.paid_minor) < Number(order.total_minor) ? <form key={`payment:${order.id}:${order.paid_minor}:${kind}`} className="grid gap-3 border-t pt-3 md:grid-cols-2" onSubmit={e => void save(e, 'payment')}>
-                    <h4 className="font-semibold md:col-span-2">Record the amount actually paid</h4>
-                    <label className="text-sm">Payment type<select name="kind" className={field} defaultValue={kind === 'closed' ? 'deposit' : Number(order.paid_minor) > 0 ? 'balance' : 'full'}><option value="deposit">Down payment / Closed Deal</option><option value="balance">Balance payment</option><option value="full">Immediate full payment</option></select></label>
-                    <label className="text-sm">Payment amount ({order.currency})<input name="amount" required inputMode="decimal" defaultValue={kind === 'closed' ? '' : ((order.total_minor - order.paid_minor) / 100).toFixed(2)} className={field} /></label>
+                {kind === 'done' && <form key={`payment:${order.id}:${order.paid_minor}:${closedDealId}`} className="grid gap-3 border-t pt-3 md:grid-cols-2" onSubmit={e => void save(e, 'payment')}>
+                    <h4 className="font-semibold md:col-span-2">Reconcile Closed Deal and final payment</h4>
+                    {availableClosed.length > 0 && closedSelect}
+                    {closed && <p className="text-sm md:col-span-2">Earlier Closed Deal amount: <strong>{money(closed.amount_minor, closed.currency)}</strong>. {closed.verified_payment_id ? 'Already included in the verified payments above.' : 'Verify this receipt amount together with the additional payment.'}</p>}
+                    <p className="text-xs md:col-span-2">The combined verified payments must match the deal price within {order.currency === 'PHP' ? '₱2' : 'zero difference'}. Previously saved payments are counted once. Enter 0 additional payment if the saved receipts already cover the price.</p>
+                    {closed && !closed.verified_payment_id && Number(order.paid_minor) > 0 && <label className="text-sm md:col-span-2">Saved payment covering the Closed Deal<select name="existing_closed_payment_id" className={field}><option value="">Choose the existing payment; do not add it again</option>{payments.filter(p => p.order_id === order.id && p.kind !== 'refund' && Number(p.amount_minor) >= Number(closed.amount_minor)).map(p => <option key={p.id} value={p.id}>{p.reference} · {money(p.amount_minor, order.currency)}</option>)}</select></label>}
+                    <input name="kind" type="hidden" value="balance" />
+                    <label className="text-sm">Additional payment amount ({order.currency})<input name="amount" required inputMode="decimal" defaultValue={(Math.max(0, order.total_minor - order.paid_minor - (closed && !closed.verified_payment_id && Number(order.paid_minor) === 0 ? closed.amount_minor : 0)) / 100).toFixed(2)} className={field} /></label>
                     <label className="text-sm">Payment time (PHT)<input name="occurred_at" type="datetime-local" required defaultValue={localTime()} className={field} /></label>
                     <label className="text-sm">Transaction reference<input name="reference" required minLength={3} maxLength={160} className={field} /></label>
-                    <label className="flex gap-2 text-sm md:col-span-2"><input name="confirmed" type="checkbox" required />I verified this amount against the actual payment record.</label>
-                    {contact.pipeline_stage !== 'converted' && <label className="flex gap-2 text-sm md:col-span-2"><input name="confirm_converted" type="checkbox" />I also confirm this lead is Converted. Save that lead stage with this verified payment.</label>}
-                    <button disabled={busy} className={button}>Save verified payment</button>
-                </form> : <p className="text-sm font-semibold">Order fully paid in the verified ledger.{contact.pipeline_stage !== 'converted' && ' Salary remains on hold until the lead is Converted.'}</p>}
+                    <label className="flex gap-2 text-sm md:col-span-2"><input name="confirmed" type="checkbox" required />I verified the Closed Deal amount and additional payment against the actual payment records.</label>
+                    {!['qualified', 'converted'].includes(contact.pipeline_stage) && <label className="flex gap-2 text-sm md:col-span-2"><input name="confirm_converted" type="checkbox" />I also confirm this lead is Converted. Save that lead stage with this verified payment.</label>}
+                    <button disabled={busy} className={button}>Reconcile payments and mark Done</button>
+                </form>}
             </>}
         </section>}
     </div>;

@@ -55,7 +55,7 @@ function financials(orders: any[], cash: any[], spend: any[], pageCount: number,
     const currencies = [...new Set<string>([...orders, ...cash, ...spend].map(r => r.currency))];
     return currencies.map(currency => {
         const o = orders.filter(r => r.currency === currency), payments = cash.filter(r => r.currency === currency), ads = spend.filter(r => r.currency === currency);
-        const done = o.filter(r => r.done_at), values = done.map(r => Number(r.paid_minor));
+        const done = o.filter(r => r.done_at), values = done.map(r => Number(r.total_minor));
         const amount = ads.length && ads.every(r => r.amount_minor != null) ? sum(ads, 'amount_minor') : null, salaryKnown = !beforeLaunch && !done.some(r => r.commission_minor == null) && !payments.some(r => r.source === 'retained');
         const salary = salaryKnown ? sum(done, 'commission_minor') : null, gross = sum(done, 'paid_minor'), received = sum(payments, 'amount_minor');
         const mixedRevenue = [...orders, ...cash].some(r => r.currency !== currency && Number(r.paid_minor || r.amount_minor || 0) !== 0);
@@ -81,7 +81,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
         const clients = leads.filter((c: any) => dayOf(c.inquiry_at) === day), ids = new Set(clients.map((c: any) => c.id));
         const co = orders.filter((o: any) => ids.has(o.contact_id)), cash = payments.filter((p: any) => ids.has(p.contact_id) && p.paid_day >= day &&
             (p.source !== 'workspace' || clients.some((c: any) => c.id === p.contact_id && c.stage === 'converted')));
-        const converted = clients.filter((c: any) => c.converted_at || c.stage === 'converted'), payers = new Set(co.filter((o: any) => o.closed_at).map((o: any) => o.contact_id));
+        const converted = clients.filter((c: any) => c.converted_at || c.stage === 'converted'), payers = new Set(co.filter((o: any) => o.closed_at && Number(o.paid_minor) > 0).map((o: any) => o.contact_id));
         const money = financials(co, cash, spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay && !co.some((o: any) => o.financial_source === 'workspace' && o.done_at)).map(f => ({ ...f,
             acquisition_cost_minor: f.spend_complete ? ratio(f.ad_spend_minor!, payers.size) : null, cost_per_inquiry_minor: f.spend_complete ? ratio(f.ad_spend_minor!, clients.length) : null,
             paid_customers: payers.size, net_minor: f.cash_net_minor, gross_roas: f.cash_roas, net_roas: f.cash_net_roas }));

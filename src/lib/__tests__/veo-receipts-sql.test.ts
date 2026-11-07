@@ -33,9 +33,10 @@ beforeAll(async () => {
 }, 60000);
 afterAll(async () => { await db?.close(); });
 it('stores incomplete receipt evidence as a hold without creating orders, payments or salary', async () => {
+    await db.query("UPDATE contacts SET pipeline_stage='new' WHERE id=$1", [client]);
     const before = await rpc('veo_salary', [member, new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)]);
     const r = await upload('closed'); receipt = r.id;
-    expect(r.salary_status).toBe('on_hold'); expect(r.salary_holds).toEqual(expect.arrayContaining(['converted_lead_required', 'create_and_link_order']));
+    expect(r.salary_status).toBe('on_hold'); expect(r.salary_holds).toEqual(expect.arrayContaining(['eligible_lead_required', 'create_and_link_order']));
     expect(r.delivery_submission).toBeNull(); expect(r).not.toHaveProperty('object_path'); expect(r).not.toHaveProperty('photo_sha256');
     expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(0); expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
     expect((await rpc('veo_salary', [member, before.work_date])).totals).toEqual(before.totals);
@@ -49,10 +50,10 @@ it('shows holds to the worker and their supervisors, excluding another branch an
     await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [member, page]);
     expect((await db.query<any>("SELECT has_table_privilege('anon','veo_receipts','SELECT') OR has_function_privilege('authenticated','veo_receipt_recheck(uuid,uuid,uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
 });
-it('requires an order, Converted stage and verified payment; CD evidence and DD evidence stay distinct', async () => {
+it('requires an order, Qualified or Converted stage and verified settlement for Done; CD and DD evidence stay distinct', async () => {
     const made = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: client, total_minor: 10000, currency: 'PHP', description: 'Video' }); order = made.id;
     expect((await rpc('veo_receipt_recheck', [member, receipt, order])).salary_holds).toContain('verify_full_payment');
-    await db.query("UPDATE contacts SET pipeline_stage='converted' WHERE id=$1", [client]);
+    await db.query("UPDATE contacts SET pipeline_stage='qualified' WHERE id=$1", [client]);
     await action(member, 'payment', { request_id: id(request++), order_id: order, kind: 'deposit', amount_minor: 4000, reference: 'FIRST-DEPOSIT', occurred_at: new Date().toISOString(), confirmed: true });
     const team = (await db.query<any>('SELECT team_id FROM veo_orders WHERE id=$1', [order])).rows[0].team_id;
     await db.query('UPDATE veo_teams SET telegram_chat_id=-100123 WHERE id=$1', [team]); await db.query('INSERT INTO veo_worker_mappings VALUES($1,12345)', [member]);
@@ -66,7 +67,7 @@ it('requires an order, Converted stage and verified payment; CD evidence and DD 
     const salary = await rpc('veo_salary', [member, new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)]);
     expect(salary.closed).toBe(1); expect(salary.done).toBe(1); expect(salary.totals[0].gross_minor).toBe(10000);
     await rpc('veo_receipt_recheck', [member, dd.id, order]); expect((await db.query('SELECT * FROM veo_submissions')).rows).toHaveLength(2);
-    await db.query("UPDATE contacts SET pipeline_stage='qualified' WHERE id=$1", [client]);
+    await db.query("UPDATE contacts SET pipeline_stage='new' WHERE id=$1", [client]);
     expect(await rpc('veo_handoff', [ready.delivery_submission])).toBeNull(); expect((await rpc('veo_receipt_access', [member, dd.id])).salary_status).toBe('on_hold');
     expect((await rpc('veo_salary', [member, salary.work_date])).totals).toEqual([]);
     await db.query("UPDATE contacts SET pipeline_stage='converted' WHERE id=$1", [client]);
@@ -142,7 +143,7 @@ it('allocates Page quota toward supplied Pages while conserving each worker targ
 it('retains receipt notes, audits corrections and keeps notes separate from verified financial records', async () => {
     const path = `${tenant}/${member}/${id(request++)}`;
     await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [path]);
-    const before = (await db.query('SELECT count(*)::int n FROM veo_payments')).rows[0].n;
+    const before = (await db.query<{ n: number }>('SELECT count(*)::int n FROM veo_payments')).rows[0].n;
     const saved = await rpc('veo_receipt_save', [member, JSON.stringify({ request_id: id(request++), seller_id: member, contact_id: client, receipt_kind: 'done', object_path: path, photo_sha256: 'f'.repeat(64), notes: 'Client asked to pay the balance tomorrow.' })]);
     expect(saved.notes).toBe('Client asked to pay the balance tomorrow.'); expect(saved.salary_status).toBe('on_hold');
     const updated = await rpc('veo_receipt_note', [manager, saved.id, 'Client confirmed the payment schedule.']);
@@ -150,7 +151,7 @@ it('retains receipt notes, audits corrections and keeps notes separate from veri
     expect((await db.query<any>("SELECT before_value,after_value FROM veo_audit WHERE action='receipt_notes' AND entity_id=$1", [saved.id])).rows[0]).toMatchObject({ before_value: { notes: saved.notes }, after_value: { notes: updated.notes } });
     await expect(rpc('veo_receipt_note', [other, saved.id, 'Unauthorized edit'])).rejects.toThrow(/permitted/);
     await expect(rpc('veo_receipt_note', [member, saved.id, 'a'.repeat(2001)])).rejects.toThrow(/2000/);
-    expect((await db.query('SELECT count(*)::int n FROM veo_payments')).rows[0].n).toBe(before);
+    expect((await db.query<{ n: number }>('SELECT count(*)::int n FROM veo_payments')).rows[0].n).toBe(before);
 });
 it('shows canonical commission only to the seller branch and prevents future quota freezing', async () => {
     const day = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10), tomorrow = new Date(Date.now() + 32 * 3600000).toISOString().slice(0, 10);
@@ -167,4 +168,68 @@ it('shows canonical commission only to the seller branch and prevents future quo
     await expect(rpc('veo_receipt_commission', [owner, member, tomorrow])).rejects.toThrow(/date/);
     await expect(rpc('veo_receipt_commission', [owner, member, '2020-01-01'])).rejects.toThrow(/date/);
     for (const fn of ['veo_receipt_note(uuid,uuid,text)', 'veo_receipt_commission(uuid,uuid,date)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed", [fn])).rows[0].exposed).toBe(false);
+});
+
+async function stageClose(amount = 4000, currency = 'PHP', contactStage = 'qualified') {
+    const cid = id(request++), path = `${tenant}/${member}/${id(request++)}`;
+    await db.query('INSERT INTO contacts(id,page_id,psid,name,pipeline_stage) VALUES($1,$2,$4,\'Stage client\',$3)', [cid, page, contactStage, 'stage-' + cid]);
+    await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [path]);
+    const at = new Date(Date.now() - 36 * 3600000).toISOString();
+    const receipt = await rpc('veo_receipt_save', [member, JSON.stringify({ request_id: id(request++), seller_id: member, contact_id: cid, receipt_kind: 'closed', object_path: path, photo_sha256: 'e'.repeat(64), closed_amount_minor: amount, closed_currency: currency, closed_occurred_at: at })]);
+    return { cid, receipt, at };
+}
+it('counts a Qualified Closed Deal without creating an order or verified payment, and forwards a stable Closed Deal reference', async () => {
+    const ordersBefore = (await db.query<{ n: number }>('SELECT count(*)::int n FROM veo_orders')).rows[0].n, paymentsBefore = (await db.query<{ n: number }>('SELECT count(*)::int n FROM veo_payments')).rows[0].n;
+    const { cid, receipt } = await stageClose();
+    expect(receipt.order_id).toBeNull(); expect(receipt.closed_deal_id).toBeTruthy(); expect(receipt.holds).toEqual([]); expect(receipt.salary_holds).toEqual(['create_and_link_order']);
+    expect((await db.query<{ n: number }>('SELECT count(*)::int n FROM veo_orders')).rows[0].n).toBe(ordersBefore); expect((await db.query<{ n: number }>('SELECT count(*)::int n FROM veo_payments')).rows[0].n).toBe(paymentsBefore);
+    const fact = (await db.query<any>('SELECT * FROM veo_sales_facts WHERE contact_id=$1', [cid])).rows[0]; expect(fact.closed_date).toBeTruthy(); expect(fact.done_date).toBeNull(); expect(fact.paid_minor).toBe(0); expect(fact.order_created).toBe(false);
+    const handoff = await rpc('veo_handoff', [receipt.delivery_submission]); expect(handoff.order_id).toBeNull(); expect(handoff.closed_deal_id).toBe(receipt.closed_deal_id); expect(handoff.payment_verified).toBe(false);
+    const work = (await db.query<any>('SELECT overdue FROM veo_work_facts WHERE id=$1', [receipt.closed_deal_id])).rows[0]; expect(work.overdue).toBe(false);
+});
+it.each([-201, -200, -100, 0, 100, 200, 201])('reconciles the Closed Deal and final balance with a %i-cent price difference', async difference => {
+    const { cid, receipt } = await stageClose();
+    const o = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 10000, currency: 'PHP', description: 'Stage deal', closed_deal_id: receipt.closed_deal_id });
+    const payload = { request_id: id(request++), order_id: o.id, amount_minor: 6000 + difference, kind: 'balance', confirmed: true, settle_done: true, reference: 'FINAL-' + request, occurred_at: new Date().toISOString() };
+    if (Math.abs(difference) > 200) {
+        await expect(action(member, 'payment', payload)).rejects.toThrow(/maximum PHP 2/);
+        expect((await db.query('SELECT * FROM veo_payments WHERE order_id=$1', [o.id])).rows).toHaveLength(0);
+    } else {
+        const saved = await action(member, 'payment', payload); expect(await action(member, 'payment', payload)).toEqual(saved);
+        const payments = (await db.query<any>('SELECT * FROM veo_payments WHERE order_id=$1', [o.id])).rows; expect(payments).toHaveLength(2);
+        expect(payments.reduce((n: number, p: any) => n + Number(p.amount_minor), 0)).toBe(10000 + difference);
+        const facts = (await db.query<any>('SELECT * FROM veo_sales_facts WHERE contact_id=$1', [cid])).rows; expect(facts).toHaveLength(1); expect(facts[0].done_date).toBeTruthy(); expect(facts[0].closed_deal_id).toBe(receipt.closed_deal_id);
+        const work = (await db.query<any>('SELECT balance_minor,waiting_payment FROM veo_work_facts WHERE id=$1', [o.id])).rows[0];expect(work.balance_minor).toBe(0);expect(work.waiting_payment).toBe(false);
+        const cd = await rpc('veo_receipt_recheck', [member, receipt.id]); expect(cd.salary_status).toBe('counted_from_verified_ledger');
+        const photo = `${tenant}/${member}/${id(request++)}`;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [photo]);
+        const dd = await rpc('veo_receipt_save', [member, JSON.stringify({ request_id: id(request++), seller_id: member, contact_id: cid, receipt_kind: 'done', order_id: o.id, closed_deal_id: receipt.closed_deal_id, object_path: photo, photo_sha256: 'd'.repeat(64) })]);
+        const handoff = await rpc('veo_handoff', [dd.delivery_submission]);expect(handoff.settlement_tolerance_minor).toBe(200);expect(handoff.paid_minor).toBe(10000 + difference);
+    }
+});
+it('does not count an unqualified Closed Deal, rejects an uncreated Done order and requires exact non-PHP settlement', async () => {
+    const pending = await stageClose(4000, 'USD', 'new');
+    expect(pending.receipt.holds).toContain('eligible_lead_required'); expect((await db.query<any>('SELECT closed_date FROM veo_sales_facts WHERE contact_id=$1', [pending.cid])).rows[0].closed_date).toBeNull();
+    await expect(action(member, 'payment', { order_id: pending.receipt.closed_deal_id, settle_done: true, confirmed: true, amount_minor: 6000, request_id: id(request++) })).rejects.toThrow(/Order outside/);
+    await db.query("UPDATE contacts SET pipeline_stage='qualified' WHERE id=$1", [pending.cid]);
+    const o = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: pending.cid, total_minor: 10000, currency: 'USD', description: 'Exact currency', closed_deal_id: pending.receipt.closed_deal_id });
+    await expect(action(member, 'payment', { request_id: id(request++), order_id: o.id, settle_done: true, confirmed: true, kind: 'balance', amount_minor: 6001, reference: 'USD-OVER', occurred_at: new Date().toISOString() })).rejects.toThrow(/other currencies exact/);
+});
+it('re-uploading an expired Closed receipt after linking an order retains the same sale and delivery identity', async () => {
+    const { cid, receipt, at } = await stageClose();
+    const o = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 10000, currency: 'PHP', description: 'Re-upload fixture', closed_deal_id: receipt.closed_deal_id });
+    await db.query('UPDATE veo_photo_objects SET expires_at=now()-interval \'1 minute\' WHERE object_path=(SELECT object_path FROM veo_receipts WHERE id=$1)', [receipt.id]);
+    const photo = `${tenant}/${member}/${id(request++)}`;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [photo]);
+    const fresh = await rpc('veo_receipt_save', [member, JSON.stringify({ request_id: id(request++), seller_id: member, contact_id: cid, receipt_kind: 'closed', closed_amount_minor: 4000, closed_currency: 'PHP', closed_occurred_at: at, object_path: photo, photo_sha256: 'e'.repeat(64) })]);
+    expect(fresh.closed_deal_id).toBe(receipt.closed_deal_id);expect(fresh.order_id).toBe(o.id);expect(fresh.delivery_submission).not.toBe(receipt.delivery_submission);
+    expect((await rpc('veo_handoff', [fresh.delivery_submission])).closed_deal_id).toBe(receipt.closed_deal_id);
+    expect((await db.query<{ n: number }>('SELECT count(*)::int n FROM veo_sales_facts WHERE contact_id=$1', [cid])).rows[0].n).toBe(1);
+});
+it('settles a fully covered Closed Deal without inventing an extra payment, and rejects a zero-payment Done Deal', async () => {
+    const { cid, receipt } = await stageClose(10000);
+    const o = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 10000, currency: 'PHP', description: 'Covered by Closed receipt', closed_deal_id: receipt.closed_deal_id });
+    const p = { request_id: id(request++), order_id: o.id, settle_done: true, confirmed: true, amount_minor: 0, reference: 'EXISTING-RECEIPT', occurred_at: new Date().toISOString() };
+    await action(member, 'payment', p);await action(member, 'payment', p);
+    expect((await db.query('SELECT * FROM veo_payments WHERE order_id=$1', [o.id])).rows).toHaveLength(1);
+    const small = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 100, currency: 'PHP', description: 'No fabricated free sale' });
+    await expect(action(member, 'payment', { ...p, order_id: small.id, request_id: id(request++) })).rejects.toThrow(/actual verified payment/);
 });
