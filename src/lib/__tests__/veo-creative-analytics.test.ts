@@ -13,7 +13,7 @@ it('counts later conversions and deposit/balance once, with authoritative gross,
     expect(ad).toMatchObject({ inquiries: 2, converted: 1, not_qualified: 1, conversion_rate: .5, paying_clients: 1, paid_orders: 1, done_orders: 1, mean_inquiry_to_conversion_hours: 48, daily_frequency_weighted_mean: 2.5, recorded_delivery_days: 12 });
     expect(ad.finance[0]).toMatchObject({ gross_minor: 10000, salary_minor: 4000, ad_spend_minor: 3000, net_minor: 3000, average_daily_spend_minor: 1500, average_order_minor: 10000, cost_per_purchase_minor: 3000, cost_per_acquisition_minor: 3000, net_roas: 2 });
     expect(r.daily.find((d: any) => d.ad_id === '1' && d.day === '2026-11-01')).toMatchObject({ converted: 1, inquiries: 1 });
-    expect(ad.demographics.find(d => d.key === 'industry')?.rows).toEqual(expect.arrayContaining([{ label: 'Food', count: 1, percent: .5 }, { label: 'Unknown', count: 1, percent: .5 }]));
+    expect(ad.demographics.find((d: any) => d.key === 'industry')?.rows).toEqual(expect.arrayContaining([{ label: 'Food', count: 1, percent: .5 }, { label: 'Unknown', count: 1, percent: .5 }]));
 });
 it('does not fabricate retained salary, complete cost coverage, zero-denominator CPA or whole-period unique frequency', () => {
     const data: any = input(); data.orders[0].commission_minor = null;
