@@ -40,7 +40,10 @@ try {
     for (const actor of actors) {
         const headers = await auth(actor.user_id), scope = (await db.query('SELECT veo_scope($1) r', [actor.user_id])).rows[0].r;
         const allowed = (await db.query("SELECT a.user_id FROM veo_accounts a WHERE a.user_id IN(SELECT veo_branch($1)) AND a.role IN('manager','member') LIMIT 1", [actor.user_id])).rows[0];
-        if (allowed) assert.equal((await get(new URLSearchParams({ worker_id: allowed.user_id, from, to: today }), headers)).status, 200);
+        if (allowed) {
+            const profile = await get(new URLSearchParams({ worker_id: allowed.user_id, from, to: today }), headers);
+            assert.equal(profile.status, 200, `${actor.role} permitted profile: ${profile.body.error || profile.status}`);
+        }
         const branch = (await db.query('SELECT veo_branch($1) id', [actor.user_id])).rows.map(r => r.id);
         const forbidden = workers.find(w => !branch.includes(w.user_id));
         if (forbidden) assert.equal((await get('worker_id=' + forbidden.user_id, headers)).status, 403);

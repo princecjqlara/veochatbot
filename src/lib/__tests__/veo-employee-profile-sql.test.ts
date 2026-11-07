@@ -98,6 +98,18 @@ it('keeps unrelated shared-Page inquiries out of employee client history', async
     expect(after.clients.map((c: any) => c.contact_id).sort()).toEqual(before.clients.map((c: any) => c.contact_id).sort());
     expect(after.summary.assigned_cohort).toBe(before.summary.assigned_cohort);
 });
+it('preserves branch, date and salary results across mixed requests on a pooled generic-plan connection', async () => {
+    await db.exec("SET plan_cache_mode='force_generic_plan'");
+    try {
+        for (const actor of [owner, tl, manager, owner, manager, tl]) {
+            const r = await read(actor);
+            expect(r.summary).toMatchObject({ closed: 3, done: 2, cd_cohort: 3, cd_cohort_done: 2 });
+            expect(r.days.find((d: any) => d.work_date === d5)).toMatchObject({ target: 1, rate: 40 });
+            expect(r.ranking.rank).toBe(2);
+        }
+        await expect(read(otherTL)).rejects.toThrow(/access denied/);
+    } finally { await db.exec('RESET plan_cache_mode'); }
+});
 it('enforces member self, supervisor branch, current Page grants and private RPC access', async () => {
     await expect(read(worker, peer)).rejects.toThrow(/access denied/);
     await expect(read(otherTL, worker)).rejects.toThrow(/access denied/);
