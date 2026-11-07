@@ -24,6 +24,11 @@ function checked(result: any) {
 export async function GET(request: NextRequest) {
     try {
         const scope = await access(request), db = getSupabaseAdmin(), q = request.nextUrl.searchParams;
+        if (q.get('commission') === '1') {
+            const worker = q.get('worker_id') || scope.user_id, day = q.get('date') || philippineDate();
+            if (!uuid(worker) || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) throw Error('Choose a worker and valid Philippine date');
+            return response(checked(await readVeoRpc(db, 'veo_receipt_commission', { p_actor: scope.user_id, p_seller: worker, p_day: day })));
+        }
         if (q.has('receipt_id')) {
             const id = q.get('receipt_id'); if (!uuid(id)) throw Error('Choose a receipt');
             const data = checked(await readVeoRpc(db, 'veo_receipt_access', { p_actor: scope.user_id, p_id: id }));
@@ -55,12 +60,17 @@ export async function POST(request: NextRequest) {
         const scope = await access(request); actor = scope.user_id;
         if (!request.headers.get('content-type')?.includes('multipart/form-data')) {
             const body = await request.json();
+            if (body.action === 'notes') {
+                if (!uuid(body.receipt_id) || typeof body.notes !== 'string' || body.notes.length > 2000) throw Error('Choose a receipt and notes of at most 2000 characters');
+                return response(checked(await db.rpc('veo_receipt_note', { p_actor: scope.user_id, p_id: body.receipt_id, p_notes: body.notes })));
+            }
             if (body.action !== 'recheck' || !uuid(body.receipt_id) || body.order_id && !uuid(body.order_id)) throw Error('Choose a receipt and valid order');
             return response(checked(await db.rpc('veo_receipt_recheck', { p_actor: scope.user_id, p_id: body.receipt_id, p_order: body.order_id || null })));
         }
-        const form = await request.formData(), file = form.get('photo'), contact = form.get('contact_id'), seller = form.get('seller_id') || scope.user_id, order = form.get('order_id') || null;
+        const form = await request.formData(), file = form.get('photo'), contact = form.get('contact_id'), seller = form.get('seller_id') || scope.user_id, order = form.get('order_id') || null, notes = form.get('notes') || '';
         requestId = String(form.get('request_id') || '');
         if (!uuid(contact) || !uuid(seller) || !uuid(requestId) || order && !uuid(order) || !file || typeof file === 'string' || !['closed', 'done'].includes(String(form.get('receipt_kind')))) throw Error('Choose a client, seller, receipt type and photo');
+        if (typeof notes !== 'string' || notes.length > 2000) throw Error('Notes must be at most 2000 characters');
         if (file.size > 3 * 1024 * 1024) throw Error('Choose a receipt up to 3 MB');
         const bytes = new Uint8Array(await file.arrayBuffer()); receiptPhoto(file, bytes);
         // Recheck Page and seller grants before storing a private object.
@@ -69,7 +79,7 @@ export async function POST(request: NextRequest) {
         const path = `${scope.tenant_id}/${scope.user_id}/${randomUUID()}`;
         checked(await db.from('veo_photo_objects').insert({ object_path: path })); uploaded = path;
         const stored = await db.storage.from(bucket).upload(path, bytes, { contentType: file.type, upsert: false }); checked(stored);
-        const saved = checked(await db.rpc('veo_receipt_save', { p_actor: scope.user_id, p_data: { request_id: requestId, contact_id: contact, seller_id: seller, order_id: order, receipt_kind: form.get('receipt_kind'), object_path: path, photo_sha256: createHash('sha256').update(bytes).digest('hex') } }));
+        const saved = checked(await db.rpc('veo_receipt_save', { p_actor: scope.user_id, p_data: { request_id: requestId, contact_id: contact, seller_id: seller, order_id: order, receipt_kind: form.get('receipt_kind'), notes, object_path: path, photo_sha256: createHash('sha256').update(bytes).digest('hex') } }));
         if (saved.duplicate) await removeUpload();
         return response({ saved }, saved.duplicate ? 200 : 202);
     } catch (e) {

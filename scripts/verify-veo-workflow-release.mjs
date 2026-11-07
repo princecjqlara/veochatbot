@@ -31,9 +31,18 @@ try {
         const report = await get('/api/workspace/warnings', headers); assert.equal(report.status, 200); assert(report.body.workers.every(w => branch.includes(w.id)));
         if (actor.role === 'member') assert(report.body.workers.every(w => w.id === actor.user_id));
         if (actor.role !== 'team_leader') assert.equal((await get('/api/workspace/creatives?pageId=' + scope.page_ids[0], headers)).status, 403);
+        if (['member', 'manager'].includes(actor.role)) {
+            const commission = await get('/api/workspace/receipts?' + new URLSearchParams({ commission: '1', worker_id: actor.user_id, date: today }), headers);
+            assert.equal(commission.status, 200, commission.body.error);
+            assert.equal(commission.body.rate, commission.body.closed >= commission.body.target && commission.body.done >= commission.body.target ? 40 : 35);
+            const finance = (await db.query('SELECT veo_finance_days($1,$2,$2,NULL,$1) f', [actor.user_id, today])).rows[0].f.days.find(d => d.user_id === actor.user_id);
+            assert.deepEqual(commission.body.totals, finance?.totals || []);
+        }
         const foreign = workers.find(w => !branch.includes(w.user_id)); if (foreign) assert.equal((await get('/api/workspace/warnings?worker_id=' + foreign.user_id, headers)).status, 403);
+        if (foreign) assert.equal((await get('/api/workspace/receipts?commission=1&worker_id=' + foreign.user_id, headers)).status, 403);
     }
     result.checks.role_and_branch_isolation = true;
+    result.checks.receipt_commission_and_page_scoped_totals = true;
     const page = (await db.query(`SELECT page_id FROM ad_source_catalog WHERE page_id=ANY($1::uuid[]) GROUP BY page_id ORDER BY count(*) DESC LIMIT 1`, [scope.page_ids])).rows[0]?.page_id || scope.page_ids[0];
     const creative = await get('/api/workspace/creatives?' + new URLSearchParams({ pageId: page, range: '7' }), root);
     assert.equal(creative.status, 200, creative.body.error); assert(Array.isArray(creative.body.ads)); assert(Array.isArray(creative.body.daily));
@@ -42,7 +51,7 @@ try {
     const quota = (await db.query(`SELECT count(*)::int AS snapshots,count(*) FILTER(WHERE quota=0)::int AS no_work_quota,
  count(*) FILTER(WHERE quota>capacity OR quota<0)::int AS invalid FROM veo_operating_quotas WHERE work_date=veo_today()`)).rows[0]; assert.equal(quota.invalid, 0);
     result.checks.quota = quota;
-    const privateFns = (await db.query(`SELECT count(*)::int AS exposed FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN('veo_receipt_save','veo_receipt_recheck','veo_workflow_warnings','veo_creative_inputs','veo_supply_target') AND(has_function_privilege('anon',oid,'EXECUTE') OR has_function_privilege('authenticated',oid,'EXECUTE'))`)).rows[0]; assert.equal(privateFns.exposed, 0);
+    const privateFns = (await db.query(`SELECT count(*)::int AS exposed FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN('veo_receipt_save','veo_receipt_recheck','veo_receipt_note','veo_receipt_commission','veo_workflow_warnings','veo_creative_inputs','veo_supply_target') AND(has_function_privilege('anon',oid,'EXECUTE') OR has_function_privilege('authenticated',oid,'EXECUTE'))`)).rows[0]; assert.equal(privateFns.exposed, 0);
     const after = await counts(); assert.equal(after.retained_payments, before.retained_payments); assert.equal(after.archive, before.archive); assert.equal(after.launch.getTime(), before.launch.getTime());
     result.checks.retained_finance_and_launch_unchanged = true; result.checks.private_functions = true; result.passed = true;
 } catch (e) { result.error = e.message; process.exitCode = 1; }

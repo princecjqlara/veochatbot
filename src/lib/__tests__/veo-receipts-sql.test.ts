@@ -139,3 +139,32 @@ it('allocates Page quota toward supplied Pages while conserving each worker targ
     expect(allocations.find((a: any) => a.page === page).target).toBe(0); expect(allocations.find((a: any) => a.page === otherPage).target).toBe(1);
     expect(allocations.reduce((n: number, a: any) => n + a.target, 0)).toBe(1);
 });
+it('retains receipt notes, audits corrections and keeps notes separate from verified financial records', async () => {
+    const path = `${tenant}/${member}/${id(request++)}`;
+    await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [path]);
+    const before = (await db.query('SELECT count(*)::int n FROM veo_payments')).rows[0].n;
+    const saved = await rpc('veo_receipt_save', [member, JSON.stringify({ request_id: id(request++), seller_id: member, contact_id: client, receipt_kind: 'done', object_path: path, photo_sha256: 'f'.repeat(64), notes: 'Client asked to pay the balance tomorrow.' })]);
+    expect(saved.notes).toBe('Client asked to pay the balance tomorrow.'); expect(saved.salary_status).toBe('on_hold');
+    const updated = await rpc('veo_receipt_note', [manager, saved.id, 'Client confirmed the payment schedule.']);
+    expect(updated.notes).toBe('Client confirmed the payment schedule.');
+    expect((await db.query<any>("SELECT before_value,after_value FROM veo_audit WHERE action='receipt_notes' AND entity_id=$1", [saved.id])).rows[0]).toMatchObject({ before_value: { notes: saved.notes }, after_value: { notes: updated.notes } });
+    await expect(rpc('veo_receipt_note', [other, saved.id, 'Unauthorized edit'])).rejects.toThrow(/permitted/);
+    await expect(rpc('veo_receipt_note', [member, saved.id, 'a'.repeat(2001)])).rejects.toThrow(/2000/);
+    expect((await db.query('SELECT count(*)::int n FROM veo_payments')).rows[0].n).toBe(before);
+});
+it('shows canonical commission only to the seller branch and prevents future quota freezing', async () => {
+    const day = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10), tomorrow = new Date(Date.now() + 32 * 3600000).toISOString().slice(0, 10);
+    const sold = await action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: client, total_minor: 10000, currency: 'PHP', description: 'Commission visibility fixture' });
+    await action(member, 'payment', { request_id: id(request++), order_id: sold.id, kind: 'full', amount_minor: 10000, reference: 'VERIFIED-FULL', occurred_at: new Date().toISOString(), confirmed: true, confirm_converted: true });
+    const canonical = await rpc('veo_salary', [member, day]);
+    expect(canonical.totals.length).toBeGreaterThan(0);
+    for (const actor of [member, manager, leader, owner]) expect(await rpc('veo_receipt_commission', [actor, member, day])).toMatchObject(canonical);
+    await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2', [member, page]);
+    const revoked = await rpc('veo_receipt_commission', [member, member, day]); expect(revoked.totals).toEqual([]); expect(revoked.rate).toBe(canonical.rate);
+    await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [member, page]);
+    await expect(rpc('veo_receipt_commission', [other, member, day])).rejects.toThrow(/branch/);
+    await expect(rpc('veo_receipt_commission', [member, other, day])).rejects.toThrow(/branch/);
+    await expect(rpc('veo_receipt_commission', [owner, member, tomorrow])).rejects.toThrow(/date/);
+    await expect(rpc('veo_receipt_commission', [owner, member, '2020-01-01'])).rejects.toThrow(/date/);
+    for (const fn of ['veo_receipt_note(uuid,uuid,text)', 'veo_receipt_commission(uuid,uuid,date)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed", [fn])).rows[0].exposed).toBe(false);
+});
