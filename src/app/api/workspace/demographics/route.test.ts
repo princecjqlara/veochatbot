@@ -6,7 +6,7 @@ vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
 import { GET, POST } from './route';
 const id = '00000000-0000-4000-8000-000000000001';
 beforeEach(() => { m.session.mockResolvedValue({ user: { id: 'owner' } }); m.rpc.mockResolvedValue({ data: { manual_fields: {}, ai_demographics: {} } }); });
-afterEach(() => vi.clearAllMocks());
+afterEach(() => { vi.clearAllMocks(); });
 const request = (body: any = {}, origin = 'https://veo.test') => new NextRequest('https://veo.test/api/workspace/demographics', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ contact_id: id, ...body }) });
 it('reads demographics only through the contact-scoped permission RPC', async () => { const r = await GET(new NextRequest('https://veo.test/api/workspace/demographics?contact_id=' + id)); expect(r.status).toBe(200); expect(m.rpc).toHaveBeenCalledWith('veo_demographic_access', { p_actor: 'owner', p_contact: id }); });
 it('queues saved-source AI review without claiming a completed demographic profile', async () => { expect((await POST(request({ action: 'refresh' }))).status).toBe(202); });
