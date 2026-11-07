@@ -90,6 +90,14 @@ it('keeps continuous ownership when the same employee assignment is saved again'
     const r = buildEmployeeProfile(await read());
     expect(r.summary).toMatchObject({ assigned_cohort: 3, assigned_cohort_converted: 2, answered_client_days: 1, reply_client_days: 3 });
 });
+it('keeps unrelated shared-Page inquiries out of employee client history', async () => {
+    const before = await read();
+    await db.query("INSERT INTO contacts(page_id,psid,name,pipeline_stage) SELECT $1,'unassigned-'||n,'Unassigned client '||n,'new' FROM generate_series(1,1000) n", [page]);
+    const after = await read();
+    expect(after.client_count).toBe(before.client_count);
+    expect(after.clients.map((c: any) => c.contact_id).sort()).toEqual(before.clients.map((c: any) => c.contact_id).sort());
+    expect(after.summary.assigned_cohort).toBe(before.summary.assigned_cohort);
+});
 it('enforces member self, supervisor branch, current Page grants and private RPC access', async () => {
     await expect(read(worker, peer)).rejects.toThrow(/access denied/);
     await expect(read(otherTL, worker)).rejects.toThrow(/access denied/);
