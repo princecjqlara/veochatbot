@@ -16,6 +16,9 @@ export function parseMessengerStageEvent(message: MessengerHistoryMessage, faceb
     if (!Number.isFinite(at)) return null;
     const match = /^Lead stage set to ([^\r\n]{1,80}?)\.?$/i.exec(message.message?.trim() || '');
     if (!match) {
+        // VEO records orders separately. An invoice notice must not overwrite a
+        // real Qualified/Converted stage or become qualification evidence.
+        if (process.env.VEO_WORKSPACE_ENABLED === 'true') return null;
         if (classifyMessengerHistoryMessage(message, facebookPageId, options) !== 'order_created') return null;
         return { messageId: message.id, label: 'Order Created', stage: 'order_created', occurredAt: new Date(at).toISOString() };
     }

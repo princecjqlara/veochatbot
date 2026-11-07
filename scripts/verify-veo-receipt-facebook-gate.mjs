@@ -22,8 +22,10 @@ try {
     await db.connect(); const before = await counts();
     const token = await encode({ secret: process.env.NEXTAUTH_SECRET, maxAge: 300, token: { id: launch.owner } });
     const headers = { Cookie: '__Secure-next-auth.session-token=' + token, Origin: origin };
-    const client = (await db.query(`SELECT c.id contact_id,a.user_id seller_id FROM contacts c JOIN veo_accounts a ON a.tenant_id=$1 AND a.active AND a.role IN('member','manager')
-    WHERE veo_can_page($2,c.page_id) AND veo_can_page(a.user_id,c.page_id) ORDER BY c.last_interaction_at DESC NULLS LAST,c.id,a.user_id LIMIT 1`, [launch.id, launch.owner])).rows[0];
+    const scope = (await db.query('SELECT veo_scope($1) s', [launch.owner])).rows[0].s;
+    const client = (await db.query(`WITH recent AS MATERIALIZED(SELECT id,page_id FROM contacts WHERE page_id=ANY($2::uuid[]) ORDER BY last_interaction_at DESC NULLS LAST,id LIMIT 100)
+    SELECT c.id contact_id,a.user_id seller_id FROM recent c JOIN user_pages up ON up.page_id=c.page_id JOIN veo_accounts a ON a.user_id=up.user_id AND a.tenant_id=$1 AND a.active AND a.role IN('member','manager')
+    WHERE veo_can_page(a.user_id,c.page_id) LIMIT 1`, [launch.id, scope.page_ids])).rows[0];
     assert(client, 'An active selling worker and accessible client are required');
     const checkResponse = await fetch(origin + '/api/workspace/receipts', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'check', ...client, receipt_kind: 'done' }), signal: AbortSignal.timeout(65000) });
     const check = await checkResponse.json(); assert.equal(checkResponse.status, 200, check.error);

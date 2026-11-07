@@ -1,11 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseMessengerStageEvent, syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
 
 const notice = (label: string, at = '2026-11-01T10:00:00Z', id = label) => ({
     id, message: `Lead stage set to ${label}`, from: { id: 'page' }, created_time: at
 });
+afterEach(() => vi.unstubAllEnvs());
 
 describe('authoritative Meta stage events', () => {
+    it('keeps VEO invoice notices separate from explicit lead stages while preserving legacy behavior', async () => {
+        const order = { ...notice('Qualified'), message: 'You created an order for PHP100. View: fb-pma://payments/orderdetails/?invoice_id=123' };
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'false'); expect(parseMessengerStageEvent(order, 'page')?.stage).toBe('order_created');
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true'); expect(parseMessengerStageEvent(order, 'page')).toBeNull();
+        expect(parseMessengerStageEvent(notice('Order Created'), 'page')?.stage).toBe('order_created');
+        const rpc = vi.fn().mockResolvedValue({ data: { applied: true } });
+        expect(await syncMessengerStageHistory({ rpc }, { pageId: 'p', contactId: 'c', facebookPageId: 'page', messages: [notice('Qualified'), order] })).toEqual({ events: 1, applied: 1 });
+        expect(rpc).toHaveBeenCalledTimes(1); expect(rpc.mock.calls[0][1].p_stage).toBe('qualified');
+    });
     it.each([['Qualified', 'qualified'], ['Converted', 'converted'], ['Not Qualified', 'not_qualified'],
         ['Intake', 'new'], ['Contacted', 'engaged'], ['Custom consultation', 'engaged'], ['Opted Out', 'opted_out']])(
         'preserves the exact %s label and maps the current pipeline bucket', (label, stage) => {

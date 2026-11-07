@@ -30,7 +30,7 @@ beforeAll(async () => {
     CREATE FUNCTION cron.unschedule(bigint) RETURNS boolean LANGUAGE sql AS 'DELETE FROM cron.job WHERE jobid=$1 RETURNING true';`);
     // Build retained receipts with the previous workflow, then migrate those
     // records in the strict-gate suite below. This verifies upgrade compatibility.
-    for (const m of schemaMigrationPlan().filter(m => !m.name.startsWith('202611070021_'))) await db.exec(m.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- scheduler stub'));
+    for (const m of schemaMigrationPlan().filter(m => !/^20261107002[12]_/.test(m.name))) await db.exec(m.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- scheduler stub'));
     await db.query("INSERT INTO users(id,email,name) VALUES($1,'owner@example.com','CJ Lara')", [owner]);
     await db.query("INSERT INTO pages(id,fb_page_id,name,access_token) VALUES($1,'111','VEO','test')", [page]);
     await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [owner, page]);
@@ -342,8 +342,7 @@ describe('strict Facebook receipt submission after migrating retained records', 
         return { o, notice };
     }
     beforeAll(async () => {
-        const migration = schemaMigrationPlan().find(m => m.name.startsWith('202611070021_'))!;
-        await db.exec(migration.sql);
+        for (const migration of schemaMigrationPlan().filter(m => /^20261107002[12]_/.test(m.name))) await db.exec(migration.sql);
     });
     beforeEach(async () => {
         await db.exec('BEGIN'); transactionalTest = true;
@@ -370,6 +369,21 @@ describe('strict Facebook receipt submission after migrating retained records', 
         expect((await requirements()).blockers).toContain('facebook_eligible_lead_required');
         await db.query("UPDATE contacts SET pipeline_stage='new',pipeline_stage_source='manual',pipeline_stage_updated_at=clock_timestamp() WHERE id=$1", [cid]);
         await observe(); expect((await requirements()).blockers).toContain('eligible_lead_required');
+    });
+    it('restores a Qualified stage inferred incorrectly from an invoice notice, with an audit and exact source matching', async () => {
+        const at = new Date(Date.now() - 30000).toISOString(), message = 'invoice-' + cid;
+        await rpc('apply_messenger_lead_stage', [page, cid, message, 'Order Created', 'order_created', at]);
+        const notice = { invoice_id: invoice, message_id: message, total_minor: 10000, currency: 'PHP', occurred_at: at };
+        await observe({ orders: [notice] }); expect((await requirements()).allowed).toBe(true);
+        expect((await db.query<any>('SELECT pipeline_stage FROM contacts WHERE id=$1', [cid])).rows[0].pipeline_stage).toBe('qualified');
+        expect((await db.query("SELECT id FROM veo_audit WHERE entity_id=$1 AND action='facebook_explicit_stage_restored'", [cid])).rows).toHaveLength(1);
+        await db.query("UPDATE contacts SET pipeline_stage='order_created',pipeline_stage_source='manual' WHERE id=$1", [cid]);
+        await observe({ orders: [notice] }); expect((await requirements()).blockers).toContain('eligible_lead_required');
+    });
+    it('never replaces an explicit Order Created lead stage using an unrelated invoice notice', async () => {
+        await rpc('apply_messenger_lead_stage', [page, cid, 'explicit-stage', 'Order Created', 'order_created', new Date(Date.now() - 30000).toISOString()]);
+        await observe({ orders: [{ invoice_id: invoice, message_id: 'a-different-invoice', total_minor: 10000, currency: 'PHP', occurred_at: new Date(Date.now() - 30000).toISOString() }] });
+        expect((await requirements()).blockers).toContain('eligible_lead_required');
     });
     it('requires fresh evidence and cannot replace a newer failed observation with an older success', async () => {
         const older = new Date(Date.now() - 1000).toISOString(); await observe({ complete: false, error: 'Unavailable' });
