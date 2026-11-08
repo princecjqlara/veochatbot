@@ -4,6 +4,22 @@ import { expect, it, vi } from 'vitest';
 vi.mock('next/link', () => ({ default: ({ href, children }: any) => createElement('a', { href }, children) }));
 import VeoTeamsDashboard from './VeoTeamsDashboard';
 const text = (node: any): string => typeof node === 'string' || typeof node === 'number' ? String(node) : node.children.map(text).join('');
+it('shows a team with only a team leader even when its capacity is zero and no manager exists', async () => {
+    const data = {
+        accounts: [{ id: 'leader', role: 'team_leader', name: 'Team Leader', active: true }],
+        teams: [{ id: 'team', name: 'Leader Team', manager_id: 'leader' }],
+        capacity: { teams: [{ id: 'team', workers: 0, closed: 0, done: 0, capacity: 0, quota: { closed: 0, done: 0 }, history: {}, tomorrow: {} }] }, salary: [], tomorrow: []
+    };
+    let view: any; await act(async () => { view = create(createElement(VeoTeamsDashboard, { data })); });
+    try {
+        expect(view.root.findAllByType('article')).toHaveLength(1);
+        expect(text(view.root)).toContain('Team leader: Team Leader');
+        expect(text(view.root)).toContain('This team is ready with its team leader');
+        expect(text(view.root)).not.toContain('No teams in this branch yet');
+        await act(async () => view.root.findByType('select').props.onChange({ target: { value: 'leader' } }));
+        expect(view.root.findAllByType('article')).toHaveLength(1);
+    } finally { await act(async () => view.unmount()); }
+});
 it('keeps team totals and currencies separate and reads attendance from the Telegram poll', async () => {
     const attendance = vi.fn();
     const data = {
