@@ -25,7 +25,7 @@ export default function VeoJaucianIntegration({ submit, busy, editable = true }:
     const groups = jaucian?.groups || [], teams = workspace?.teams || [], accounts = workspace?.accounts || [];
     const workers = accounts.filter((a: any) => ['manager', 'member', 'team_leader'].includes(a.role));
     const worker = workers.find((w: any) => w.user_id === workerId);
-    const workerTeam = worker && teams.find((t: any) => t.manager_id === (worker.role === 'manager' ? worker.user_id : worker.parent_id));
+    const workerTeam = worker && teams.find((t: any) => t.manager_id === (['manager', 'team_leader'].includes(worker.role) ? worker.user_id : worker.parent_id));
     const workerGroup = groups.find((g: any) => String(g.chat_id) === String(worker?.role === 'team_leader' ? staffChat || worker.telegram_chat_id : workerTeam?.telegram_chat_id));
     const teamGroups = (t: any) => t.telegram_groups_managed ? t.telegram_groups || [] : [{ chat_id: t.telegram_chat_id }];
     const unmappedTeams = teams.filter((t: any) => !teamGroups(t).some((l: any) => groups.some((g: any) => String(g.chat_id) === String(l.chat_id))));
@@ -45,10 +45,10 @@ export default function VeoJaucianIntegration({ submit, busy, editable = true }:
                     const saved = await submit({ action: 'mapping', team_id: teamId, chat_id: destination, thread_id: topic || null });
                     if (saved) await refresh();
                 }}><h3 className="font-bold">Team destination</h3>
-                    <label className="block">VEO team<select required className={field} value={teamId} onChange={e => {
+                    <label className="block">Team Leader or Manager<select required className={field} value={teamId} onChange={e => {
                         setTeamId(e.target.value); const t = teams.find((t: any) => t.id === e.target.value);
                         setDestination(t?.telegram_chat_id ? String(t.telegram_chat_id) : ''); setTopic(t?.telegram_thread_id ? String(t.telegram_thread_id) : '');
-                    }}><option value="">Choose team</option>{teams.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+                    }}><option value="">Choose a Team Leader or Manager</option>{teams.map((t: any) => { const supervisor = accounts.find((a: any) => a.user_id === t.manager_id);return <option key={t.id} value={t.id}>{t.name} - {supervisor?.role === 'team_leader' ? 'Team Leader (no manager needed)' : 'Manager'}</option>; })}</select></label>
                     <label className="block">Existing Jaucian group<select required className={field} value={destination} onChange={e => { setDestination(e.target.value); setTopic(''); }}><option value="">Choose approved group</option>{groups.map((g: any) => <option key={g.chat_id} value={String(g.chat_id)}>{g.name} ({g.chat_id})</option>)}</select></label>
                     <label className="block">Topic override (optional)<input type="number" min="1" step="1" className={field} value={topic} onChange={e => setTopic(e.target.value)} /></label>
                     <p className="text-xs text-slate-600">Leave blank to use Jaucian’s existing Closed Deal, Done Deal and announcement topics. An override sends all this team’s posts to that topic.</p>
@@ -68,7 +68,7 @@ export default function VeoJaucianIntegration({ submit, busy, editable = true }:
                 </form>
             </div>}
             <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="text-left font-semibold mb-2">Current team mappings</caption><thead><tr>{['VEO team', 'Jaucian group', 'Worker identities'].map(t => <th key={t} className="border-b p-2">{t}</th>)}</tr></thead><tbody>{teams.map((t: any) => {
-                const roster = workers.filter((w: any) => w.user_id === t.manager_id || w.parent_id === t.manager_id);
+                const roster = workers.filter((w: any) => w.user_id === t.manager_id || w.role === 'member' && w.parent_id === t.manager_id);
                 return <tr key={t.id}><td className="border-b p-2">{t.name}</td><td className="border-b p-2">{teamGroups(t).map((l: any) => groups.find((g: any) => String(g.chat_id) === String(l.chat_id))?.name).filter(Boolean).join(', ') || 'Destination required'}</td><td className="border-b p-2">{roster.filter((w: any) => w.telegram_user_id).length} / {roster.length} mapped</td></tr>;
             })}</tbody></table></div>
             <div><h3 className="font-bold">Recent Jaucian deliveries</h3>{!(jaucian.recent_deliveries || []).length ? <p className="text-sm">No workspace deliveries recorded yet. Eligible Closed or Done receipts, mapped teams and verified worker identities are required.</p> : <ul className="text-sm space-y-2">{jaucian.recent_deliveries.map((d: any) => <li key={d.id}>{groups.find((g: any) => String(g.chat_id) === String(d.chat_id))?.name || 'Unknown group'} · {d.veo_intake_offer_id ? 'Client assignment offer' : d.veo_intake_request_id ? 'Client assignment controls' : d.veo_intake_help ? 'Assignment setup help' : d.veo_report_date ? `Report ${d.veo_report_date}` : d.veo_availability_date ? `Active-tomorrow poll ${d.veo_availability_date}` : d.veo_receipt_kind === 'closed' ? 'Closed Deal confirmation' : 'Done Deal confirmation'} · {d.status} · attempts {d.attempts}{d.review_required && <strong className="text-red-700"> · Reconciliation required; automatic resend held</strong>}</li>)}</ul>}</div>

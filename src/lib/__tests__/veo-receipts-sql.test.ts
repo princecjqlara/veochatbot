@@ -807,6 +807,37 @@ describe('automatic Telegram teams and direct leader members', () => {
         expect((await db.query<any>('SELECT role FROM veo_accounts WHERE user_id=$1', [direct])).rows[0].role).toBe('member');
         await rpc('veo_intake_action', [direct, 'readiness', JSON.stringify({ request_id: id(request++), status: 'ready' })]);
     });
+    it('lets a Telegram group report directly to its leader, who can offer clients to direct members without a manager', async () => {
+        const head = id(940), worker = id(941), customer = id(942), headTg = tg + 20, workerTg = tg + 21;
+        await action(owner, 'create_account', { user_id: head, parent_id: owner, role: 'team_leader', name: 'Telegram Leader', email: head + '@example.com', password_hash: 'x'.repeat(40), page_ids: [newPage] });
+        await action(head, 'create_account', { user_id: worker, parent_id: head, role: 'member', name: 'Direct Telegram Worker', email: worker + '@example.com', password_hash: 'x'.repeat(40), page_ids: [] });
+        const team = (await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1', [head])).rows[0].id;
+        expect((await db.query("SELECT user_id FROM veo_accounts WHERE parent_id=$1 AND role='manager'", [head])).rows).toHaveLength(0);
+        await rpc('veo_telegram_group_action', [head, 'group', JSON.stringify({ team_id: team, chat_id: chatA, page_ids: [newPage] })]);
+        await db.query('INSERT INTO veo_worker_mappings VALUES($1,$2),($3,$4)', [head, headTg, worker, workerTg]);
+        await automate([payload(head, headTg, chatA, 'administrator'), payload(worker, workerTg, chatA)]);
+        expect((await rpc('veo_telegram_intake_context', [tenant, headTg, chatA])).role).toBe('team_leader');
+        expect((await rpc('veo_telegram_intake_context', [tenant, workerTg, chatA])).actor_id).toBe(worker);
+        const receive = (who: number, kind: string, data: any = {}) => rpc('veo_telegram_intake', [tenant, who, chatA, kind, JSON.stringify({ request_id: id(request++), ...data })]);
+        await receive(workerTg, 'ready');
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'Direct leader client','new',now())", [customer, newPage, customer]);
+        const menu = await receive(headTg, 'pool');
+        const rendered = await receive(headTg, 'render', { request_id: menu.request_id });
+        const choose = rendered.reply_markup.inline_keyboard.flat().find((b: any) => b.text === 'Offer / reassign');
+        expect(choose).toBeTruthy();
+        const selection = await receive(headTg, 'callback', { token_id: choose.callback_data.slice(3) });
+        const choices = await receive(headTg, 'render', { request_id: selection.request_id });
+        const offer = choices.reply_markup.inline_keyboard.flat().find((b: any) => b.text === 'Offer to Direct Telegram Worker');
+        expect(offer).toBeTruthy();
+        await receive(headTg, 'callback', { token_id: offer.callback_data.slice(3) });
+        const pending = (await rpc('veo_telegram_intake_pending', [tenant])).find((o: any) => o.telegram_user_id === workerTg);
+        expect(pending.chat_id).toBe(chatA);
+        const notification = await receive(workerTg, 'render_offer', { offer_id: pending.offer_id });
+        const accept = notification.reply_markup.inline_keyboard.flat().find((b: any) => b.text.startsWith('Accept'));
+        await receive(workerTg, 'callback', { token_id: accept.callback_data.slice(3) });
+        expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1', [customer])).rows[0].user_id).toBe(worker);
+        expect((await rpc('veo_telegram_destination', [team, newPage, worker])).chat_id).toBe(chatA);
+    });
     it('never grants from usernames, mismatched IDs, unknown membership, stale observations or another branch', async () => {
         await automate([payload(leader, tg + 1, chatA, 'administrator')]);
         for (const observation of [payload(direct, tg + 5, chatA), payload(direct, tg, chatA, 'unknown', { membership_confirmed: false }), payload(direct, tg, chatA, 'member', { observed_at: new Date(Date.now() - 900000).toISOString() })]) await automate([observation]);

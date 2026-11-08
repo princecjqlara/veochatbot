@@ -30,3 +30,22 @@ it('unlinks only the selected membership and never sends an account-deletion act
     const writes = fetcher.mock.calls.filter(([, args]) => args?.method === 'POST').map(([, args]) => JSON.parse(String(args!.body)));
     expect(writes).toEqual([{ action: 'remove_membership', user_id: 'manager', chat_id: -123 }]);
 });
+it('assigns a group directly to a Team Leader when no manager account exists', async () => {
+    await mount({ ...data, teams: [{ id: 'leader-team', name: 'Leader Team', manager_id: 'leader' }],
+        accounts: [{ user_id: 'leader', role: 'team_leader', name: 'Leader', page_ids: ['one'], telegram_user_id: 43 }], links: [], routes: [], memberships: [] });
+    const assignment = view.root.findByProps({ 'aria-label': 'Assign group to team leader or manager' });
+    expect(assignment.findByType('optgroup').props.label).toBe('Team Leaders - no manager required');
+    expect(text(assignment.findAllByType('option').find(o => o.props.value === 'leader-team'))).toContain('Team Leader (no manager needed)');
+    await act(async () => assignment.props.onChange({ target: { value: 'leader-team' } }));
+    const pageInputs = view.root.findByType('fieldset').findAllByType('input');
+    expect(pageInputs).toHaveLength(1);
+    await act(async () => pageInputs[0].props.onChange({ target: { checked: true } }));
+    const group = view.root.findAllByType('select').find(s => s.findAllByType('option').some(o => text(o) === 'Choose fetched group'))!;
+    await act(async () => group.props.onChange({ target: { value: '-123' } }));
+    // Choosing a group restores that destination's current Page selection.
+    await act(async () => view.root.findByType('fieldset').findByType('input').props.onChange({ target: { checked: true } }));
+    vi.stubGlobal('FormData', class { get() { return null; } });
+    await act(async () => view.root.findAllByType('form')[0].props.onSubmit({ preventDefault() {}, currentTarget: {} }));
+    const body = vi.mocked(fetch).mock.calls.filter(([, args]) => args?.method === 'POST').map(([, args]) => JSON.parse(String(args!.body)));
+    expect(body).toEqual([expect.objectContaining({ action: 'group', team_id: 'leader-team', chat_id: '-123', page_ids: ['one'] })]);
+});
