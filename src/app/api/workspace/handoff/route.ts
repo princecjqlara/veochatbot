@@ -15,6 +15,16 @@ export async function POST(request: NextRequest) {
         const raw = await request.text(); if (Buffer.byteLength(raw) > 2000000) return NextResponse.json({ error: 'Workforce observation batch too large' }, { status: 413 });
         const body = JSON.parse(raw);
         await connectedVeoTenant(body.tenant_id);
+        if (body.resource === 'telegram_pairing_issue') {
+            if (!/^[a-f0-9]{48}$/.test(body.code || '') || !Number.isSafeInteger(body.telegram_user_id) || body.telegram_user_id <= 0 || !Number.isSafeInteger(body.chat_id) || body.chat_id >= 0 || (body.username != null && (typeof body.username !== 'string' || !/^[A-Za-z0-9_]{1,32}$/.test(body.username)))) return NextResponse.json({ error: 'Invalid Telegram pairing request' }, { status: 400 });
+            const approved = (process.env.VEO_APPROVED_TELEGRAM_CHAT_IDS || '').split(',').map(v => v.trim());
+            if (!approved.includes(String(body.chat_id))) return NextResponse.json({ error: 'Choose an approved VEO group' }, { status: 403 });
+            const verified = await (await import('@/lib/veo-jaucian')).jaucianRead(body.tenant_id, { resource: 'identity', chat_id: String(body.chat_id), user_id: String(body.telegram_user_id) });
+            if (verified.verified !== true || Number(verified.user_id) !== body.telegram_user_id || Number(verified.chat_id) !== body.chat_id) return NextResponse.json({ error: 'Telegram membership could not be verified' }, { status: 403 });
+            const result = await getSupabaseAdmin().rpc('veo_issue_telegram_pairing', { p_tenant: body.tenant_id, p_hash: createHash('sha256').update(body.code).digest('hex'), p_telegram: body.telegram_user_id, p_chat: body.chat_id, p_username: body.username || null });
+            if (result.error) return NextResponse.json({ error: 'Could not issue a pairing code' }, { status: result.error.code === '23505' ? 409 : 400 });
+            return NextResponse.json({ ok: true, tenant_id: body.tenant_id, ...result.data }, { headers: { 'Cache-Control': 'no-store' } });
+        }
         if (body.resource === 'telegram_link') {
             if (!/^[a-f0-9]{48}$/.test(body.code || '') || !Number.isSafeInteger(body.telegram_user_id) || body.telegram_user_id <= 0 || !Number.isSafeInteger(body.chat_id) || body.chat_id >= 0) return NextResponse.json({ error: 'Invalid Telegram link' }, { status: 400 });
             const approved = (process.env.VEO_APPROVED_TELEGRAM_CHAT_IDS || '').split(',').map(v => v.trim());

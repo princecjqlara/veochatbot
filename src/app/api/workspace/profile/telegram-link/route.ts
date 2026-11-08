@@ -14,6 +14,14 @@ export async function POST(request: NextRequest) {
     if (request.headers.get('origin') !== request.nextUrl.origin) return NextResponse.json({ error: 'Same-origin request required' }, { status: 403 });
     const session = await getSessionFromRequest(request);
     if (!session?.user.id) return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
+    let body: { code?: string } = {};
+    try { body = await request.json(); } catch { /* Existing callers create the legacy link command. */ }
+    if (body.code !== undefined) {
+        if (typeof body.code !== 'string' || !/^[a-f0-9]{48}$/.test(body.code)) return NextResponse.json({ error: 'Enter the 48 character code Jaucian sent you' }, { status: 400 });
+        const saved = await getSupabaseAdmin().rpc('veo_confirm_telegram_pairing', { p_actor: session.user.id, p_hash: createHash('sha256').update(body.code).digest('hex') });
+        if (saved.error) return NextResponse.json({ error: saved.error.code === '23505' ? 'That Telegram account is already linked to another VEO user' : 'Code expired or already used. Message Jaucian /link to get a new code.' }, { status: saved.error.code === '23505' ? 409 : 400 });
+        return NextResponse.json({ linked: true }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const code = randomBytes(24).toString('hex');
     const saved = await getSupabaseAdmin().rpc('veo_create_telegram_link', { p_actor: session.user.id, p_hash: createHash('sha256').update(code).digest('hex') });
     if (saved.error) return NextResponse.json({ error: 'Could not create a Telegram link. Please retry.' }, { status: saved.error.code === '42501' ? 403 : 503 });
