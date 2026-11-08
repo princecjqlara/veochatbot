@@ -874,3 +874,85 @@ describe('automatic Telegram teams and direct leader members', () => {
         for (const table of ['veo_telegram_link_codes', 'veo_telegram_auto_grants', 'veo_telegram_auto_states']) expect((await db.query<any>("SELECT has_table_privilege('anon',$1,'SELECT') exposed", [table])).rows[0].exposed).toBe(false);
     });
 });
+
+
+describe('automatic fresh inquiry editor rotation', () => {
+    const autoPage=id(970), autoLeader=id(971), editorA=id(972), editorB=id(973), chat=-100970;
+    let team:string, customer:string;
+    const tick=()=>rpc('veo_automatic_intake_tick',[tenant]);
+    const make=async()=>{ const cid=id(request++);await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,first_interaction_at,last_interaction_at,last_inbound_at) VALUES($1,$2,$3,'Fresh automatic inquiry','new',clock_timestamp(),clock_timestamp(),clock_timestamp())",[cid,autoPage,cid]);return cid; };
+    const dispatch=async(cid=customer)=>(await db.query<any>('SELECT * FROM veo_intake_dispatch WHERE contact_id=$1',[cid])).rows[0];
+    const due=async(cid=customer)=>{ const d=await dispatch(cid);await rpc('veo_ack_intake_notice',[tenant,d.id,chat,777]);await db.query("UPDATE veo_intake_dispatch SET eligible_at=now()-interval '1 minute' WHERE id=$1",[d.id]); };
+    beforeEach(async()=>{
+        await db.exec('BEGIN');transactionalTest=true;
+        await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,veo_tenant_id,veo_enabled) VALUES($1,'auto-editor-page','Editor Page','test',$2,true)",[autoPage,tenant]);
+        await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)',[owner,autoPage]);
+        for(const [who,parent,role,name] of [[autoLeader,owner,'team_leader','Automatic Leader'],[editorA,autoLeader,'member','Editor A'],[editorB,autoLeader,'member','Editor B']]) await action(owner,'create_account',{user_id:who,parent_id:parent,role,name,email:who+'@example.com',password_hash:'x'.repeat(40),page_ids:[autoPage]});
+        team=(await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1',[autoLeader])).rows[0].id;
+        await rpc('veo_sync_telegram_groups',[owner,JSON.stringify([{chat_id:chat,name:'Editor Group',intake_enabled:true,topics:{},pages:[{id:autoPage,matched:true}],identities:[]}])]);
+        await rpc('veo_telegram_group_action',[autoLeader,'group',JSON.stringify({team_id:team,chat_id:chat,page_ids:[autoPage]})]);
+        for(const [who,tg] of [[editorA,97001],[editorB,97002]]) {
+            await rpc('veo_telegram_group_action',[owner,'membership',JSON.stringify({user_id:who,chat_id:chat,telegram_user_id:tg})]);
+            await rpc('veo_intake_action',[who,'readiness',JSON.stringify({request_id:id(request++),status:'ready'})]);
+        }
+        await db.query("UPDATE veo_intake_readiness SET updated_at=now()-interval '10 minutes' WHERE user_id=$1",[editorA]);
+        await db.query("UPDATE veo_intake_readiness SET updated_at=now()-interval '9 minutes' WHERE user_id=$1",[editorB]);
+        customer=await make();
+    });
+    afterEach(async()=>{transactionalTest=false;await db.exec('ROLLBACK');});
+    it('announces a fresh inquiry, waits one hour and keeps Ready through the wait',async()=>{
+        await expect(rpc('veo_intake_action',[editorA,'accept',JSON.stringify({request_id:id(request++),contact_id:customer})])).rejects.toThrow(/automatic Telegram queue/);
+        const pool=await rpc('veo_intake_page',[editorA]);expect(pool.items.find((c:any)=>c.id===customer).auto_assignment.status).toBe('waiting');
+        await tick();const d=await dispatch();expect(d.status).toBe('waiting');expect(d.offer_id).toBeNull();
+        expect(new Date(d.eligible_at).getTime()-new Date(d.arrived_at).getTime()).toBe(3600000);
+        const notices=await rpc('veo_intake_notice_pending',[tenant]);expect(notices).toContainEqual({notice_id:d.id,chat_id:chat});
+        expect((await rpc('veo_intake_notice',[tenant,d.id,chat])).text).toContain('fresh inquiry, not a Closed or Done Deal');
+        await rpc('veo_ack_intake_notice',[tenant,d.id,chat,777]);await tick();expect((await dispatch()).offer_id).toBeNull();
+        const midnight=(await db.query<any>("SELECT ((veo_today()+1)::timestamp AT TIME ZONE 'Asia/Manila')::text t")).rows[0].t;
+        expect(new Date((await db.query<any>('SELECT expires_at FROM veo_intake_readiness WHERE user_id=$1',[editorA])).rows[0].expires_at).getTime()).toBe(new Date(midnight).getTime());
+        await due();await tick();const offered=await dispatch();expect(offered.status).toBe('offered');
+        expect((await db.query<any>('SELECT offered_to FROM veo_client_offers WHERE id=$1',[offered.offer_id])).rows[0].offered_to).toBe(editorA);
+        await expect(rpc('veo_intake_action',[editorB,'accept',JSON.stringify({request_id:id(request++),contact_id:customer})])).rejects.toThrow(/automatic Telegram queue/);
+        expect((await db.query('SELECT * FROM veo_orders WHERE contact_id=$1',[customer])).rows).toHaveLength(0);
+    });
+    it('moves a timed-out offer to another Ready editor and transfers ownership only on acceptance',async()=>{
+        await tick();await due();await tick();const first=await dispatch();
+        const sentAt=new Date(Date.now()-30000).toISOString();
+        await rpc('veo_ack_intake_offer',[tenant,first.offer_id,chat,778,sentAt]);
+        const expiry=(await db.query<any>('SELECT expires_at FROM veo_client_offers WHERE id=$1',[first.offer_id])).rows[0].expires_at;
+        expect(new Date(expiry).getTime()-Date.now()).toBeGreaterThan(14*60000);
+        expect(new Date(expiry).getTime()-new Date(sentAt).getTime()).toBe(15*60000);
+        await rpc('veo_ack_intake_offer',[tenant,first.offer_id,chat,778]);
+        expect(new Date((await db.query<any>('SELECT expires_at FROM veo_client_offers WHERE id=$1',[first.offer_id])).rows[0].expires_at).getTime()).toBe(new Date(expiry).getTime());
+        await db.query("UPDATE veo_client_offers SET expires_at=now()-interval '1 second' WHERE id=$1",[first.offer_id]);
+        await tick();const second=await dispatch();expect(second.offer_id).not.toBe(first.offer_id);
+        expect((await db.query<any>('SELECT status FROM veo_client_offers WHERE id=$1',[first.offer_id])).rows[0].status).toBe('expired');
+        expect((await db.query<any>('SELECT status FROM veo_intake_readiness WHERE user_id=$1',[editorA])).rows[0].status).toBe('busy');
+        expect((await db.query<any>('SELECT offered_to FROM veo_client_offers WHERE id=$1',[second.offer_id])).rows[0].offered_to).toBe(editorB);
+        expect((await db.query('SELECT user_id FROM veo_client_claims WHERE contact_id=$1',[customer])).rows).toHaveLength(0);
+        await rpc('veo_intake_action',[editorB,'accept',JSON.stringify({request_id:id(request++),contact_id:customer,offer_id:second.offer_id})]);
+        await tick();expect((await dispatch()).status).toBe('accepted');
+        expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1',[customer])).rows[0].user_id).toBe(editorB);
+        expect((await db.query('SELECT id FROM veo_closed_deals WHERE contact_id=$1',[customer])).rows).toHaveLength(0);
+    });
+    it('can anchor the hour to editor Ready time when that policy is selected',async()=>{
+        await db.query("UPDATE veo_intake_auto_policy SET wait_anchor='ready' WHERE tenant_id=$1",[tenant]);
+        await db.query("UPDATE veo_intake_readiness SET updated_at=now()-interval '61 minutes' WHERE user_id=$1",[editorA]);
+        await tick();const d=await dispatch();await rpc('veo_ack_intake_notice',[tenant,d.id,chat,777]);await tick();
+        const offered=await dispatch();expect(offered.status).toBe('offered');
+        expect((await db.query<any>('SELECT offered_to FROM veo_client_offers WHERE id=$1',[offered.offer_id])).rows[0].offered_to).toBe(editorA);
+    });
+    it('reserves at most one simultaneous automatic offer for each Ready editor',async()=>{
+        const second=await make(),third=await make();await tick();for(const cid of [customer,second,third])await due(cid);await tick();
+        const offers=(await db.query<any>("SELECT offered_to,count(*)::int n FROM veo_client_offers WHERE offered_to IN($1,$2) AND status='pending' GROUP BY offered_to",[editorA,editorB])).rows;
+        expect(offers).toHaveLength(2);expect(offers.every(o=>o.n===1)).toBe(true);
+        expect((await db.query<any>("SELECT count(*)::int n FROM veo_intake_dispatch WHERE team_id=$1 AND status='waiting'",[team])).rows[0].n).toBe(1);
+    });
+    it('never offers before Telegram announcement, after a Page route is removed, or for retained old contacts',async()=>{
+        await db.query("UPDATE contacts SET first_interaction_at=now()-interval '30 days' WHERE id=$1",[customer]);await tick();expect(await dispatch()).toBeUndefined();
+        customer=await make();await tick();const d=await dispatch();await db.query("UPDATE veo_intake_dispatch SET eligible_at=now()-interval '1 minute' WHERE id=$1",[d.id]);await tick();expect((await dispatch()).offer_id).toBeNull();
+        await rpc('veo_ack_intake_notice',[tenant,d.id,chat,777]);await db.query('DELETE FROM veo_team_telegram_pages WHERE team_id=$1',[team]);await tick();
+        expect((await dispatch()).status).toBe('cancelled');expect(await rpc('veo_intake_notice',[tenant,d.id,chat])).toBeNull();
+        for(const table of ['veo_intake_auto_policy','veo_intake_dispatch','veo_intake_dispatch_attempts'])expect((await db.query<any>("SELECT has_table_privilege('anon',$1,'SELECT') OR has_table_privilege('authenticated',$1,'SELECT') exposed",[table])).rows[0].exposed).toBe(false);
+    });
+});

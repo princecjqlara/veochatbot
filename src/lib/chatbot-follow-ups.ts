@@ -60,7 +60,7 @@ type FollowUpJob = {
     message_id?: string | null;
     attempt_count: number;
     media_asset_id?: string | null;
-    purpose?: 'scheduled' | 'nightly_continuation' | 'first_day_adaptive' | 'pricing_promotion' | 'form_submission';
+    purpose?: 'scheduled' | 'nightly_continuation' | 'jev_continuation' | 'first_day_adaptive' | 'pricing_promotion' | 'form_submission';
     automation_epoch?: number;
     policy_revision?: number;
     timing_context?: { initial_reply_end?: string; carried_sent_times?: string[] } | null;
@@ -524,7 +524,7 @@ export async function processDueChatbotFollowUps(input: {
                     formSubmission: job.purpose === 'form_submission',
                     salesProgress: state?.sales_progress,
                     pricingCatalog: await getContactPricingCatalog(supabase, job.page_id, job.contact_id),
-                    config: job.purpose === 'nightly_continuation' || job.sequence_index >= 1000 ? { ...config,
+                    config: job.purpose === 'nightly_continuation' || job.purpose === 'jev_continuation' || job.sequence_index >= 1000 ? { ...config,
                         follow_up_ai_instructions: `${config.follow_up_ai_instructions}\nThis is a reviewed intake continuation. Continue from the customer's unresolved question or objection and ask at most one previously unanswered detail. Keep all earlier answers; never restart intake or ask for an equivalent known detail.`
                     } as ChatbotConfig : config as ChatbotConfig,
                     contactName: contact.name,
@@ -537,7 +537,7 @@ export async function processDueChatbotFollowUps(input: {
                     requestType: request.request_type,
                     requestEvidence: request.request_evidence,
                     previousFollowUpMessages: await loadDeliveredCopy(),
-                    sequenceNumber: job.purpose === 'nightly_continuation' || job.sequence_index >= 1000 ? 1 : job.sequence_index + 1,
+                    sequenceNumber: job.purpose === 'nightly_continuation' || job.purpose === 'jev_continuation' || job.sequence_index >= 1000 ? 1 : job.sequence_index + 1,
                     scheduleLabel: job.schedule_type === 'response' ? 'first 24 hours' : 'best-time day 2-7'
                 });
                 if (generated.generation_warning) {

@@ -5,6 +5,7 @@ import { POST as processFacebookWebhook } from '@/app/api/facebook/webhook/route
 import { syncTelegramWorkforce } from '@/lib/veo-telegram-sync';
 import { refreshPageBudgets } from '@/lib/veo-budget';
 import { refreshSubmissionFacebook } from '@/lib/veo-facebook-check';
+import { processJevInterruptionReviews } from '@/lib/veo-jev-review';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -42,6 +43,15 @@ export async function GET(request: NextRequest) {
         try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
         let intakeRetry = false;
         try { const cleaned = await db.rpc('veo_telegram_intake_maintenance');intakeRetry = !!cleaned.error; } catch { intakeRetry = true; }
+        try {
+            const tenants = await db.from('veo_intake_auto_policy').select('tenant_id').eq('enabled', true).limit(10);
+            if (tenants.error) intakeRetry = true;
+            for (const tenant of tenants.data || []) {
+                const dispatched = await db.rpc('veo_automatic_intake_tick', { p_tenant: tenant.tenant_id });
+                if (dispatched.error) intakeRetry = true;
+            }
+        } catch { intakeRetry = true; }
+        try { await processJevInterruptionReviews({ limit: 1, timeBudgetMs: 20000 }); } catch { /* Keep the bot paused and retry independently of editor dispatch. */ }
         let budgetRetry = false;
         try { await refreshPageBudgets(); } catch { budgetRetry = true; }
         const processed = await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin, Math.max(0, 210000 - (Date.now() - startedAt)));

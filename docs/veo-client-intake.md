@@ -1,10 +1,12 @@
 # Tokko client intake
 
-New client assignment handles fresh inquiries before a sale. Choosing Ready does not assign a client automatically: a worker accepts an available inquiry, or the team leader offers it to a Ready worker who must accept. Assignment changes conversation responsibility only; it creates no order, Closed Deal, Done Deal, payment or commission.
+New client assignment handles fresh inquiries before a sale. New inquiries arriving after automatic dispatch is enabled are announced in the configured Telegram group. The default first offer is one hour after the inquiry arrives. The scheduler chooses an eligible Ready editor in that team and group, preferring editors who have waited longest since an automatic offer. Assignment changes conversation responsibility only; it creates no order, Closed Deal, Done Deal, payment or commission.
+
+The selected editor has 15 minutes to accept. The Telegram delivery acknowledgment starts the full acceptance window, bounded by Philippine midnight. A timed-out editor becomes Busy and another Ready editor is offered the inquiry. Choosing Ready again declares availability anew. One editor cannot hold several simultaneous automatic offers. The client remains unassigned until acceptance; old or missing Telegram acknowledgments cannot create an assignment. When no editor is eligible, the inquiry stays queued. Existing clients and imported history are not replayed as new inquiries.
 
 For a handover, open **New Clients > My clients / Handovers** (or **Assigned clients / Handovers** for supervisors), select a Ready recipient, enter a handover reason and choose **Send handover offer**. The original worker stays assigned until the recipient accepts. In an approved linked Telegram group, `/handover` opens the same handover menu as `/reassign`; `/offers` shows incoming offers. Telegram and VEO share one current assignment. A team leader can arrange service handovers for clients with recorded sales; those sales keep their original seller and financial history.
 
-Open **VEO workspace > New Clients**. Selling managers and members choose **Ready** before accepting a client; Ready lasts up to 30 minutes and stops at Philippine midnight. **Busy** cancels incoming offers. Acceptance automatically sets Busy and pauses the contact's chatbot using the existing bot-permission controls. A worker can choose Ready again when able to take another client.
+Open **VEO workspace > New Clients**. Selling managers and members choose **Ready** before accepting a client. Ready lasts until **Busy**, acceptance, or Philippine midnight, so it can survive the one-hour wait. **Busy** cancels incoming offers. Acceptance automatically sets Busy and pauses the contact's chatbot using the existing bot-permission controls. A worker can choose Ready again when able to take another client.
 
 The available queue includes contacts with activity since the workspace launch on currently permitted Pages, excluding existing sales, opted-out or unqualified contacts, accepted assignments, released clients and live reservations. Search by client name, ID, PSID or Page, and filter by Page. Existing client history remains accessible in contact profiles. Released clients retain their existing separate claim workflow.
 
@@ -14,7 +16,15 @@ Acceptance checks the recipient, offer creator, branch, Page permissions, readin
 
 Conversation responsibility is separate from financial attribution. Existing orders, verified payments and Closed Deals retain their seller. An unfinished order's service assignee follows an accepted handover. The original seller can still complete an exact existing Closed Deal; unrelated new sales must use the current client owner. Supervisors retain the existing audited seller-correction workflow.
 
-Ready/Busy operates in Tokko and does not require a Telegram mapping. It does not change attendance, quotas or Jaucian's active-for-tomorrow poll. Tomorrow attendance continues to come from verified Jaucian poll observations.
+Ready/Busy operates in Tokko and Telegram. Automatic offers require a verified current human identity, the team's permitted Page route, and enabled new-client automation in the existing approved Telegram group. Unrouted or retained clients keep their existing manual assignment workflow. Readiness does not change attendance, quotas or Jaucian's active-for-tomorrow poll. Tomorrow attendance continues to come from verified Jaucian poll observations.
+
+## Jev interruption reviews
+
+Migration `202611080009` adds an independent Jev review queue for ordinary human interruptions on enabled VEO Pages. The reviewer returns one bounded decision: wait and check later, keep the bot stopped, resume replies to future inbound messages, or schedule a contextual follow-up through the normal delivery worker. Every decision is committed against its original conversation, human activity, Page configuration and model policy snapshots. Existing customer details are retained.
+
+Jev cannot override an explicit bot-off setting, active client assignment, closed outcome, opt-out, manual hold, or new human/customer activity that arrived during analysis. Missing history, invalid AI output, unsupported evidence and provider failures leave the bot paused. Low-confidence decisions wait. Follow-ups still obey the ordinary conversation window, permissions and delivery guards.
+
+Jev stays disabled until the exact OpenRouter model or preset ID has been supplied and checked. Run `scripts/configure-veo-jev.mjs --model <exact-id>` with the maintained server environment to validate structured output and enable future interruption reviews. Without `--model`, the script only inspects configuration. No substitute model is selected automatically.
 
 ## Release and verification
 

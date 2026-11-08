@@ -29,10 +29,25 @@ export async function POST(request: NextRequest) {
         if (body.resource === 'intake') {
             if (Buffer.byteLength(raw) > 20000) return NextResponse.json({ error: 'Intake request too large' }, { status: 413 });
             const db = getSupabaseAdmin();
+            if (['render_notice', 'ack_notice', 'ack_offer'].includes(body.action)) {
+                const id = body.data?.notice_id || body.data?.offer_id;
+                const approved = (process.env.VEO_APPROVED_TELEGRAM_CHAT_IDS || '').split(',').map(v => v.trim());
+                if (!uuid(id) || !Number.isSafeInteger(body.chat_id) || !approved.includes(String(body.chat_id))) return NextResponse.json({ error: 'Invalid notification context' }, { status: 400 });
+                if (body.action !== 'render_notice' && (!Number.isSafeInteger(body.data?.message_id) || body.data.message_id <= 0)) return NextResponse.json({ error: 'Invalid Telegram acknowledgment' }, { status: 400 });
+                if (body.action === 'ack_offer' && body.data.sent_at !== undefined && (typeof body.data.sent_at !== 'string' || !Number.isFinite(Date.parse(body.data.sent_at)))) return NextResponse.json({ error: 'Invalid Telegram delivery time' }, { status: 400 });
+                const result = await db.rpc(body.action === 'render_notice' ? 'veo_intake_notice' : body.action === 'ack_notice' ? 'veo_ack_intake_notice' : 'veo_ack_intake_offer', {
+                    p_tenant: body.tenant_id, ...(body.action === 'ack_offer' ? { p_offer: id } : { p_notice: id }), p_chat: body.chat_id,
+                    ...(body.action === 'render_notice' ? {} : { p_message: body.data.message_id }),
+                    ...(body.action === 'ack_offer' && body.data.sent_at && Number.isFinite(Date.parse(body.data.sent_at)) ? { p_sent_at: new Date(body.data.sent_at).toISOString() } : {})
+                });
+                if (result.error) return NextResponse.json({ error: 'Notification state unavailable' }, { status: 503 });
+                if (body.action === 'render_notice' && !result.data) return NextResponse.json({ error: 'Inquiry or group access changed' }, { status: 409 });
+                return NextResponse.json({ ok: true, tenant_id: body.tenant_id, ...(body.action === 'render_notice' ? result.data : { acknowledged: result.data }) }, { headers: { 'Cache-Control': 'no-store' } });
+            }
             if (body.action === 'pending') {
-                const pending = await db.rpc('veo_telegram_intake_pending', { p_tenant: body.tenant_id });
-                if (pending.error) return NextResponse.json({ error: 'Assignment notifications unavailable' }, { status: 503 });
-                return NextResponse.json({ ok: true, tenant_id: body.tenant_id, offers: pending.data }, { headers: { 'Cache-Control': 'no-store' } });
+                const [pending, notices] = await Promise.all([db.rpc('veo_telegram_intake_pending', { p_tenant: body.tenant_id }), db.rpc('veo_intake_notice_pending', { p_tenant: body.tenant_id })]);
+                if (pending.error || notices.error) return NextResponse.json({ error: 'Assignment notifications unavailable' }, { status: 503 });
+                return NextResponse.json({ ok: true, tenant_id: body.tenant_id, offers: pending.data, notices: notices.data }, { headers: { 'Cache-Control': 'no-store' } });
             }
             if (!['ready', 'busy', 'pool', 'offers', 'assigned', 'reassign', 'callback', 'render', 'render_offer'].includes(body.action) || !Number.isSafeInteger(body.telegram_user_id) || body.telegram_user_id <= 0 || !Number.isSafeInteger(body.chat_id) || body.chat_id >= 0) return NextResponse.json({ error: 'Invalid Telegram assignment context' }, { status: 400 });
             const data = body.data || {};

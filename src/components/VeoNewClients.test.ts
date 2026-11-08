@@ -45,6 +45,14 @@ it('shows assigned offers and acceptance expiry with decline and refresh actions
     expect(view.root.findAllByType('button').find(b => text(b) === 'Accept offered client')!.props.disabled).toBe(true);
     expect(view.root.findAllByType('button').some(b => text(b) === 'Decline')).toBe(true);
 });
+it('keeps an automatic inquiry reserved for the timed editor offer even while the viewer is Ready', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [{ ...item, auto_assignment: { status: 'waiting', eligible_at: new Date(Date.now() + 3600000).toISOString() } }],
+        roster: [], readiness: { ready: true }, total: 1, auto_policy: { enabled: true, wait_minutes: 60, accept_minutes: 15, wait_anchor: 'inquiry' } }))));
+    await act(async () => { view = create(createElement(Clients, { scope, pages: [] })); });await tick();
+    expect(view.root.findAllByType('button').find(b => text(b) === 'Waiting for automatic editor offer')!.props.disabled).toBe(true);
+    expect(text(view.toJSON())).toContain('Automatic editor offers start after 60 minutes');
+    expect(text(view.toJSON())).toContain('15 minutes to accept');
+});
 it('sends a handover offer and keeps the current worker shown until the recipient accepts', async () => {
     let offered = false;
     const fetcher = vi.fn(async (_url: string, options?: any) => {

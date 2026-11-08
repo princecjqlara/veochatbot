@@ -3,7 +3,7 @@ import { uuid } from './veo-workspace';
 export function telegramGroupCatalog(groups: any[], pages: any[], approved: Set<string>) {
     if (!Array.isArray(groups) || groups.length > 200) throw Error('Invalid bot directory');
     return groups.filter(g => Number.isSafeInteger(Number(g.chat_id)) && Number(g.chat_id) < 0 && approved.has(String(g.chat_id))).map(g => ({
-        chat_id: Number(g.chat_id), name: String(g.name || 'Unnamed group').slice(0, 200),
+        chat_id: Number(g.chat_id), name: String(g.name || 'Unnamed group').slice(0, 200), intake_enabled: g.new_clients_enabled === true,
         topics: Object.fromEntries(Object.entries(g.topics || {}).filter(([key, value]) => ['close', 'done', 'announcements', 'active', 'clients'].includes(key) && Number.isSafeInteger(Number(value)) && Number(value) > 0)),
         pages: Object.entries(g.pages || {}).slice(0, 100).map(([name, source]) => {
             const sourceId = String(source), match = pages.find(p => p.id === sourceId || p.fb_page_id === sourceId);
