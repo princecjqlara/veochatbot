@@ -7,8 +7,10 @@ export async function middleware(request: NextRequest) {
     if (['/api/facebook/connect', '/api/facebook/pages'].includes(path)) return NextResponse.json({ error: 'Facebook connection setup has been removed. Sign in with email and password.' }, { status: 410 });
     if (process.env.VEO_DATABASE_RECOVERY_MODE === 'true') {
         const safeAuth = ['/api/auth/providers', '/api/auth/csrf', '/api/auth/signout'].includes(path);
-        const durableInbox = path === '/api/facebook/webhook' && process.env.VEO_WORKSPACE_ENABLED === 'true';
-        if (!safeAuth && !durableInbox) {
+        // Verification is read-free; event ingestion writes to the same database
+        // that needs disk headroom to finish recovery. Return 503 before it runs.
+        const webhookVerification = path === '/api/facebook/webhook' && request.method === 'GET' && process.env.VEO_WORKSPACE_ENABLED === 'true';
+        if (!safeAuth && !webhookVerification) {
             if (path.startsWith('/api/cron/')) {
                 if (!process.env.CRON_SECRET || request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
                 return NextResponse.json({ success: true, skipped: true, reason: 'database_recovery' }, { headers: { 'Cache-Control': 'no-store' } });

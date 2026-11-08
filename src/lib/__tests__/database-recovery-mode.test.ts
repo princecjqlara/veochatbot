@@ -24,7 +24,15 @@ it('keeps the credentials callback compatible with NextAuth redirect:false', asy
     expect(response.status).toBe(503); expect(new URL((await response.json()).url).searchParams.get('error')).toBe('DatabaseRecovery');
     expect(token).not.toHaveBeenCalled();
 });
-it.each(['/api/auth/csrf', '/api/auth/providers', '/api/auth/signout', '/api/facebook/webhook'])('preserves safe auth and durable webhook ingestion: %s', async path => {
+it('stops Facebook event writes without acknowledging unsaved deliveries', async () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    const response = await middleware(new NextRequest('https://veo.test/api/facebook/webhook', { method: 'POST', body: '{}' }));
+    expect(response.status).toBe(503); expect(response.headers.get('retry-after')).toBe('60');
+    expect((await response.json()).code).toBe('DATABASE_RECOVERY');
+    expect(response.headers.get('x-middleware-next')).toBeNull();
+    expect(token).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
+});
+it.each(['/api/auth/csrf', '/api/auth/providers', '/api/auth/signout', '/api/facebook/webhook'])('preserves safe auth and webhook verification: %s', async path => {
     expect((await middleware(new NextRequest('https://veo.test' + path))).headers.get('x-middleware-next')).toBe('1');
     expect(token).not.toHaveBeenCalled();
 });
