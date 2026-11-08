@@ -6,9 +6,9 @@ import { passwordMatches, roles, workspaceEnabled, workspaceScope, type Workspac
 
 export const authOptions: NextAuthOptions = {
     providers: [
-        CredentialsProvider({ name: 'VEO account', credentials: { email: { type: 'email' }, password: { type: 'password' }, role: { type: 'text' } },
+        CredentialsProvider({ name: 'VEO account', credentials: { email: { type: 'email' }, password: { type: 'password' } },
             async authorize(credentials) {
-                if (!credentials || !roles.includes(credentials.role as WorkspaceRole) || !credentials.password || !credentials.email) return null;
+                if (!credentials || !credentials.password || !credentials.email) return null;
                 const db = getSupabaseAdmin(), email = credentials.email.trim().toLowerCase();
                 const key = createHash('sha256').update(email).digest('hex');
                 const limit = await db.rpc('veo_login_attempt', { p_key: key });
@@ -16,7 +16,7 @@ export const authOptions: NextAuthOptions = {
                 const row = await db.from('users').select('id,name,email,image,password_hash,is_active').eq('email', email).maybeSingle();
                 if (row.error || !row.data?.is_active || !await passwordMatches(credentials.password, row.data.password_hash)) return null;
                 const scope = await workspaceScope(row.data.id);
-                if (!scope || scope.role !== credentials.role) return null;
+                if (!scope || !roles.includes(scope.role)) return null;
                 return { id: row.data.id, name: row.data.name, email: row.data.email, image: row.data.image };
             }
         })

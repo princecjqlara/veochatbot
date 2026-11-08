@@ -30,9 +30,9 @@ describe('stored roles and administrator-created sign-in', () => {
         m.rpc.mockResolvedValue({ data: { role: 'member', telegram_username: 'my_name', telegram_profile_completed_at: new Date(jwt.loginStartedAt + 1000).toISOString() } });
         expect((await current()).user).toMatchObject({ role: 'member', telegramProfileConfirmed: true });
     });
-    it('accepts the stored role and any email provider, rejecting another role even with a correct password', async () => {
+    it('uses the stored role and does not require staff to guess it at sign-in', async () => {
         expect(await credentials({ email: 'member@any-provider.example', password: ' ', role: 'member' })).toMatchObject({ id: 'member' });
-        for (const role of ['manager', 'team_leader', 'owner']) expect(await credentials({ email: 'member@any-provider.example', password: ' ', role })).toBeNull();
+        for (const role of ['manager', 'team_leader', 'owner', undefined]) expect(await credentials({ email: 'member@any-provider.example', password: ' ', role })).toMatchObject({ id: 'member' });
     });
     it('fails closed when the rate limit is exhausted and never looks up or creates a user', async () => {
         m.rpc.mockResolvedValue({ data: false });
