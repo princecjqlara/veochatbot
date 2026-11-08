@@ -31,7 +31,7 @@ export async function workspaceAction(actor: string, action: string, payload: Re
 }
 export async function createWorkspaceAccount(actor: string, body: any) {
     if (!roles.includes(body.role) || typeof body.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email) ||
-        !uuid(body.parent_id) || !Array.isArray(body.page_ids) || !body.page_ids.length || !body.page_ids.every(uuid) ||
+        !uuid(body.parent_id) || !Array.isArray(body.page_ids) || (!body.page_ids.length && body.role !== 'member') || !body.page_ids.every(uuid) ||
         typeof body.name !== 'string' || !body.name.trim()) throw new Error('Name, email, role, supervisor and pages are required');
     return workspaceAction(actor, 'create_account', { ...body, user_id: randomUUID(), email: body.email.trim().toLowerCase(), password_hash: await passwordHash(body.password), password: undefined });
 }

@@ -13,7 +13,7 @@ beforeEach(() => {
     m.rpc.mockImplementation(async name => ({ data: name === 'veo_telegram_groups_page' ? { teams: [{ id: team }], accounts: [{ user_id: worker }] } : true }));
     m.read.mockResolvedValue({ groups: [{ chat_id: -123 }] });
 });
-afterEach(() => vi.resetAllMocks());
+afterEach(() => { vi.resetAllMocks(); });
 it('authenticates scoped reads and never trusts browser actor or tenant identifiers', async () => {
     m.session.mockResolvedValueOnce(null);expect((await GET(new NextRequest('https://veo.test/api/workspace/telegram-groups'))).status).toBe(401);
     const r = await GET(new NextRequest('https://veo.test/api/workspace/telegram-groups?actor=foreign'));

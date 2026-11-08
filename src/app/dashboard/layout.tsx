@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { Page } from '@/types';
 import VeoTelegramProfile from '@/components/VeoTelegramProfile';
+import VeoTelegramReminder from '@/components/VeoTelegramReminder';
 
 export default function DashboardLayout({
     children,
@@ -284,7 +285,7 @@ export default function DashboardLayout({
             {/* Main Content */}
             <main className="flex-1 overflow-auto bg-white">
                 <div className="p-4 md:p-6 lg:p-8">
-                    {children}
+                    {session.user.role && <VeoTelegramReminder username={session.user.telegramUsername} />}{children}
                 </div>
             </main>
         </div>

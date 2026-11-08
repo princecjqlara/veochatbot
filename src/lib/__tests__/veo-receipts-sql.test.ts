@@ -771,3 +771,73 @@ describe('Telegram groups, Page routes and multiple memberships', () => {
         expect((await rpc('veo_workflow_warnings', [owner, member])).workers[0].warnings.some((w: any) => w.kind === 'availability_unanswered')).toBe(false);
     });
 });
+
+
+describe('automatic Telegram teams and direct leader members', () => {
+    const direct = id(920), newPage = id(921), chatA = -100920, chatB = -100921, tg = 909090;
+    const payload = (user: string, telegram: number, chat: number, membership = 'member', extra: any = {}) => ({ user_id: user, telegram_user_id: telegram, chat_id: chat, membership, membership_confirmed: true, is_bot: false, observed_at: new Date().toISOString(), ...extra });
+    const automate = (workers: any[]) => rpc('veo_apply_telegram_automation', [tenant, JSON.stringify({ tenant_id: tenant, workers, next_offset: 0 })]);
+    const account = (user: string, role = 'member', parent = leader, pages: string[] = []) => action(leader, 'create_account', { user_id: user, parent_id: parent, role, name: 'Direct member', email: user + '@example.com', password_hash: 'x'.repeat(40), page_ids: pages });
+    beforeEach(async () => {
+        await db.exec('BEGIN'); transactionalTest = true;
+        await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,veo_tenant_id,veo_enabled) VALUES($1,'auto-page','Automatic Page','test',$2,true)", [newPage, tenant]);
+        for (const who of [owner, leader]) await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [who, newPage]);
+        await rpc('veo_sync_telegram_groups', [owner, JSON.stringify([chatA, chatB].map(chat_id => ({ chat_id, name: 'Auto group', topics: {}, pages: [{ id: newPage, matched: true }], identities: [] })))]);
+        await account(direct);
+        await db.query('INSERT INTO veo_worker_mappings VALUES($1,$2),($3,$4)', [direct, tg, leader, tg + 1]);
+    });
+    afterEach(async () => { transactionalTest = false; await db.exec('ROLLBACK'); });
+    it('creates members without a manager or initial Pages, while retaining branch isolation and existing manager teams', async () => {
+        expect((await db.query<any>('SELECT parent_id FROM veo_accounts WHERE user_id=$1', [direct])).rows[0].parent_id).toBe(leader);
+        expect((await db.query<any>('SELECT manager_id FROM veo_teams WHERE manager_id=$1', [leader])).rows).toHaveLength(1);
+        await expect(account(id(922), 'member', other)).rejects.toThrow(/hierarchy/);
+        await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [direct, page]);
+        const capacity = await rpc('veo_team_capacity', [owner]);
+        const directTeam = capacity.teams.find((t: any) => t.manager_id === leader);
+        expect(directTeam.workers).toBe(1);
+        expect(capacity.teams.find((t: any) => t.manager_id === manager).workers).toBe(3);
+    });
+    it('discovers an admin leader group and grants its Pages to verified direct members without changing roles', async () => {
+        await automate([payload(direct, tg, chatA), payload(leader, tg + 1, chatA, 'administrator')]);
+        expect(await rpc('veo_can_page', [direct, newPage])).toBe(true);
+        const setup = await rpc('veo_telegram_groups_page', [owner]);
+        const team = setup.teams.find((t: any) => t.manager_id === leader);
+        expect(setup.routes).toContainEqual(expect.objectContaining({ team_id: team.id, page_id: newPage, chat_id: chatA }));
+        expect(setup.memberships).toContainEqual(expect.objectContaining({ user_id: direct, chat_id: chatA }));
+        expect((await db.query<any>('SELECT role FROM veo_accounts WHERE user_id=$1', [direct])).rows[0].role).toBe('member');
+        await rpc('veo_intake_action', [direct, 'readiness', JSON.stringify({ request_id: id(request++), status: 'ready' })]);
+    });
+    it('never grants from usernames, mismatched IDs, unknown membership, stale observations or another branch', async () => {
+        await automate([payload(leader, tg + 1, chatA, 'administrator')]);
+        for (const observation of [payload(direct, tg + 5, chatA), payload(direct, tg, chatA, 'unknown', { membership_confirmed: false }), payload(direct, tg, chatA, 'member', { observed_at: new Date(Date.now() - 900000).toISOString() })]) await automate([observation]);
+        expect(await rpc('veo_can_page', [direct, newPage])).toBe(false);
+        await db.query('INSERT INTO veo_worker_mappings VALUES($1,$2)', [other, tg + 2]);
+        await automate([payload(other, tg + 2, chatA)]);
+        expect((await db.query('SELECT * FROM veo_telegram_auto_grants WHERE user_id=$1', [other])).rows).toHaveLength(0);
+    });
+    it('preserves manual Pages and access through another group, but removes automatic grants after all confirmed departures', async () => {
+        await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [direct, page]);
+        const team = (await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1', [leader])).rows[0].id;
+        for (const chat of [chatA, chatB]) await rpc('veo_telegram_group_action', [owner, 'group', JSON.stringify({ team_id: team, chat_id: chat, page_ids: [newPage], move_pages: true })]);
+        // One team/Page has one route; a second permitted team in the leader's
+        // branch may route the same Page through another group for its leader.
+        await automate([payload(direct, tg, chatB)]);
+        expect(await rpc('veo_can_page', [direct, newPage])).toBe(true);
+        await automate([payload(direct, tg, chatB, 'unknown', { membership_confirmed: false })]);
+        expect(await rpc('veo_can_page', [direct, newPage])).toBe(true);
+        await automate([payload(direct, tg, chatB, 'left', { observed_at: new Date(Date.now() + 100).toISOString() })]);
+        expect(await rpc('veo_can_page', [direct, newPage])).toBe(false);
+        expect(await rpc('veo_can_page', [direct, page])).toBe(true);
+    });
+    it('requires a valid one-time link, rejects identity takeover and keeps private functions inaccessible', async () => {
+        const another = id(923), hash = 'a'.repeat(64);
+        await account(another);
+        await rpc('veo_create_telegram_link', [another, hash]);
+        expect((await rpc('veo_confirm_telegram_link', [tenant, hash, tg + 3, chatA, 'verified_name'])).linked).toBe(true);
+        expect((await rpc('veo_confirm_telegram_link', [tenant, hash, tg + 3, chatA, 'verified_name'])).linked).toBe(true);
+        await expect(rpc('veo_confirm_telegram_link', [tenant, hash, tg + 4, chatA, 'forged'])).rejects.toThrow(/already used/);
+        await rpc('veo_create_telegram_link', [another, 'b'.repeat(64)]);
+        await expect(rpc('veo_confirm_telegram_link', [tenant, 'b'.repeat(64), tg, chatA, null])).rejects.toThrow(/already linked/);
+        for (const table of ['veo_telegram_link_codes', 'veo_telegram_auto_grants', 'veo_telegram_auto_states']) expect((await db.query<any>("SELECT has_table_privilege('anon',$1,'SELECT') exposed", [table])).rows[0].exposed).toBe(false);
+    });
+});

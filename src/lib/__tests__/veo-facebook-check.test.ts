@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 const fetchNotices = vi.hoisted(() => vi.fn());
 vi.mock('../veo-business-orders', () => ({ fetchBusinessOrderNotices: fetchNotices }));
 import { refreshReceiptFacebook, refreshSubmissionFacebook } from '../veo-facebook-check';
-afterEach(() => vi.clearAllMocks());
+afterEach(() => { vi.clearAllMocks(); });
 function database() {
     const db: any = { rpc: vi.fn(async (name: string) => ({ data: name === 'veo_facebook_check_context' ? { page_id: 'page', psid: 'client', launch_at: '2026-11-05' } : name === 'veo_submission_facebook_context' ? { actor_id: 'worker', contact_id: 'client' } : { complete: true } })), from: vi.fn() };
     db.from.mockReturnValue({ select: () => ({ eq: () => ({ single: async () => ({ data: { fb_page_id: 'fb-page', access_token: 'private-token' } }) }) }) });

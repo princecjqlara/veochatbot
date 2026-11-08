@@ -4,7 +4,7 @@ import { parseMessengerStageEvent, syncMessengerStageHistory } from '@/lib/messe
 const notice = (label: string, at = '2026-11-01T10:00:00Z', id = label) => ({
     id, message: `Lead stage set to ${label}`, from: { id: 'page' }, created_time: at
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('authoritative Meta stage events', () => {
     it('keeps VEO invoice notices separate from explicit lead stages while preserving legacy behavior', async () => {

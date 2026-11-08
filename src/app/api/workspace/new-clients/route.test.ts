@@ -8,7 +8,7 @@ import { GET, POST } from './route';
 const worker = '00000000-0000-4000-8000-000000000001', client = '00000000-0000-4000-8000-000000000002';
 const post = (body: any, origin = 'https://veo.test') => POST(new NextRequest('https://veo.test/api/workspace/new-clients', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
 beforeEach(() => { m.session.mockResolvedValue({ user: { id: worker } });m.scope.mockResolvedValue({ user_id: worker, launch_at: '2026-11-05' });m.rpc.mockResolvedValue({ data: { saved: true } }); });
-afterEach(() => vi.clearAllMocks());
+afterEach(() => { vi.clearAllMocks(); });
 it('loads the current scope without querying sales, contact history or the client queue', async () => {
     const r = await GET(new NextRequest('https://veo.test/api/workspace/new-clients?context=1'));
     expect(r.status).toBe(200);expect((await r.json()).scope.user_id).toBe(worker);expect(m.rpc).not.toHaveBeenCalled();

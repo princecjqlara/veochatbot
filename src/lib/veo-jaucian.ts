@@ -88,7 +88,7 @@ export async function veoDirectory(tenant: string) {
             telegram_user_id: tg.get(a.user_id) || null, telegram_username_verified: false,
             telegram_chat_id: currentGroup(a),
             telegram_groups: memberGroups(a), page_ids: permittedPages(a.user_id) })),
-        teams: currentTeams.map(t => ({ ...t, leader_id: ancestry.find(a => a.user_id === t.manager_id)?.parent_id || null, telegram_groups: currentLinks.filter(l => l.team_id === t.id) })), pages,
+        teams: currentTeams.map(t => ({ ...t, leader_id: active.find(a => a.user_id === t.manager_id)?.role === 'team_leader' ? t.manager_id : ancestry.find(a => a.user_id === t.manager_id)?.parent_id || null, telegram_groups: currentLinks.filter(l => l.team_id === t.id) })), pages,
         attendance: attendance.filter(a => activeIds.has(a.user_id)) };
 }
 
@@ -99,7 +99,7 @@ export async function jaucianRead(tenant: string, params: Record<string, string>
     url.search = new URLSearchParams({ ...params, tenant_id: tenant }).toString();
     try {
         const response = await fetch(url, { headers: { Authorization: `Bearer ${process.env.VEO_JAUCIAN_SECRET}`, Accept: 'application/json' },
-            cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(params.resource === 'workforce' ? 60000 : 25000) });
+            cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(['workforce', 'automatic'].includes(params.resource) ? 60000 : 25000) });
         const body = await response.json();
         if (!response.ok || !body.ok || body.tenant_id !== tenant) throw unavailable(response.status === 400 ? 'Telegram identity must be a current human member of the mapped team group' : 'Jaucian connection unavailable', response.status === 400 ? 400 : 503);
         return body;
@@ -119,7 +119,7 @@ export async function verifyWorkerMapping(tenant: string, userId: unknown, teleg
     if (account.data.role === 'team_leader') {
         const children = await db.from('veo_accounts').select('user_id').eq('tenant_id', tenant).eq('parent_id', userId).eq('role', 'manager');
         if (children.error || !requestedChat) throw unavailable('Select an approved mapped group in this leader’s branch', 400);
-        team = await db.from('veo_teams').select('telegram_chat_id').eq('tenant_id', tenant).in('manager_id', (children.data || []).map(c => c.user_id)).eq('telegram_chat_id', Number(requestedChat)).limit(1).maybeSingle();
+        team = await db.from('veo_teams').select('telegram_chat_id').eq('tenant_id', tenant).in('manager_id', [userId, ...(children.data || []).map(c => c.user_id)]).eq('telegram_chat_id', Number(requestedChat)).limit(1).maybeSingle();
     } else team = await db.from('veo_teams').select('telegram_chat_id').eq('tenant_id', tenant).eq('manager_id', account.data.role === 'manager' ? userId : account.data.parent_id).maybeSingle();
     if (team.error) throw unavailable('Team destination unavailable');
     if (!team.data?.telegram_chat_id) throw unavailable('Map this worker’s team destination first', 400);

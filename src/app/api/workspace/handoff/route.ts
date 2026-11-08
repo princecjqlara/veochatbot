@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { uuid } from '@/lib/veo-workspace';
 import { connectedVeoTenant, veoDirectory } from '@/lib/veo-jaucian';
@@ -16,6 +16,16 @@ export async function POST(request: NextRequest) {
         const raw = await request.text(); if (Buffer.byteLength(raw) > 2000000) return NextResponse.json({ error: 'Workforce observation batch too large' }, { status: 413 });
         const body = JSON.parse(raw);
         await connectedVeoTenant(body.tenant_id);
+        if (body.resource === 'telegram_link') {
+            if (!/^[a-f0-9]{48}$/.test(body.code || '') || !Number.isSafeInteger(body.telegram_user_id) || body.telegram_user_id <= 0 || !Number.isSafeInteger(body.chat_id) || body.chat_id >= 0) return NextResponse.json({ error: 'Invalid Telegram link' }, { status: 400 });
+            const approved = (process.env.VEO_APPROVED_TELEGRAM_CHAT_IDS || '').split(',').map(v => v.trim());
+            if (!approved.includes(String(body.chat_id))) return NextResponse.json({ error: 'Choose an approved VEO group' }, { status: 403 });
+            const verified = await (await import('@/lib/veo-jaucian')).jaucianRead(body.tenant_id, { resource: 'identity', chat_id: String(body.chat_id), user_id: String(body.telegram_user_id) });
+            if (verified.verified !== true || Number(verified.user_id) !== body.telegram_user_id || Number(verified.chat_id) !== body.chat_id) return NextResponse.json({ error: 'Telegram membership could not be verified' }, { status: 403 });
+            const result = await getSupabaseAdmin().rpc('veo_confirm_telegram_link', { p_tenant: body.tenant_id, p_hash: createHash('sha256').update(body.code).digest('hex'), p_telegram: body.telegram_user_id, p_chat: body.chat_id, p_username: verified.username || null });
+            if (result.error) return NextResponse.json({ error: result.error.code === '23505' ? 'A different Telegram identity is already linked; ask your supervisor to review it' : 'Link code expired or already used; create a new code in your VEO profile' }, { status: result.error.code === '23505' ? 409 : 400 });
+            return NextResponse.json({ ok: true, tenant_id: body.tenant_id, ...result.data }, { headers: { 'Cache-Control': 'no-store' } });
+        }
         if (body.resource === 'intake') {
             if (Buffer.byteLength(raw) > 20000) return NextResponse.json({ error: 'Intake request too large' }, { status: 413 });
             const db = getSupabaseAdmin();
