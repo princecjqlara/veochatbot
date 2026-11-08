@@ -51,7 +51,7 @@ it('disables Submit until the selected deal passes its Facebook check and invali
     vi.stubGlobal('fetch', fetcher);
     await act(async () => { view = create(createElement(Receipts, { scope: { user_id: 'worker', role: 'member', launch_at: '2026-11-05' }, accounts: [{ id: 'worker', role: 'member', name: 'Worker' }], initialContactId: 'client' })); });
     const submit = () => view.root.findAllByType('button').find(b => text(b) === 'Submit receipt evidence')!;
-    const check = () => view.root.findAllByType('button').find(b => text(b) === 'Check Facebook requirements')!;
+    const check = () => view.root.findAllByType('button').find(b => text(b).startsWith('Check saved requirements'))!;
     expect(submit().props.disabled).toBe(true);
     await act(async () => { check().props.onClick(); });
     expect(submit().props.disabled).toBe(true); expect(text(view.toJSON())).toContain('Submission blocked');

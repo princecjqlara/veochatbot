@@ -13,16 +13,15 @@ export default function VeoReceiptInbox({ scope, accounts, compact = false, init
     const [kind, setKind] = useState(initialKind), [order, setOrder] = useState(''), [links, setLinks] = useState<Record<string, string>>({}), [photos, setPhotos] = useState<Record<string, string>>({});
     const [payments, setPayments] = useState<any[]>([]), [loadingClient, setLoadingClient] = useState(false), [closedDeals, setClosedDeals] = useState<any[]>([]), [closedDeal, setClosedDeal] = useState('');
     const [dealMode, setDealMode] = useState<'' | 'new' | 'existing'>('');
-    const [eligibility, setEligibility] = useState<any>(null), [checking, setChecking] = useState(false), [checkClock, setCheckClock] = useState(Date.now());
+    const [eligibility, setEligibility] = useState<any>(null), [checking, setChecking] = useState(false);
     const openClosed = closedDeals.filter(d => d.seller_id === seller && (!d.order_id || !orders.find(o => o.id === d.order_id)?.done_at));
     const mode = dealMode || (!openClosed.length ? 'new' : '');
     const selectedClosed = mode === 'existing' ? closedDeals.find(d => d.id === closedDeal && d.seller_id === seller) : undefined;
     const checkKey = [client, seller, kind, order, selectedClosed?.id || '', mode, version].join(':');
     const currentCheck = eligibility?.key === checkKey ? eligibility : null;
-    const canSubmit = currentCheck?.allowed === true && Date.parse(currentCheck.facebook?.started_at || '') > checkClock - 120000;
+      const canSubmit = currentCheck?.allowed === true;
     const requestId = useRef(''), selling = accounts.filter(a => a.active !== false && ['manager', 'member'].includes(a.role));
     useEffect(() => { requestId.current = crypto.randomUUID(); }, [client, seller, kind, order, selectedClosed?.id, mode]);
-    useEffect(() => { const timer = setInterval(() => setCheckClock(Date.now()), 1000); return () => clearInterval(timer); }, []);
     useEffect(() => {
         const c = new AbortController();
         fetch('/api/workspace/receipts?' + new URLSearchParams({ from, to, offset: String(offset), ...(worker ? { worker_id: worker } : {}) }), { cache: 'no-store', signal: c.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); setData(b); }).catch(e => { if (!c.signal.aborted) setMessage(e.message); });
@@ -47,7 +46,7 @@ export default function VeoReceiptInbox({ scope, accounts, compact = false, init
         try {
             const r = await fetch('/api/workspace/receipts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'check', contact_id: client, seller_id: seller, receipt_kind: kind, order_id: order || undefined }) });
             const b = await r.json(); if (!r.ok) throw Error(b.error);
-            setCheckClock(Date.now()); setEligibility({ ...b, key: checkKey });
+            setEligibility({ ...b, key: checkKey });
             setPicked((old: any) => old?.id === client ? { ...old, pipeline_stage: b.lead_stage || old.pipeline_stage } : old);
         } catch (e: any) { setMessage(e.message); } finally { setChecking(false); }
     }
@@ -72,7 +71,7 @@ export default function VeoReceiptInbox({ scope, accounts, compact = false, init
     return <section aria-label="Receipt inbox and salary holds" className="rounded-xl border bg-white p-5 space-y-4">
         <div className="flex flex-wrap justify-between gap-3"><h2 className="text-xl font-bold">Receipts and salary on hold</h2><button className="text-sm underline" onClick={() => setVersion(v => v + 1)}>Recheck list</button></div>
         <p className="text-sm">Search and pick the client first. We check their existing Closed Deals so you can turn the right one into a Done Deal. For a new Closed Deal, enter the down payment. For a Done Deal, enter only how much the client sent this time; the system calculates the balance.</p>
-        <p className="text-xs text-slate-500">Complete the Facebook requirements before submitting. Incomplete receipts cannot be saved. Jaucian receives eligible receipts automatically. Photos are private and expire after seven days; expired evidence requires re-upload.</p>
+      <p className="text-xs text-slate-500">Receipt checks use the latest saved Facebook stage and order evidence. Refresh runs in the background; unavailable or conflicting evidence keeps submission blocked until refreshed or reviewed by a supervisor. Jaucian receives eligible receipts automatically. Photos are private and expire after seven days.</p>
         {compact && <Link className="underline text-sm" href="/dashboard/workspace?view=receipts">Open Receipts to submit a Closed or Done Deal photo</Link>}
         {message && <p role="status" className="rounded border bg-amber-50 p-3 text-sm">{message}</p>}
         {!compact && <><div className="grid gap-3 rounded border p-4 md:grid-cols-2">
@@ -88,9 +87,9 @@ export default function VeoReceiptInbox({ scope, accounts, compact = false, init
         <VeoReceiptSaleDetails contact={mode && (mode === 'new' || selectedClosed) ? picked : null} seller={picked ? seller : ''} order={orders.find(o => o.id === order && o.seller_id === seller)} payments={payments} closedDeals={selectedClosed ? [selectedClosed] : []} closedDealId={selectedClosed?.id || ''} dealMode={mode || 'new'} kind={kind} version={version} loading={loadingClient} onSaved={id => { setOrder(id); setVersion(v => v + 1); }} />
         {picked && !loadingClient && mode && (mode === 'new' || selectedClosed) && <>
         <section aria-label="Facebook receipt requirements" className="rounded border p-4 space-y-2">
-            <h3 className="font-semibold">Check before submitting</h3>
+              <h3 className="font-semibold">Saved source requirements</h3>
             <p className="text-sm">{kind === 'closed' ? 'Closed Deal: Facebook lead stage must be Qualified or Converted. No order is required.' : 'Done Deal: Facebook lead stage must be Qualified or Converted, the matching Facebook order must be linked, and the full payment must be verified (up to ₱2 difference for PHP).'} Your team and seller Telegram mappings must also be complete.</p>
-            <button type="button" disabled={busy || checking || !seller} className="underline text-sm disabled:opacity-40" onClick={() => void checkFacebook()}>{checking ? 'Checking Facebook…' : 'Check Facebook requirements'}</button>
+              <button type="button" disabled={busy || checking || !seller} className="underline text-sm disabled:opacity-40" onClick={() => void checkFacebook()}>{checking ? 'Checking saved requirements…' : 'Check saved requirements and queue Facebook refresh'}</button>
             {currentCheck && <div role="status" className="space-y-1 text-sm">
                 <p>Latest accessible Facebook stage notice: <strong>{currentCheck.facebook?.stage?.replaceAll('_', ' ') || 'Unavailable'}</strong></p>
                 <p>Facebook checked: {currentCheck.facebook?.checked_at ? new Date(currentCheck.facebook.checked_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) + ' PHT' : 'Not checked'}</p>
@@ -98,9 +97,9 @@ export default function VeoReceiptInbox({ scope, accounts, compact = false, init
                 {!!currentCheck.blockers?.length && <ul className="list-disc pl-5">{currentCheck.blockers.map((key: string) => <li key={key}>{receiptHoldLabels[key] || key}</li>)}</ul>}
                 {currentCheck.facebook?.error && <p>{currentCheck.facebook.error}</p>}
                 <p className="text-xs">{currentCheck.facebook?.coverage || 'Facebook evidence unavailable.'}</p>
-                <p className={canSubmit ? 'text-green-800' : 'text-amber-800'}>{canSubmit ? 'Requirements passed. You can submit; Facebook is checked again on Submit.' : currentCheck.allowed ? 'The check expired. Check Facebook again before submitting.' : 'Submission blocked. Complete the listed steps, then check again.'}</p>
+                  <p className={canSubmit ? 'text-green-800' : 'text-amber-800'}>{canSubmit ? 'Saved source evidence passed. A newer Facebook update will be picked up by the background refresh.' : 'Submission blocked. Complete the listed steps, then check again.'}</p>
             </div>}
-            {!currentCheck && <p className="text-xs">Submit stays disabled until this client and deal pass the check. Meta may not expose every Business Suite change; unavailable evidence cannot pass.</p>}
+              {!currentCheck && <p className="text-xs">Submit stays disabled until saved source and deal evidence pass. Meta may not expose every Business Suite change; unavailable evidence cannot pass.</p>}
         </section>
         <form key={`${client}:${seller}:${kind}:${order}:${selectedClosed?.id || ''}`} className="grid gap-3 rounded border p-4 md:grid-cols-2" onSubmit={e => void uploadReceipt(e)}>
             <h3 className="font-semibold md:col-span-2">{kind === 'closed' ? 'Closed Deal receipt' : 'Done Deal receipt'}</h3>

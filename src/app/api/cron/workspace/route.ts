@@ -4,8 +4,8 @@ import { processWorkspaceEvents } from '@/lib/veo-events';
 import { POST as processFacebookWebhook } from '@/app/api/facebook/webhook/route';
 import { syncTelegramWorkforce } from '@/lib/veo-telegram-sync';
 import { refreshPageBudgets } from '@/lib/veo-budget';
-import { refreshSubmissionFacebook } from '@/lib/veo-facebook-check';
 import { processJevInterruptionReviews } from '@/lib/veo-jev-review';
+import { processVeoSourceJobs } from '@/lib/veo-source-jobs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -52,6 +52,8 @@ export async function GET(request: NextRequest) {
             }
         } catch { intakeRetry = true; }
         try { await processJevInterruptionReviews({ limit: 1, timeBudgetMs: 20000 }); } catch { /* Keep the bot paused and retry independently of editor dispatch. */ }
+        let sourceRetry = false;
+        try { await processVeoSourceJobs(2, 25000); } catch { sourceRetry = true; }
         let budgetRetry = false;
         try { await refreshPageBudgets(); } catch { budgetRetry = true; }
         const processed = await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin, Math.max(0, 210000 - (Date.now() - startedAt)));
@@ -60,13 +62,26 @@ export async function GET(request: NextRequest) {
         for (const s of claimed.data || []) {
             let status = 'queued', failure: string | null = null;
             try {
-                // Leave time to finish the lease after a bounded Facebook read
-                // and Jaucian request; later items retry on the next cron run.
+                // Facebook evidence was collected asynchronously before submission.
+                // Delivery verifies the saved evidence without an interactive Graph read.
                 if (Date.now() - startedAt > 240000) throw new Error('Delivery budget exhausted');
-                await refreshSubmissionFacebook(db, s.id);
                 const eligibility = await db.rpc('veo_handoff', { p_submission: s.id });
                 if (eligibility.error) throw new Error('Eligibility read failed');
-                if (!eligibility.data) { status = 'blocked'; failure = 'Eligibility or page access changed; review and resubmit'; }
+                if (!eligibility.data) {
+                    // Missing or stale Facebook evidence is transient. Queue a source refresh
+                    // and let the delivery lease retry; only durable business-rule blockers
+                    // require the editor to review and resubmit.
+                    const check = await db.rpc('veo_submission_requirements', { p_submission: s.id });
+                    if (check.error) throw new Error('Eligibility read failed');
+                    const blockers: string[] = check.data?.blockers || [];
+                    const waitingForSource = blockers.includes('facebook_stage_unavailable') ||
+                        (blockers.includes('facebook_matching_order_required') && !check.data?.source_conflict);
+                    if (waitingForSource && check.data?.contact_id && check.data?.actor_id) {
+                        const queued = await db.rpc('veo_request_source_refresh', { p_actor: check.data.actor_id, p_contact: check.data.contact_id });
+                        if (queued.error) throw new Error('Source refresh unavailable');
+                        failure = 'Facebook source refresh pending; delivery will retry automatically';
+                    } else { status = 'blocked'; failure = 'Eligibility or page access changed; review and resubmit'; }
+                }
                 else {
                     const target = new URL('/api/veo/handoff', process.env.VEO_JAUCIAN_URL);
                     if (target.protocol !== 'https:') throw new Error('Secure Jaucian URL required');
@@ -81,6 +96,6 @@ export async function GET(request: NextRequest) {
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
         }
-        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, budget_retry: budgetRetry, intake_retry: intakeRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
+        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }

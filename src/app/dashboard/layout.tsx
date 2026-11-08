@@ -151,6 +151,11 @@ export default function DashboardLayout({
         { href: '/dashboard/welcome', icon: Hand, label: 'Welcome' },
         { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
     ].filter(item => !session.user.role || (session.user.role === 'owner' && !['/dashboard', '/dashboard/ad-calendar', '/dashboard/ad-quality'].includes(item.href)) || item.href.startsWith('/dashboard/workspace') || ['/dashboard/contacts', '/dashboard/pipeline', '/dashboard/tags', '/dashboard/campaigns', '/dashboard/exports', '/dashboard/history', '/dashboard/templates'].includes(item.href));
+    const groupFor = (href: string) => /view=(deals|closed|done|salary|receipts)/.test(href) ? 'Sales' :
+        /view=(telegram|capacity|warnings|accounts)/.test(href) ? 'Team' :
+        /view=(performance|rankings|calendar|budget)|ad-calendar|ad-quality/.test(href) ? 'Reports & Planning' :
+        href === '/dashboard/workspace' || /view=(new_clients|clients)/.test(href) || ['/dashboard/contacts', '/dashboard/pipeline'].includes(href) ? 'Work' : 'More';
+    const navGroups = ['Work', 'Sales', 'Team', 'Reports & Planning', 'More'].map(name => ({ name, items: navItems.filter(item => groupFor(item.href) === name) })).filter(group => group.items.length);
 
     // Add admin nav item if user is admin
     // const isAdmin = (session?.user as any)?.role === 'admin';
@@ -222,7 +227,8 @@ export default function DashboardLayout({
 
                 {/* Navigation Section */}
                 <nav className="flex-1 px-2 md:px-4 py-3 md:py-4 space-y-0 overflow-y-auto md:overflow-y-auto overflow-x-auto md:overflow-x-hidden flex md:flex-col flex-row md:space-y-0 md:space-x-0 space-x-0">
-                    {navItems.map((item) => {
+                    {(() => {
+                        const renderItem = (item: typeof navItems[number]) => {
                         const isActive = pathname === item.href;
                         return (
                             <Link
@@ -238,7 +244,9 @@ export default function DashboardLayout({
                                 <span className="font-medium text-xs md:text-sm whitespace-nowrap">{item.label}</span>
                             </Link>
                         );
-                    })}
+                        };
+                        return <>{navGroups.map((group, index) => <details key={group.name} open={index === 0} className="border-b border-black"><summary className="cursor-pointer px-4 py-2.5 text-sm font-semibold">{group.name}</summary>{group.items.map(renderItem)}</details>)}</>;
+                    })()}
                 </nav>
 
                 {/* User Profile Section */}

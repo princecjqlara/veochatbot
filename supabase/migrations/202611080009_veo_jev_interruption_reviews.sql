@@ -2,7 +2,7 @@ BEGIN;
 SET LOCAL lock_timeout='10s';
 SET LOCAL jit=off;
 CREATE TABLE veo_jev_policy(
- tenant_id uuid PRIMARY KEY REFERENCES veo_tenants(id),enabled boolean NOT NULL DEFAULT false,model_id text,
+ tenant_id uuid PRIMARY KEY REFERENCES veo_tenants(id),enabled boolean NOT NULL DEFAULT false,model_id text,mode text NOT NULL DEFAULT 'observe' CHECK(mode IN('observe','active')),
  quiet_minutes integer NOT NULL DEFAULT 5 CHECK(quiet_minutes BETWEEN 2 AND 120),activated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),CHECK(NOT enabled OR(model_id IS NOT NULL AND length(btrim(model_id))>0))
 );
@@ -19,7 +19,7 @@ CREATE TABLE veo_jev_reviews(
  page_id uuid NOT NULL REFERENCES pages(id),contact_id uuid NOT NULL REFERENCES contacts(id),automation_epoch integer NOT NULL,
  human_activity_at timestamptz NOT NULL,last_inbound_at timestamptz,state_updated_at timestamptz NOT NULL,config_updated_at timestamptz NOT NULL,
  policy_updated_at timestamptz NOT NULL,model_id text NOT NULL,due_at timestamptz NOT NULL,
- status text NOT NULL DEFAULT 'pending' CHECK(status IN('pending','processing','wait','resumed','follow_up','stopped','skipped','failed')),
+ status text NOT NULL DEFAULT 'pending' CHECK(status IN('pending','processing','wait','observed','resumed','follow_up','stopped','skipped','failed')),
  attempt integer NOT NULL DEFAULT 0,claimed_at timestamptz,decision jsonb,last_error text,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  UNIQUE NULLS NOT DISTINCT(state_id,automation_epoch,human_activity_at,last_inbound_at)
 );
@@ -69,6 +69,9 @@ DECLARE r veo_jev_reviews;s chatbot_contact_states;c contacts;cfg chatbot_config
  END IF;
  kind:=p_decision->>'action';minutes:=greatest(5,least(120,coalesce((p_decision->>'wait_minutes')::integer,15)));
  IF kind NOT IN('wait','stop','follow_up','resume') OR p_decision->'history_verified' IS DISTINCT FROM 'true'::jsonb THEN RAISE EXCEPTION 'Invalid Jev decision';END IF;
+ IF p.mode='observe' THEN
+  UPDATE veo_jev_reviews SET status='observed',claimed_at=NULL,decision=p_decision,last_error=NULL WHERE id=r.id;RETURN true;
+ END IF;
  IF kind='wait' OR coalesce((p_decision->>'confidence')::numeric,0)<0.9 THEN
   UPDATE veo_jev_reviews SET status='wait',attempt=0,claimed_at=NULL,due_at=p_now+make_interval(mins=>minutes),decision=p_decision,last_error=NULL WHERE id=r.id;RETURN true;
  END IF;

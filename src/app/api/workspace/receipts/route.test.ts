@@ -37,11 +37,11 @@ it('deletes only through the session actor and validates reasons, Page access an
     expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo'},'https://other.test')).status).toBe(403);
     m.rpc.mockResolvedValue({error:{code:'42501',message:'Receipt outside your permitted branch'}});expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo'})).status).toBe(403);
 });
-it('performs a fresh check for the selected client and does not let the browser supply its evidence', async () => {
+it('checks saved source evidence and queues a background refresh without trusting browser evidence', async () => {
     m.rpc.mockResolvedValue({ data: { allowed: false, blockers: ['facebook_stage_unavailable'] } });
     const r = await post({ action: 'check', contact_id: receipt, seller_id: worker, receipt_kind: 'closed', facebook: { stage: 'qualified' } });
     expect(r.status).toBe(200); expect((await r.json()).allowed).toBe(false);
-    expect(m.refresh).toHaveBeenCalledWith(m, worker, receipt);
+    expect(m.rpc).toHaveBeenCalledWith('veo_request_source_refresh', { p_actor: worker, p_contact: receipt });
     expect(m.rpc).toHaveBeenCalledWith('veo_receipt_requirements', { p_actor: worker, p_contact: receipt, p_seller: worker, p_kind: 'closed', p_order: null, p_fresh: true });
     expect(m.storage.from).not.toHaveBeenCalled();
 });
@@ -52,13 +52,13 @@ it('rejects an ineligible multipart submit before reserving storage or saving a 
     form.set('photo', new Blob([new Uint8Array([255, 216, 255, 217])], { type: 'image/jpeg' }), 'receipt.jpg');
     const r = await POST(new NextRequest('https://veo.test/api/workspace/receipts', { method: 'POST', headers: { Origin: 'https://veo.test' }, body: form }));
     expect(r.status).toBe(422); expect((await r.json()).error).toContain('Receipt not submitted');
-    expect(m.refresh).toHaveBeenCalledWith(m, worker, receipt);
+    expect(m.rpc).toHaveBeenCalledWith('veo_request_source_refresh', { p_actor: worker, p_contact: receipt });
     expect(m.from).not.toHaveBeenCalled(); expect(m.storage.from).not.toHaveBeenCalled(); expect(m.rpc.mock.calls.some(([name]) => name === 'veo_receipt_save')).toBe(false);
 });
-it('rechecks Facebook after authorizing an existing receipt and blocks missing requirements', async () => {
+it('rechecks saved evidence after authorizing a receipt and queues refresh separately', async () => {
     m.rpc.mockImplementation(async name => ({ data: name === 'veo_receipt_access' ? { contact_id: receipt, seller_id: worker, receipt_kind: 'done', order_id: worker } : { allowed: false, blockers: ['verify_full_payment'] } }));
     expect((await post({ action: 'recheck', receipt_id: receipt })).status).toBe(422);
-    expect(m.refresh).toHaveBeenCalledWith(m, worker, receipt); expect(m.rpc.mock.calls.some(([name]) => name === 'veo_receipt_recheck')).toBe(false);
+    expect(m.rpc).toHaveBeenCalledWith('veo_request_source_refresh', { p_actor: worker, p_contact: receipt }); expect(m.rpc.mock.calls.some(([name]) => name === 'veo_receipt_recheck')).toBe(false);
 });
 
 function uploadForm() {
@@ -111,5 +111,5 @@ it('never removes a referenced photo when a repeated save response reports a dup
 it('saves eligible evidence only after the fresh check and returns the committed queue result', async () => {
     const saved = savingDatabase({ data: { id: receipt, duplicate: false, holds: [], delivery_status: 'queued' } });
     const r = await POST(uploadForm()); expect(r.status).toBe(202); expect((await r.json()).saved.delivery_status).toBe('queued');
-    expect(m.refresh.mock.invocationCallOrder[0]).toBeLessThan(m.rpc.mock.invocationCallOrder[m.rpc.mock.calls.findIndex(([name]) => name === 'veo_receipt_save')]); expect(saved.remove).not.toHaveBeenCalled();
+    expect(m.rpc.mock.calls.some(([name]) => name === 'veo_request_source_refresh')).toBe(true); expect(saved.remove).not.toHaveBeenCalled();
 });

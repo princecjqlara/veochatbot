@@ -2,7 +2,8 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import VeoWorkspaceContacts, { type WorkspaceContact } from '@/components/VeoWorkspaceContacts';
+import type { WorkspaceContact } from '@/components/VeoWorkspaceContacts';
+import VeoWorkspaceContacts from '@/components/VeoWorkspaceContacts';
 import VeoTeamsDashboard from '@/components/VeoTeamsDashboard';
 import VeoCapacitySummary from '@/components/VeoCapacitySummary';
 import VeoTelegramProfile from '@/components/VeoTelegramProfile';
@@ -15,6 +16,7 @@ import VeoReceiptInbox from '@/components/VeoReceiptInbox';
 import VeoStaffWarnings from '@/components/VeoStaffWarnings';
 import VeoNewClients from '@/components/VeoNewClients';
 import VeoTelegramGroups from '@/components/VeoTelegramGroups';
+import VeoClientDrawer from '@/components/VeoClientDrawer';
 
 const field = 'border border-slate-300 rounded px-3 py-2 bg-white text-slate-900 w-full';
 const button = 'rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40';
@@ -33,16 +35,24 @@ function Workspace() {
     const [day, setDay] = useState(today()), [query, setQuery] = useState(params.get('search') || ''), [contacts, setContacts] = useState<WorkspaceContact[]>([]);
     const [contactOffset, setContactOffset] = useState(0), [contactTotal, setContactTotal] = useState(0), [contactsLoading, setContactsLoading] = useState(true), [picked, setPicked] = useState<WorkspaceContact | null>(null);
     const [contact, setContact] = useState(params.get('contact_id') || ''), [order, setOrder] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
+    const [drawerContact, setDrawerContact] = useState('');
     const [role, setRole] = useState('member'), [parent, setParent] = useState(''), [assigned, setAssigned] = useState<string[]>([]);
     const [offset, setOffset] = useState(0), pendingRequests = useRef(new Map<string, string>());
     const refreshGeneration = useRef(0);
     async function refresh() {
         const generation = ++refreshGeneration.current;
-        const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : ['profile', 'capacity', 'calendar', 'budget', 'performance', 'rankings', 'receipts', 'warnings', 'new_clients', 'telegram'].includes(view) ? 'dashboard' : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
+        const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
         const lightweight = ['new_clients', 'telegram'].includes(view);
-        const r = await fetch(lightweight ? '/api/workspace/new-clients?context=1' : `/api/workspace?${filters}`);
-        const body = await r.json();
+        const contextual = !['dashboard', 'accounts', 'sync'].includes(view);
+        const accounts = ['profile', 'receipts', 'salary'].includes(view) ? '&accounts=1' : '';
+        const endpoint = lightweight ? '/api/workspace/new-clients?context=1' : contextual ? `/api/workspace/context?view=${encodeURIComponent(view)}&date=${encodeURIComponent(day)}${accounts}` : `/api/workspace?${filters}`;
+        const r = await fetch(endpoint);
+        let body = await r.json();
         if (!r.ok) throw new Error(body.error);
+        if (contextual && ['calendar', 'budget'].includes(view) && !['owner', 'team_leader'].includes(body.scope?.role)) {
+            const fallback = await fetch(`/api/workspace?${filters}`), result = await fallback.json();
+            if (!fallback.ok) throw new Error(result.error);body = result;
+        }
         if (generation !== refreshGeneration.current) return;
         setData(lightweight ? { scope: body.scope, accounts: [], tomorrow: [] } : body);
     }
@@ -98,15 +108,23 @@ function Workspace() {
     const chosenContact = availableContacts.find(c => c.id === contact);
     const tomorrowTotal = data.tomorrow.filter((w: any) => w.active === true).reduce((n: number, w: any) => n + w.target, 0);
     const supervisor = data.scope.role !== 'member';
+    const navViews = executive ? ['dashboard', 'new_clients', 'telegram', 'performance', 'rankings', 'salary', 'receipts', 'warnings', 'capacity', 'calendar', 'budget', 'accounts', 'sync', 'profile'] : ['dashboard', 'new_clients', 'telegram', 'clients', 'deals', 'salary', 'receipts', 'warnings', 'capacity', ...(supervisor ? ['performance', 'rankings', 'accounts'] : []), 'sync', 'profile'];
+    const viewGroups = [
+        { name: 'Work', views: navViews.filter(v => ['dashboard', 'new_clients', 'clients'].includes(v)) },
+        { name: 'Sales', views: navViews.filter(v => ['deals', 'salary', 'receipts'].includes(v)) },
+        { name: 'Team', views: navViews.filter(v => ['telegram', 'warnings', 'capacity', 'accounts'].includes(v)) },
+        { name: 'Reports & Planning', views: navViews.filter(v => ['performance', 'rankings', 'calendar', 'budget'].includes(v)) },
+        { name: 'More', views: navViews.filter(v => ['sync', 'profile'].includes(v)) }
+    ].filter(group => group.views.length);
     const formData = (e: React.FormEvent<HTMLFormElement>) => { e.preventDefault(); return Object.fromEntries(new FormData(e.currentTarget)); };
     return <div className="mx-auto max-w-7xl p-4 md:p-8 text-slate-900 space-y-6">
         <header><p className="text-xs uppercase tracking-widest">CJ Lara / VEO / {label(data.scope.role)}</p><h1 className="text-3xl font-bold mt-2">{executive && activeView === 'dashboard' ? 'Teams dashboard' : activeView === 'clients' ? 'Clients' : activeView === 'deals' ? 'Deals' : activeView === 'profile' ? 'My profile' : label(activeView)}</h1><p className="mt-2 text-sm text-slate-600">Launch: {new Date(data.scope.launch_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })} PHT. All work dates use Philippine time.</p></header>
-        <nav className="flex flex-wrap gap-2">{(executive ? ['dashboard', 'new_clients', 'telegram', 'performance', 'rankings', 'salary', 'receipts', 'warnings', 'capacity', 'calendar', 'budget', 'accounts', 'sync', 'profile'] : ['dashboard', 'new_clients', 'telegram', 'clients', 'deals', 'salary', 'receipts', 'warnings', 'capacity', ...(supervisor ? ['performance', 'rankings', 'accounts'] : []), 'sync', 'profile']).map(v => <Link className={`rounded border px-3 py-2 text-sm ${activeView === v ? 'bg-slate-900 text-white' : 'bg-white'}`} key={v} href={`/dashboard/workspace?view=${v}`}>{executive && v === 'dashboard' ? 'Teams dashboard' : v === 'capacity' ? 'Capacity & Quotas' : v === 'accounts' ? 'Accounts & Teams' : v === 'profile' ? 'My profile' : label(v)}</Link>)}</nav>
+        <nav aria-label="Workspace areas" className="flex flex-wrap gap-2">{viewGroups.map(group => <details key={group.name} open={group.views.includes(activeView)} className="relative"><summary className="cursor-pointer rounded border bg-white px-3 py-2 text-sm font-semibold">{group.name}</summary><div className="absolute left-0 z-10 mt-1 grid min-w-48 gap-1 rounded border bg-white p-2 shadow">{group.views.map(v => <Link className={`rounded px-3 py-2 text-sm ${activeView === v ? 'bg-slate-900 text-white' : 'hover:bg-slate-100'}`} key={v} href={`/dashboard/workspace?view=${v}`}>{executive && v === 'dashboard' ? 'Teams dashboard' : v === 'capacity' ? 'Capacity & Quotas' : v === 'accounts' ? 'Accounts & Teams' : v === 'profile' ? 'My profile' : label(v)}</Link>)}</div></details>)}</nav>
         {!executive && ['dashboard'].includes(activeView) && <div className="grid gap-3 md:grid-cols-3"><label>Page<select className={field} value={page} onChange={e => { setPage(e.target.value); setOffset(0); setContactOffset(0); setContact(''); setPicked(null); setOrder(''); }}><option value="">All assigned pages</option>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Client search<input className={field} value={query} maxLength={200} onChange={e => { setQuery(e.target.value); setOffset(0); setContactOffset(0); setOrder(''); }} placeholder={activeView === 'deals' ? 'Search client, seller or order' : 'Search client name, ID or saved details'} /></label><label>Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => { setDay(e.target.value); setOffset(0); }} /></label></div>}
         {(activeView === 'capacity' || (executive && activeView === 'dashboard')) && <label className="block max-w-xs">Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => setDay(e.target.value)} /></label>}
         {!executive && activeView === 'deals' && <label className="block max-w-xs font-semibold">Deal type<select className={field} value={dealStatus} onChange={e => { setOffset(0); setOrder(''); router.replace(`/dashboard/workspace?view=deals&status=${e.target.value}`); }}><option value="closed">Closed Deals</option><option value="done">Done Deals</option></select></label>}
         {message && <p role="status" className="rounded border bg-amber-50 p-3">{message}</p>}
-        {activeView === 'new_clients' && <VeoNewClients scope={data.scope} pages={pages} initialContactId={params.get('contact_id') || ''} />}
+        {activeView === 'new_clients' && <VeoNewClients scope={data.scope} pages={pages} initialContactId={params.get('contact_id') || ''} onOpenClient={setDrawerContact} />}
         {activeView === 'telegram' && <VeoTelegramGroups />}
         {['receipts', 'salary'].includes(activeView) && <VeoReceiptInbox scope={data.scope} accounts={data.accounts} compact={activeView === 'salary'} initialContactId={params.get('contact_id') || ''} initialKind={params.get('receipt_kind') === 'done' ? 'done' : 'closed'} />}
         {['warnings', 'dashboard'].includes(activeView) && <VeoStaffWarnings compact={activeView === 'dashboard'} refreshToken={data} />}
@@ -117,8 +135,8 @@ function Workspace() {
         {executive && activeView === 'dashboard' && <div className="flex gap-4 text-sm"><Link className="underline" href="/dashboard/ad-calendar">Calendar & Analytics</Link><Link className="underline" href="/dashboard/ad-quality">Ads Performance</Link></div>}
         {!executive && activeView === 'dashboard' && <section className="rounded border bg-white p-5"><h2 className="font-bold text-xl">Tomorrow&apos;s plan</h2><p className="my-2">{data.tomorrow.filter((w: any) => w.active === true).length} participating workers from verified Telegram votes.</p><p className="text-sm text-slate-600">Vote in the active-for-tomorrow poll posted by Jaucian in your mapped Telegram group. The workspace reads that poll automatically.</p><Link className="underline text-sm" href="/dashboard/workspace?view=warnings">Open poll participation and warnings</Link></section>}
         {executive && activeView === 'dashboard' && <VeoTeamsDashboard data={data} busy={busy} />}
-        {!executive && activeView === 'dashboard' && <VeoWorkspaceContacts items={contacts} total={contactTotal} offset={contactOffset} loading={contactsLoading} onOffset={setContactOffset} onSelect={c => { setPicked(c); setContact(c.id); setOrder(''); }} />}
-        {!executive && activeView === 'dashboard' && chosenContact && <div className="rounded border bg-white p-4 flex items-center justify-between gap-3"><p className="text-sm">Selected client: <strong>{chosenContact.name || 'Unknown client'}</strong></p><Link className="underline text-sm" href={`/dashboard/workspace?view=new_clients&contact_id=${chosenContact.id}`}>Open Ready / Accept client</Link></div>}
+        {!executive && activeView === 'dashboard' && <VeoWorkspaceContacts items={contacts} total={contactTotal} offset={contactOffset} loading={contactsLoading} onOffset={setContactOffset} onSelect={c => { setPicked(c); setContact(c.id); setOrder(''); setDrawerContact(c.id); }} />}
+        {!executive && activeView === 'dashboard' && chosenContact && <p className="rounded border bg-white p-3 text-sm">Selected client: <strong>{chosenContact.name || 'Unknown client'}</strong>. Assignment and receipt actions are in the client drawer.</p>}
         {!executive && ['dashboard'].includes(activeView) && <>
             <section className="rounded border bg-white p-5 space-y-3"><h2 id="create-order" className="font-bold text-xl">Facebook Business Suite orders</h2><p className="text-sm">Create the client order in Facebook Business Suite. Open Receipts to fetch the invoice and total price, choose New deal or complete an earlier Closed Deal, and enter the balance paid.</p><Link className="underline" href={`/dashboard/workspace?view=receipts&receipt_kind=done${contact ? '&contact_id=' + contact : ''}`}>Fetch order and record balance paid</Link></section>
             <section className="rounded border bg-white p-5"><h2 className="font-bold">Photo delivery</h2>{data.submissions.map((s: any) => <p className="text-sm border-t py-2" key={s.id}>{data.orders.find((o: any) => o.id === s.order_id)?.description || s.order_id} · {label(s.status)} · attempts {s.attempt_count}{s.last_error && ` · ${s.last_error}`}{s.deleted_at && ' · temporary photo deleted'}</p>)}</section>
@@ -132,5 +150,6 @@ function Workspace() {
         {activeView === 'profile' && <VeoTelegramProfile />}
         {['accounts', 'profile'].includes(activeView) && <form className="rounded border bg-white p-5 space-y-3" onSubmit={async e => { const f = formData(e); await submit({ ...f, action: 'password' }); e.currentTarget?.reset(); }}><h2 className="font-bold">Email sign-in password</h2><label className="block">Account<select name="user_id" className={field}>{data.accounts.filter((a: any) => activeView !== 'profile' || a.id === data.scope.user_id).map((a: any) => <option key={a.id} value={a.id}>{a.name} · {a.email || 'Email unavailable'}</option>)}</select></label><label className="block">New password<input name="password" required type="password" autoComplete="new-password" className={field} /></label><button className={button} disabled={busy}>Set password</button></form>}
         {isOwner && activeView === 'accounts' && <section className="rounded border bg-slate-50 p-5"><h2 className="font-bold">Read-only history archive</h2><p className="text-sm mt-2">Earlier records are preserved and excluded from this workspace’s targets, capacity and salary. Verified retained payments remain part of each contact’s labelled lifetime value.</p><div className="flex flex-wrap gap-3 mt-3">{[['contacts', 'Contacts'], ['campaigns', 'Campaigns'], ['contact_purchases', 'Orders'], ['contact_verified_payments', 'Verified payments'], ['page_activity_history', 'Activity']].map(([table, title]) => <a key={table} href={`/api/workspace/archive?table=${table}`} target="_blank" rel="noreferrer" className="text-sm underline">View archived {title.toLowerCase()}</a>)}</div></section>}
+        <VeoClientDrawer contactId={drawerContact} onClose={() => setDrawerContact('')} />
     </div>;
 }

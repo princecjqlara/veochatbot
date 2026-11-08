@@ -27,10 +27,11 @@ describe('temporary photo access for Jaucian', () => {
         m.rpc.mockClear();expect((await POST(request('Bearer test-key', { ...body, chat_id: 123 }))).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled();
         m.connected.mockRejectedValueOnce(Object.assign(Error('Wrong tenant'), { status: 403 }));expect((await POST(request('Bearer test-key'))).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();
     });
-    it('refuses to release a photo when the last-minute Facebook refresh fails', async () => {
-        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key'); m.refresh.mockRejectedValueOnce(Error('Facebook unavailable'));
+    it('refuses photo access when submission state cannot be checked after eligibility passes', async () => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key'); m.rpc.mockImplementation(async name => ({ data: name === 'veo_handoff' ? { order_id: 'order' } : true }));
+        m.from.mockReturnValue({ select: () => ({ eq: () => ({ single: async () => ({ data: null, error: Error('Database unavailable') }) }) }) });
         const r = await GET(new NextRequest('https://veo.test/api/workspace/handoff?submission_id=00000000-0000-4000-8000-000000000001', { headers: { Authorization: 'Bearer test-key' } }));
-        expect(r.status).toBe(503); expect(m.rpc).not.toHaveBeenCalled(); expect(m.storage.from).not.toHaveBeenCalled();
+        expect(r.status).toBe(503); expect(m.rpc).toHaveBeenCalledWith('veo_handoff', { p_submission: '00000000-0000-4000-8000-000000000001' }); expect(m.storage.from).not.toHaveBeenCalled();
     });
     it('reports an explicit deleted receipt as permanent cancellation without signing its photo',async()=>{
         vi.stubEnv('VEO_JAUCIAN_SECRET','test-key');m.rpc.mockImplementation(async name=>({data:name==='veo_handoff'?null:true,error:null}));

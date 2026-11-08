@@ -5,7 +5,6 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, philippineDate, uuid } from '@/lib/veo-workspace';
 import { readVeoRpc } from '@/lib/veo-report-read';
 import { receiptPhoto, receiptHoldLabels } from '@/lib/veo-receipts';
-import { refreshReceiptFacebook } from '@/lib/veo-facebook-check';
 import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -24,7 +23,9 @@ function checked(result: any) {
     return result.data;
 }
 async function requirements(db: any, actor: string, contact: string, seller: string, kind: string, order: string | null) {
-    await refreshReceiptFacebook(db, actor, contact);
+    // The current authoritative evidence is already stored. Queue a refresh in
+    // the background; receipt checks and saves must not wait on Meta Graph.
+    await db.rpc('veo_request_source_refresh', { p_actor: actor, p_contact: contact });
     return checked(await db.rpc('veo_receipt_requirements', { p_actor: actor, p_contact: contact, p_seller: seller, p_kind: kind, p_order: order, p_fresh: true }));
 }
 function requireEligible(data: any) {

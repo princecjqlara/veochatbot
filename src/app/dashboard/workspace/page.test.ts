@@ -56,7 +56,7 @@ describe('workspace contacts, unified deals and Owner separation', () => {
         m.params = new URLSearchParams('view=deals&status=done');
         await act(async () => { view.update(createElement(Page)); });
         await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-        expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace?') && u.includes('view=done'))).toBe(true);
+        expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace/context?view=deals'))).toBe(true);
     });
     it('shows CJ a teams dashboard with management navigation and keeps individual seller forms separate', async () => {
         await render('owner', '');

@@ -18,11 +18,12 @@ it('requires sign-in and Page access before reading Facebook credentials',async(
     m.session.mockResolvedValue({user:{id:'worker'}});m.scope.mockResolvedValue({user_id:'worker',page_ids:[],launch_at:'2026-11-05'});
     expect((await POST(req(true))).status).toBe(403);expect(m.fetch).not.toHaveBeenCalled();expect(m.from.mock.calls.map(([table])=>table)).toEqual(['contacts']);
 });
-it('fetches source totals server-side, saves observations, and returns no token or raw messages',async()=>{
+it('queues a bounded background refresh and returns saved source status without tokens or messages',async()=>{
     const r=await POST(req(true)),body=await r.json();expect(r.status).toBe(200);expect(r.headers.get('cache-control')).toBe('no-store');expect(JSON.stringify(body)).not.toContain('private');
-    expect(m.fetch).toHaveBeenCalledWith({pageId:'123',psid:'client',token:'private',launchAt:'2026-11-05'});
-    expect(m.rpc).toHaveBeenCalledWith('veo_observe_business_orders',{p_actor:'worker',p_contact:contact,p_orders:[{invoice_id:'123',total_minor:10000}]});
+    expect(m.fetch).not.toHaveBeenCalled();
+    expect(m.rpc).toHaveBeenCalledWith('veo_request_source_refresh',{p_actor:'worker',p_contact:contact});
     expect(m.rpc).toHaveBeenCalledWith('veo_business_orders_page',{p_actor:'worker',p_contact:contact});
+    expect(m.rpc).toHaveBeenCalledWith('veo_source_page',{p_actor:'worker',p_contact:contact});
 });
 it('does not fetch on cached reads and fails closed when Page permission changes during a fetch',async()=>{
     expect((await GET(req())).status).toBe(200);expect(m.fetch).not.toHaveBeenCalled();

@@ -54,13 +54,15 @@ export async function GET(request: NextRequest) {
         const offset = Number(params.get('offset') || 0), view = params.get('view') || 'dashboard', search = params.get('search') || '';
         if ((page && !uuid(page)) || !Number.isSafeInteger(offset) || offset < 0 || offset > 10000000 || search.length > 200 ||
             !['dashboard', 'clients', 'closed', 'done', 'salary', 'accounts', 'sync'].includes(view)) throw new Error('Invalid order filters');
+        const includeOrders = ['closed', 'done'].includes(view);
+        const includeCapacity = view === 'capacity' || view === 'dashboard';
         const [dashboard, orders, capacity] = await Promise.all([
             readVeoRpc(db, 'veo_dashboard', { p_actor: scope.user_id, p_day: day }),
-            readVeoRpc(db, 'veo_orders_page', { p_actor: scope.user_id, p_day: day, p_view: view, p_page: page, p_search: search, p_offset: offset, p_limit: 50 }),
-            readVeoRpc(db, 'veo_team_capacity', { p_actor: scope.user_id, p_day: day })
+            includeOrders ? readVeoRpc(db, 'veo_orders_page', { p_actor: scope.user_id, p_day: day, p_view: view, p_page: page, p_search: search, p_offset: offset, p_limit: 50 }) : Promise.resolve({ data: null, error: null }),
+            includeCapacity ? readVeoRpc(db, 'veo_team_capacity', { p_actor: scope.user_id, p_day: day }) : Promise.resolve({ data: null, error: null })
         ]);
         if (dashboard.error || orders.error || capacity.error) throw new Error(dashboard.error?.message || orders.error?.message || capacity.error?.message);
-        return NextResponse.json({ ...dashboard.data, orders: orders.data?.orders || [], order_page: orders.data, capacity: capacity.data }, { headers: { 'Cache-Control': 'no-store' } });
+        return NextResponse.json({ ...dashboard.data, orders: orders.data?.orders || [], ...(orders.data ? { order_page: orders.data } : {}), capacity: capacity.data }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) { return errorResponse(error); }
 }
 export async function POST(request: NextRequest) {

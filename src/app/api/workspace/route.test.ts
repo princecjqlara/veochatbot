@@ -45,7 +45,7 @@ describe('workspace work-date boundaries', () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ orders: [{ id: 'older-order' }], order_page: { total: 501, offset: 500 } });
         expect(m.rpc).toHaveBeenCalledWith('veo_orders_page', expect.objectContaining({ p_view: 'done', p_offset: 500, p_page: page, p_search: 'client' }));
-        expect(m.rpc).toHaveBeenCalledWith('veo_team_capacity', { p_actor: 'owner', p_day: philippineDate() });
+        expect(m.rpc.mock.calls.some(([name]) => name === 'veo_team_capacity')).toBe(false);
     });
     it('does not silently omit team capacity when the authoritative aggregate is unavailable', async () => {
         m.rpc.mockImplementation(async name => name === 'veo_team_capacity' ? { error: { message: 'Team aggregate unavailable' } } : { data: name === 'veo_scope' ? { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } : {} });

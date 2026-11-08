@@ -31,7 +31,7 @@ describe('Jev interruption review ownership and snapshot checks',()=>{
         await db.query("INSERT INTO chatbot_configs(page_id,enabled,follow_up_enabled,instructions) VALUES($1,true,true,'Keep customer details')",[reviewPage]);
         await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,pipeline_stage_source,last_inbound_at,chatbot_enabled) VALUES($1,$2,'jev-customer','Customer','engaged','chatbot',now()-interval '20 minutes',true)",[reviewContact,reviewPage]);
         await db.query("INSERT INTO chatbot_contact_states(id,page_id,contact_id,status,stop_reason,pause_kind,started_at,stopped_at,last_human_activity_at,window_expires_at,collected_details) VALUES($1,$2,$3,'stopped','manual','human_takeover',now()-interval '1 hour',now()-interval '10 minutes',now()-interval '10 minutes',now()+interval '1 day',$4::jsonb)",[stateId,reviewPage,reviewContact,JSON.stringify({business:'Bakery'})]);
-        await db.query("UPDATE veo_jev_policy SET enabled=true,model_id='example/jev',activated_at=now()-interval '1 hour',updated_at=now() WHERE tenant_id=$1",[tenant]);
+        await db.query("UPDATE veo_jev_policy SET enabled=true,model_id='example/jev',mode='active',activated_at=now()-interval '1 hour',updated_at=now() WHERE tenant_id=$1",[tenant]);
     });
     afterEach(async()=>{transactionalTest=false;await db.exec('ROLLBACK');});
     it('keeps a waiting conversation paused, preserves answers and schedules a later review',async()=>{
@@ -55,6 +55,12 @@ describe('Jev interruption review ownership and snapshot checks',()=>{
         const job=await claim();expect(await apply(job)).toBe(true);
         expect((await db.query<any>('SELECT status,pause_kind,collected_details FROM chatbot_contact_states WHERE id=$1',[stateId])).rows[0]).toMatchObject({status:'active',pause_kind:null,collected_details:{business:'Bakery'}});
         expect((await db.query('SELECT id FROM chatbot_follow_up_jobs WHERE contact_id=$1',[reviewContact])).rows).toHaveLength(0);
+    });
+    it('records Jev decisions without changing chatbot behavior in observation mode',async()=>{
+        await db.query("UPDATE veo_jev_policy SET mode='observe' WHERE tenant_id=$1",[tenant]);
+        const job=await claim();expect(await apply(job,'resume')).toBe(true);
+        expect((await db.query<any>('SELECT status,pause_kind FROM chatbot_contact_states WHERE id=$1',[stateId])).rows[0]).toMatchObject({status:'stopped',pause_kind:'human_takeover'});
+        expect((await db.query<any>("SELECT status,decision->>'action' AS action FROM veo_jev_reviews WHERE id=$1",[job.id])).rows[0]).toEqual({status:'observed',action:'resume'});
     });
     it('queues a contextual follow-up once through the ordinary delivery worker',async()=>{
         const job=await claim();expect(await apply(job,'follow_up')).toBe(true);expect(await apply(job,'follow_up')).toBe(false);

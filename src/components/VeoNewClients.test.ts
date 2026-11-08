@@ -6,7 +6,7 @@ import Clients from './VeoNewClients';
 let view: ReactTestRenderer;
 const text = (v: any): string => typeof v === 'string' || typeof v === 'number' ? String(v) : (v?.children || []).map(text).join('');
 const scope = { user_id: 'worker', role: 'member' };
-const item = { id: 'client', page_id: 'page', name: 'New client', page_name: 'VEO Page', pipeline_stage: 'qualified', owner_id: null, can_offer: false };
+const item = { id: 'client', page_id: 'page', name: 'New client', page_name: 'VEO Page', pipeline_stage: 'qualified', owner_id: null, can_offer: false, intake: { detail_count: 3, eligible: true } };
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(async () => { if (view) await act(async () => view.unmount());vi.useRealTimers();vi.unstubAllGlobals(); });
 async function tick() { await act(async () => { await vi.advanceTimersByTimeAsync(300); }); }

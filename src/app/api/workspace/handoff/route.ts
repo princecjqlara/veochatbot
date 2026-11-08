@@ -3,7 +3,6 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { uuid } from '@/lib/veo-workspace';
 import { connectedVeoTenant, veoDirectory } from '@/lib/veo-jaucian';
-import { refreshSubmissionFacebook } from '@/lib/veo-facebook-check';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 function authenticated(request: NextRequest) {
@@ -85,8 +84,8 @@ export async function GET(request: NextRequest) {
     const id = request.nextUrl.searchParams.get('submission_id');
     if (!uuid(id)) return NextResponse.json({ error: 'Invalid submission' }, { status: 400 });
     const db = getSupabaseAdmin();
-    try { await refreshSubmissionFacebook(db, id); }
-    catch { return NextResponse.json({ error: 'Facebook eligibility check unavailable; automatic retry required' }, { status: 503 }); }
+    // The source worker refreshes Facebook evidence independently. Keep this
+    // retry path bounded and let the database validate the saved evidence.
     const result = await db.rpc('veo_handoff', { p_submission: id });
     if (result.error) return NextResponse.json({ error: 'Eligibility unavailable' }, { status: 503 });
     if (!result.data) {

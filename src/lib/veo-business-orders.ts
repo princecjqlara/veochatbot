@@ -26,7 +26,7 @@ export function parseBusinessOrderNotice(message: MessengerHistoryMessage, pageI
     } catch { return null; }
 }
 
-export async function fetchBusinessOrderNotices(input: { pageId: string; psid: string; token: string; launchAt: string; timeoutMs?: number }) {
+export async function fetchBusinessOrderNotices(input: { pageId: string; psid: string; token: string; launchAt: string; timeoutMs?: number; cursorUrl?: string | null }) {
     const start = new URL(`https://graph.facebook.com/v21.0/${encodeURIComponent(input.pageId)}/conversations`);
     start.searchParams.set('user_id', input.psid);
     start.searchParams.set('fields', 'id,participants,messages.limit(100){id,message,from,created_time}');
@@ -38,28 +38,36 @@ export async function fetchBusinessOrderNotices(input: { pageId: string; psid: s
         if (!r.ok || b.error) throw Error(b.error?.code === 190 ? 'Facebook Page connection expired. Ask the Owner to reconnect it.' : 'Facebook could not return order notices. Check Page messaging access and retry.');
         return b;
     }
-    const body = await read(start);
-    if (!Array.isArray(body.data)) throw Error('Facebook conversation data unavailable');
-    const thread = body.data.find((c: any) => c.participants?.data?.some((p: any) => String(p.id) === input.psid));
-    if (!thread) return { orders: [] as BusinessOrderNotice[], stage: null as BusinessStageNotice | null, complete: false, pages_checked: 0, coverage: 'No accessible Facebook conversation for this client.' };
-    let batch = thread.messages, pages = 0, complete = false;
+    let batch: any;
+    if (input.cursorUrl) {
+        const cursor = new URL(input.cursorUrl);cursor.searchParams.set('fields', 'id,message,from,created_time');batch = await read(cursor);
+    } else {
+        const body = await read(start);
+        if (!Array.isArray(body.data)) throw Error('Facebook conversation data unavailable');
+        const thread = body.data.find((c: any) => c.participants?.data?.some((p: any) => String(p.id) === input.psid));
+        if (!thread) return { orders: [] as BusinessOrderNotice[], messages: [] as MessengerHistoryMessage[], stage: null as BusinessStageNotice | null, complete: false, pages_checked: 0, next_cursor: null as string | null, coverage: 'No accessible Facebook conversation for this client.' };
+        batch = thread.messages;
+    }
+    let pages = 0, complete = false, next_cursor: string | null = null;
     let stage: BusinessStageNotice | null = null;
-    const orders = new Map<string, BusinessOrderNotice>(), visited = new Set<string>();
+    const orders = new Map<string, BusinessOrderNotice>(), visited = new Set<string>(), messages: MessengerHistoryMessage[] = [];
     while (batch && pages < 5 && Date.now() < deadline) {
         if (!Array.isArray(batch.data)) throw Error('Facebook message data unavailable');
         pages++;
         for (const m of batch.data) {
+            messages.push(m);
             const order = parseBusinessOrderNotice(m, input.pageId, input.launchAt);
             if (order && !orders.has(order.invoice_id)) orders.set(order.invoice_id, order);
             const event = parseBusinessStageNotice(m, input.pageId, input.launchAt);
             if (event && (!stage || event.occurred_at > stage.occurred_at)) stage = event;
         }
         const reachedCutoff = batch.data.some((m: any) => Date.parse(m.created_time) < Date.parse(input.launchAt));
-        if (!batch.paging?.next || reachedCutoff) { complete = true; break; }
-        if (pages >= 5 || Date.now() >= deadline) break;
+        if (!batch.paging?.next || reachedCutoff) { complete = true; next_cursor = null; break; }
         const next = String(batch.paging.next);if (visited.has(next)) throw Error('Repeated Facebook pagination');visited.add(next);
-        const url = new URL(next);url.searchParams.set('fields', 'id,message,from,created_time');
+        const url = new URL(next);url.searchParams.delete('access_token');url.searchParams.delete('appsecret_proof');url.searchParams.set('fields', 'id,message,from,created_time');
+        next_cursor = url.toString();
+        if (pages >= 5 || Date.now() >= deadline) break;
         batch = await read(url);
     }
-    return { orders: [...orders.values()], stage, complete, pages_checked: pages, coverage: complete ? 'Available Facebook notices since launch checked. Meta may omit Business Suite stage and order details; missing evidence blocks receipt submission.' : 'Partial Facebook notice scan. Receipt submission is blocked until a complete check succeeds.' };
+    return { orders: [...orders.values()], messages, stage, complete, next_cursor, pages_checked: pages, coverage: complete ? 'Available Facebook notices since launch checked. Meta may omit Business Suite stage and order details; missing evidence blocks receipt submission.' : 'Partial Facebook notice scan. Receipt submission is blocked until a complete check succeeds.' };
 }

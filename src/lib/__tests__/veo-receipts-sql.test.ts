@@ -7,6 +7,7 @@ import { schemaMigrationPlan } from '../../../scripts/lib/database-migration-saf
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const owner = id(1), page = id(2), client = id(3), leader = id(4), manager = id(5), member = id(6), other = id(7);
 let db: PGlite, tenant: string, receipt: string, order: string, transactionalTest = false;
+const seedDetails = (contact: string) => db.query("INSERT INTO veo_contact_details(contact_id,fields,updated_by) VALUES($1,$2::jsonb,$3)", [contact, JSON.stringify({ 'Business Name': 'Bakery', 'Business Location': 'Manila', 'Goal ng video': 'Promote products' }), owner]);
 const rpc = async (name: string, args: unknown[]) => {
     if (transactionalTest) await db.exec('SAVEPOINT rpc_check');
     try {
@@ -343,7 +344,7 @@ describe('strict Facebook receipt submission after migrating retained records', 
         return { o, notice };
     }
     beforeAll(async () => {
-        for (const migration of schemaMigrationPlan().filter(m => m.name >= '202611070021_')) await db.exec(migration.sql);
+        for (const migration of schemaMigrationPlan().filter(m => m.name >= '202611070021_' && m.name !== '202611080011_veo_source_reconciliation.sql')) await db.exec(migration.sql);
     });
     beforeEach(async () => {
         await db.exec('BEGIN'); transactionalTest = true;
@@ -518,6 +519,7 @@ describe('Tokko Ready/Busy and client acceptance', () => {
     beforeEach(async () => {
         await db.exec('BEGIN'); transactionalTest = true;cid = id(request++);
         await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'New intake client','new',clock_timestamp()-interval '1 second')", [cid, page, 'intake-' + cid]);
+        await seedDetails(cid);
         await db.query('DELETE FROM veo_intake_readiness WHERE tenant_id=$1', [tenant]);
     });
     afterEach(async () => { transactionalTest = false;await db.exec('ROLLBACK'); });
@@ -699,6 +701,7 @@ describe('Telegram groups, Page routes and multiple memberships', () => {
     it('uses Telegram Ready and bound Accept buttons to change the same Tokko client assignment exactly once', async () => {
         await twoGroups();const contactId = id(request++);
         await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'Telegram candidate','new',now())", [contactId, page, contactId]);
+        await seedDetails(contactId);
         const receive = (kind: string, data: any = {}, uid = tgMember, chat = chatA) => rpc('veo_telegram_intake', [tenant, uid, chat, kind, JSON.stringify({ request_id: id(request++), ...data })]);
         const queued = await receive('pool');const rendered = await receive('render', { request_id: queued.request_id });
         const button = rendered.reply_markup.inline_keyboard.flat().find((b: any) => b.text === 'Accept · Telegram candidate');expect(button.callback_data.length).toBeLessThanOrEqual(64);
@@ -715,6 +718,7 @@ describe('Telegram groups, Page routes and multiple memberships', () => {
     it('creates a Telegram reassignment offer, renders it for its verified recipient and preserves ownership until acceptance', async () => {
         await twoGroups();await bind(manager, chatA, 252525);const contactId = id(request++);
         await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'Handover candidate','new',now())", [contactId, page, contactId]);
+        await seedDetails(contactId);
         await rpc('veo_intake_action', [member, 'readiness', JSON.stringify({ request_id: id(request++), status: 'ready' })]);
         await rpc('veo_intake_action', [member, 'accept', JSON.stringify({ request_id: id(request++), contact_id: contactId })]);
         await rpc('veo_intake_action', [manager, 'readiness', JSON.stringify({ request_id: id(request++), status: 'ready' })]);
@@ -823,6 +827,7 @@ describe('automatic Telegram teams and direct leader members', () => {
         const receive = (who: number, kind: string, data: any = {}) => rpc('veo_telegram_intake', [tenant, who, chatA, kind, JSON.stringify({ request_id: id(request++), ...data })]);
         await receive(workerTg, 'ready');
         await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'Direct leader client','new',now())", [customer, newPage, customer]);
+        await seedDetails(customer);
         const menu = await receive(headTg, 'pool');
         const rendered = await receive(headTg, 'render', { request_id: menu.request_id });
         const choose = rendered.reply_markup.inline_keyboard.flat().find((b: any) => b.text === 'Offer / reassign');
@@ -880,7 +885,7 @@ describe('automatic fresh inquiry editor rotation', () => {
     const autoPage=id(970), autoLeader=id(971), editorA=id(972), editorB=id(973), chat=-100970;
     let team:string, customer:string;
     const tick=()=>rpc('veo_automatic_intake_tick',[tenant]);
-    const make=async()=>{ const cid=id(request++);await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,first_interaction_at,last_interaction_at,last_inbound_at) VALUES($1,$2,$3,'Fresh automatic inquiry','new',clock_timestamp(),clock_timestamp(),clock_timestamp())",[cid,autoPage,cid]);return cid; };
+    const make=async()=>{ const cid=id(request++);await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,first_interaction_at,last_interaction_at,last_inbound_at) VALUES($1,$2,$3,'Fresh automatic inquiry','new',clock_timestamp(),clock_timestamp(),clock_timestamp())",[cid,autoPage,cid]);await seedDetails(cid);return cid; };
     const dispatch=async(cid=customer)=>(await db.query<any>('SELECT * FROM veo_intake_dispatch WHERE contact_id=$1',[cid])).rows[0];
     const due=async(cid=customer)=>{ const d=await dispatch(cid);await rpc('veo_ack_intake_notice',[tenant,d.id,chat,777]);await db.query("UPDATE veo_intake_dispatch SET eligible_at=now()-interval '1 minute' WHERE id=$1",[d.id]); };
     beforeEach(async()=>{
@@ -948,11 +953,35 @@ describe('automatic fresh inquiry editor rotation', () => {
         expect(offers).toHaveLength(2);expect(offers.every(o=>o.n===1)).toBe(true);
         expect((await db.query<any>("SELECT count(*)::int n FROM veo_intake_dispatch WHERE team_id=$1 AND status='waiting'",[team])).rows[0].n).toBe(1);
     });
+    it('blocks fresh assignment until three distinct valid answers are saved',async()=>{
+        const cid=await make();await db.query('DELETE FROM veo_contact_details WHERE contact_id=$1',[cid]);
+        await db.query("INSERT INTO veo_contact_details(contact_id,fields,updated_by) VALUES($1,$2::jsonb,$3)",[cid,JSON.stringify({company_name:'Unknown',business_name:'Bakery',business_location:'Manila'}),owner]);
+        expect((await rpc('veo_intake_progress',[cid])).detail_count).toBe(2);
+        await expect(rpc('veo_intake_action',[editorA,'offer',JSON.stringify({contact_id:cid,user_id:editorA,request_id:id(request++)})])).rejects.toThrow(/3 valid client details/);
+        await db.query("UPDATE veo_contact_details SET fields=fields||'{\"video_goal\":\"Promote products\"}'::jsonb WHERE contact_id=$1",[cid]);
+        expect((await rpc('veo_intake_progress',[cid])).eligible).toBe(true);
+    });
     it('never offers before Telegram announcement, after a Page route is removed, or for retained old contacts',async()=>{
         await db.query("UPDATE contacts SET first_interaction_at=now()-interval '30 days' WHERE id=$1",[customer]);await tick();expect(await dispatch()).toBeUndefined();
         customer=await make();await tick();const d=await dispatch();await db.query("UPDATE veo_intake_dispatch SET eligible_at=now()-interval '1 minute' WHERE id=$1",[d.id]);await tick();expect((await dispatch()).offer_id).toBeNull();
         await rpc('veo_ack_intake_notice',[tenant,d.id,chat,777]);await db.query('DELETE FROM veo_team_telegram_pages WHERE team_id=$1',[team]);await tick();
         expect((await dispatch()).status).toBe('cancelled');expect(await rpc('veo_intake_notice',[tenant,d.id,chat])).toBeNull();
         for(const table of ['veo_intake_auto_policy','veo_intake_dispatch','veo_intake_dispatch_attempts'])expect((await db.query<any>("SELECT has_table_privilege('anon',$1,'SELECT') OR has_table_privilege('authenticated',$1,'SELECT') exposed",[table])).rows[0].exposed).toBe(false);
+    });
+});
+
+describe('saved Facebook source reconciliation',()=>{
+    beforeAll(async()=>{const migration=schemaMigrationPlan().find(m=>m.name==='202611080011_veo_source_reconciliation.sql');if(migration)await db.exec(migration.sql);});
+    it('queues refreshes, supports supervisor evidence review and preserves client intake fields',async()=>{
+        const cid=id(request++),fields={ 'Business Name':'Studio','Business Location':'Manila','Goal ng video':'Promote products' };
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage) VALUES($1,$2,$3,'Source review client','engaged')",[cid,page,'source-'+cid]);
+        await db.query('INSERT INTO veo_contact_details(contact_id,fields,updated_by) VALUES($1,$2::jsonb,$3)',[cid,JSON.stringify(fields),owner]);
+        expect((await rpc('veo_request_source_refresh',[member,cid])).status).toBe('pending');
+        expect((await rpc('veo_source_page',[owner,cid])).evidence.complete).toBe(false);
+        const proof=await rpc('veo_review_source_evidence',[owner,cid,'qualified','https://business.facebook.com/source/123','Supervisor verified the current Business Suite stage']);
+        expect(proof.source).toBe('supervisor_review');expect(proof.stage).toBe('qualified');
+        expect((await db.query<any>('SELECT fields FROM veo_contact_details WHERE contact_id=$1',[cid])).rows[0].fields).toEqual(fields);
+        await db.query("UPDATE contacts SET pipeline_stage='converted',pipeline_stage_source='messenger',pipeline_stage_updated_at=clock_timestamp() WHERE id=$1",[cid]);
+        expect((await rpc('veo_receipt_stage_evidence',[cid])).complete).toBe(false);
     });
 });
