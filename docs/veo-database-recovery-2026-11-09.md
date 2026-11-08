@@ -22,10 +22,12 @@ acknowledged as successful.
 At 2026-11-09 06:45 Asia/Manila, the provider Metrics API reported `pg_up = 0`
 and 13,824,000 bytes available on the 2,077,073,408-byte `/data` filesystem
 (0.67%). Total free bytes including reserved space were 135,458,816. Inodes were
-available and the filesystem was not mounted read-only. This confirms critically
-low usable disk space while PostgreSQL is down; the startup log is still needed
-to establish the exact failure. WAL size and the reason for growth are unknown
-while SQL connections are refused. Memory had about 246 MB available, with no
+available and the filesystem was not mounted read-only. At 07:51, authenticated
+management logs confirmed repeated SQLSTATE `53100` failures creating
+`pg_wal/xlogtemp.*`: `No space left on device`. Recovery then shut PostgreSQL
+down and repeated approximately every six seconds. This establishes a disk-full
+startup loop. It does not establish how much space WAL versus application tables
+occupies, or what originally filled the volume. Memory had about 246 MB available, with no
 OOM kills reported since the latest host boot; this does not exclude an earlier
 memory failure.
 
@@ -36,6 +38,20 @@ disk through Database Settings. If a resize cannot run or startup still fails,
 provider support needs the project reference, startup error and these metrics.
 Plan changes require the account owner's billing approval. See
 [Supabase disk recovery documentation](https://supabase.com/docs/guides/platform/database-size#free-plan-behavior).
+
+The owner requested recovery on the existing plan. At 07:54, the Management API
+accepted a normal managed pause of the existing project (`POST /pause`, HTTP
+200), without force options, a billing change or application-table deletion.
+Monitor the project state, then verify restore information before resuming. Do
+not restore the November 3 local migration backup over current data. The active
+project's downloadable backup list was empty before pausing. A project-list
+status of `ACTIVE_HEALTHY` did not reflect PostgreSQL's actual failed health.
+
+The earlier raw-history cleanup is independently confirmed by its saved receipt:
+554,206 raw message rows became zero and the raw transcript table was dropped.
+It retained 49,745 contacts and 100,135 profile snapshots. Multiple profile
+versions remain candidates for inspection, rather than proof of duplicate
+contacts or the crash cause. Preserve all tags and contact-tag assignments.
 
 After storage headroom is restored and the database accepts connections, run:
 
