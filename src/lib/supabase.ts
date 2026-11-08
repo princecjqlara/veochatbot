@@ -30,6 +30,25 @@ type GenericSupabaseClient = SupabaseClient<any, 'public', any>;
 
 const retryableStatuses = new Set([502, 503, 504, 522, 524]);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const SUPABASE_REQUEST_TIMEOUT_MS = 10_000;
+
+async function fetchSupabaseOnce(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const parentSignal = init?.signal;
+    const abortFromParent = () => controller.abort(parentSignal?.reason);
+    if (parentSignal?.aborted) abortFromParent();
+    else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+    const timeout = setTimeout(() => controller.abort(new Error('Supabase request timed out')), SUPABASE_REQUEST_TIMEOUT_MS);
+    try {
+        return await globalThis.fetch(input, { ...init, signal: controller.signal });
+    } catch (error) {
+        if (controller.signal.aborted && !parentSignal?.aborted) throw new Error('Supabase request timed out');
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+        parentSignal?.removeEventListener('abort', abortFromParent);
+    }
+}
 
 /** Retry only idempotent reads. A timed-out write may already have reached Postgres. */
 async function supabaseFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -41,7 +60,7 @@ async function supabaseFetch(input: RequestInfo | URL, init?: RequestInit): Prom
     for (let attempt = 0; attempt < (canRetry ? 3 : 1); attempt++) {
         if (attempt) await sleep(attempt * 250);
         try {
-            response = await globalThis.fetch(input, init);
+            response = await fetchSupabaseOnce(input, init);
             if (!canRetry || !retryableStatuses.has(response.status) || attempt === 2) break;
         } catch (error) {
             lastError = error;
