@@ -626,3 +626,148 @@ describe('Tokko Ready/Busy and client acceptance', () => {
         await expect(action(member, 'order', { request_id: id(request++), seller_id: member, page_id: page, contact_id: cid, total_minor: 10000, currency: 'PHP', description: 'Unrelated new sale', deal_mode: 'new' })).rejects.toThrow(/Claim|assigned/);
     });
 });
+
+describe('Telegram groups, Page routes and multiple memberships', () => {
+    const secondPage = id(90), chatA = -100800, chatB = -100801, tgMember = 242424;
+    let teamId: string;
+    const groupAction = (actor: string, kind: string, data: any) => rpc('veo_telegram_group_action', [actor, kind, JSON.stringify(data)]);
+    const link = (chat: number, pageIds: string[], extra: any = {}, actor = owner) => groupAction(actor, 'group', { team_id: teamId, chat_id: chat, page_ids: pageIds, ...extra });
+    const bind = (user: string, chat: number, telegram = tgMember) => groupAction(owner, 'membership', { user_id: user, chat_id: chat, telegram_user_id: telegram });
+    beforeEach(async () => {
+        await db.exec('BEGIN');transactionalTest = true;
+        teamId = (await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1', [manager])).rows[0].id;
+        await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,veo_tenant_id,veo_enabled) VALUES($1,'telegram-second-page','Second VEO Page','test',$2,true)", [secondPage, tenant]);
+        for (const who of [owner, leader, manager, member]) await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [who, secondPage]);
+        await rpc('veo_sync_telegram_groups', [owner, JSON.stringify([chatA, chatB].map((chat_id, i) => ({ chat_id, name: 'Group ' + i, topics: {}, pages: [page, secondPage].map(id => ({ id, name: id, matched: true })), identities: [] })))]);
+        // This fixture uses the explicit new setup; retained primary mappings
+        // remain supported separately until their supervisor migrates them.
+        await db.query('UPDATE veo_teams SET telegram_chat_id=NULL WHERE id=$1', [teamId]);
+    });
+    afterEach(async () => { transactionalTest = false;await db.exec('ROLLBACK'); });
+    async function twoGroups() { await link(chatA, [page]);await link(chatB, [secondPage]);await bind(member, chatA);await bind(member, chatB); }
+    const observe = (chat: number, membership: string, offset: number, extra: any = {}) => rpc('veo_apply_telegram_observations', [tenant, JSON.stringify({ tenant_id: tenant, workers: [{ user_id: member, telegram_user_id: tgMember, chat_id: chat, membership, membership_confirmed: membership !== 'unknown', is_bot: false, observed_at: new Date(Date.now() + offset).toISOString(), ...extra }] })]);
+    it('supports several Pages in one group and several groups for both members and selling managers', async () => {
+        await link(chatA, [page, secondPage]);
+        await expect(link(chatB, [secondPage])).rejects.toThrow(/Move Pages|another group/);
+        await link(chatB, [secondPage], { move_pages: true, primary: true });
+        for (const chat of [chatA, chatB]) { await bind(member, chat);await bind(manager, chat, 252525); }
+        expect((await db.query('SELECT chat_id FROM veo_telegram_memberships WHERE user_id=$1', [manager])).rows).toHaveLength(2);
+        expect((await rpc('veo_telegram_destination', [teamId, page, member])).chat_id).toBe(chatA);
+        expect((await rpc('veo_telegram_destination', [teamId, secondPage, member])).chat_id).toBe(chatB);
+        expect((await rpc('veo_telegram_groups_page', [manager])).links).toHaveLength(2);
+        await groupAction(owner, 'remove_membership', { user_id: member, chat_id: chatA });
+        expect(await rpc('veo_telegram_destination', [teamId, page, member])).toBeNull();
+        expect((await rpc('veo_telegram_destination', [teamId, secondPage, member])).chat_id).toBe(chatB);
+    });
+    it('rejects cross-branch configuration, public grants and duplicate active Telegram identities', async () => {
+        await expect(link(chatA, [page], {}, other)).rejects.toThrow(/branch/);
+        await expect(link(chatA, [page], {}, member)).rejects.toThrow(/Supervisor/);
+        await expect(rpc('veo_sync_telegram_groups', [manager, '[]'])).rejects.toThrow(/Head/);
+        await link(chatA, [page]);await bind(member, chatA);
+        await expect(bind(manager, chatA)).rejects.toThrow(/another active account/);
+        const foreignView = await rpc('veo_telegram_groups_page', [other]);expect(foreignView.links).toHaveLength(0);expect(foreignView.memberships).toHaveLength(0);
+        for (const table of ['veo_telegram_groups', 'veo_team_telegram_groups', 'veo_team_telegram_pages', 'veo_telegram_memberships', 'veo_telegram_group_states']) expect((await db.query<any>("SELECT has_table_privilege('anon',$1,'SELECT') OR has_table_privilege('authenticated',$1,'SELECT') exposed", [table])).rows[0].exposed).toBe(false);
+    });
+    it('rechecks Page revocation for routed delivery and keeps membership edits within the supervisor branch', async () => {
+        await twoGroups();await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2', [manager, secondPage]);
+        expect(await rpc('veo_telegram_destination', [teamId, secondPage, member])).toBeNull();
+        expect((await rpc('veo_telegram_groups_page', [manager])).routes.every((r: any) => r.page_id !== secondPage)).toBe(true);
+        await expect(groupAction(other, 'remove_membership', { user_id: member, chat_id: chatA })).rejects.toThrow(/branch/);
+    });
+    it('keeps staff employed after leaving one group or an unknown lookup and removes them only after all groups confirm departure', async () => {
+        await twoGroups();expect((await observe(chatA, 'left', 100)).departures).toBe(0);
+        expect((await observe(chatB, 'unknown', 200)).departures).toBe(0);
+        expect((await observe(chatB, 'member', 300)).departures).toBe(0);
+        expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1', [member])).rows[0].active).toBe(true);
+        expect((await observe(chatB, 'kicked', 400)).departures).toBe(1);
+        expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1', [member])).rows[0].active).toBe(false);
+    });
+    it('uses the latest linked-group tomorrow vote once, preserves withdrawals and never changes completed attendance', async () => {
+        await twoGroups();const days = (await db.query<any>('SELECT veo_today()::text today,(veo_today()+1)::text tomorrow')).rows[0];
+        await db.query("INSERT INTO veo_attendance(user_id,work_date,active,updated_by) VALUES($1,$2,true,$3) ON CONFLICT(user_id,work_date) DO UPDATE SET active=true", [member, days.today, owner]);
+        const extra = (active: boolean | null, age: number) => ({ attendance: { work_date: days.tomorrow, active, updated_at: new Date(Date.now() + age).toISOString() } });
+        await observe(chatA, 'member', 100, extra(false, -5000));await observe(chatB, 'member', 200, extra(true, -3000));
+        expect((await db.query<any>('SELECT active FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.tomorrow])).rows[0].active).toBe(true);
+        await observe(chatB, 'member', 300, extra(null, -1000));
+        expect((await db.query<any>('SELECT active FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.tomorrow])).rows[0].active).toBe(false);
+        await observe(chatA, 'member', 400, extra(null, 0));
+        expect((await db.query('SELECT active FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.tomorrow])).rows).toHaveLength(0);
+        expect((await db.query<any>('SELECT active FROM veo_attendance WHERE user_id=$1 AND work_date=$2', [member, days.today])).rows[0].active).toBe(true);
+    });
+    it('uses Telegram Ready and bound Accept buttons to change the same Tokko client assignment exactly once', async () => {
+        await twoGroups();const contactId = id(request++);
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'Telegram candidate','new',now())", [contactId, page, contactId]);
+        const receive = (kind: string, data: any = {}, uid = tgMember, chat = chatA) => rpc('veo_telegram_intake', [tenant, uid, chat, kind, JSON.stringify({ request_id: id(request++), ...data })]);
+        const queued = await receive('pool');const rendered = await receive('render', { request_id: queued.request_id });
+        const button = rendered.reply_markup.inline_keyboard.flat().find((b: any) => b.text === 'Accept · Telegram candidate');expect(button.callback_data.length).toBeLessThanOrEqual(64);
+        const token = button.callback_data.slice(3);
+        await expect(receive('callback', { token_id: token })).rejects.toThrow(/Ready/);
+        await receive('ready');expect((await rpc('veo_intake_page', [member, 'pool', page, contactId, 0])).readiness.ready).toBe(true);
+        await expect(receive('callback', { token_id: token }, tgMember, chatB)).rejects.toThrow(/another person|expired/);
+        const saved = await receive('callback', { token_id: token });expect((await receive('callback', { token_id: token })).request_id).toBe(saved.request_id);
+        expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1', [contactId])).rows[0].user_id).toBe(member);
+        expect((await rpc('veo_intake_page', [member, 'assigned', page, contactId, 0])).readiness.ready).toBe(false);
+        expect((await db.query('SELECT id FROM veo_orders WHERE contact_id=$1', [contactId])).rows).toHaveLength(0);
+        expect((await db.query("SELECT id FROM veo_audit WHERE action='client_assignment' AND entity_id=$1", [contactId])).rows).toHaveLength(1);
+    });
+    it('creates a Telegram reassignment offer, renders it for its verified recipient and preserves ownership until acceptance', async () => {
+        await twoGroups();await bind(manager, chatA, 252525);const contactId = id(request++);
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'Handover candidate','new',now())", [contactId, page, contactId]);
+        await rpc('veo_intake_action', [member, 'readiness', JSON.stringify({ request_id: id(request++), status: 'ready' })]);
+        await rpc('veo_intake_action', [member, 'accept', JSON.stringify({ request_id: id(request++), contact_id: contactId })]);
+        await rpc('veo_intake_action', [manager, 'readiness', JSON.stringify({ request_id: id(request++), status: 'ready' })]);
+        const receive = (who: number, kind: string, data: any = {}) => rpc('veo_telegram_intake', [tenant, who, chatA, kind, JSON.stringify({ request_id: id(request++), ...data })]);
+        const menu = await receive(tgMember, 'reassign'), listing = await receive(tgMember, 'render', { request_id: menu.request_id });
+        const choose = listing.reply_markup.inline_keyboard.flat().find((b: any) => b.text === 'Offer / reassign');
+        const choices = await receive(tgMember, 'callback', { token_id: choose.callback_data.slice(3) });
+        const workers = await receive(tgMember, 'render', { request_id: choices.request_id });
+        const pick = workers.reply_markup.inline_keyboard.flat().find((b: any) => b.text.startsWith('Offer to '));
+        await receive(tgMember, 'callback', { token_id: pick.callback_data.slice(3) });
+        expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1', [contactId])).rows[0].user_id).toBe(member);
+        const pending = (await rpc('veo_telegram_intake_pending', [tenant])).find((o: any) => o.telegram_user_id === 252525);
+        expect(pending.chat_id).toBe(chatA);
+        const offer = await receive(252525, 'render_offer', { offer_id: pending.offer_id });
+        const accept = offer.reply_markup.inline_keyboard.flat().find((b: any) => b.text.startsWith('Accept ·'));
+        await receive(252525, 'callback', { token_id: accept.callback_data.slice(3) });
+        expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1', [contactId])).rows[0].user_id).toBe(manager);
+        await expect(receive(tgMember, 'render_offer', { offer_id: pending.offer_id })).rejects.toThrow(/offer expired|ended|access changed/);
+    });
+    it('blocks forged identities, expired assignment buttons and queued replies after Page revocation', async () => {
+        await twoGroups();const receive = (kind: string, data: any = {}, tg = tgMember) => rpc('veo_telegram_intake', [tenant, tg, chatA, kind, JSON.stringify({ request_id: id(request++), ...data })]);
+        await expect(receive('ready', {}, 999999)).rejects.toThrow(/verify your Telegram/);
+        const command = await receive('pool'), rendered = await receive('render', { request_id: command.request_id });
+        const button = rendered.reply_markup.inline_keyboard.flat().find((b: any) => b.text === 'Ready');
+        await db.query("UPDATE veo_telegram_intake_tokens SET expires_at=now()-interval '1 minute' WHERE id=$1", [button.callback_data.slice(3)]);
+        await expect(receive('callback', { token_id: button.callback_data.slice(3) })).rejects.toThrow(/expired/);
+        await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2', [member, page]);
+        await expect(receive('render', { request_id: command.request_id })).rejects.toThrow(/Page access|permitted Pages/);
+    });
+    it('routes receipt handoff and group reports by Page, blocking delivery when that group membership is missing', async () => {
+        await link(chatA, [page]);await link(chatB, [secondPage]);await bind(member, chatA);
+        const contactId = id(request++), path = `${tenant}/${member}/${id(request++)}`;
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'Second group receipt','qualified',now())", [contactId, secondPage, contactId]);
+        await rpc('veo_record_facebook_check', [member, contactId, new Date().toISOString(), JSON.stringify({ orders: [], complete: true, pages_checked: 1, stage: { stage: 'qualified', message_id: 'stage-' + contactId, occurred_at: new Date(Date.now() - 60000).toISOString() } })]);
+        await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)', [path]);
+        expect((await rpc('veo_receipt_requirements', [member, contactId, member, 'closed', null, true])).blockers).toContain('telegram_page_or_membership_required');
+        await bind(member, chatB);
+        const r = await rpc('veo_receipt_save', [member, JSON.stringify({ request_id: id(request++), seller_id: member, contact_id: contactId, receipt_kind: 'closed', deal_mode: 'new', object_path: path, photo_sha256: '8'.repeat(64), closed_amount_minor: 1000, closed_currency: 'PHP', closed_occurred_at: new Date(Date.now() - 5000).toISOString() })]);
+        const rechecked = await rpc('veo_receipt_recheck', [member, r.id, null]);
+        expect((await rpc('veo_handoff', [rechecked.delivery_submission])).telegram_chat_id).toBe(chatB);
+        const today = (await db.query<any>('SELECT veo_today()::text AS work_day')).rows[0].work_day;
+        const report = await rpc('veo_operations_report', [tenant, today]);
+        const a = report.teams.find((t: any) => t.id === teamId && t.chat_id === chatA), b = report.teams.find((t: any) => t.id === teamId && t.chat_id === chatB);
+        expect(a.group_page_ids).toEqual([page]);expect(b.group_page_ids).toEqual([secondPage]);expect(a.delivery_key).not.toBe(b.delivery_key);
+        expect(JSON.stringify(a)).not.toContain('Second group receipt');expect(JSON.stringify(b)).toContain('Second group receipt');expect(b.capacity.closed).toBeGreaterThanOrEqual(1);
+        await groupAction(owner, 'remove_membership', { user_id: member, chat_id: chatB });
+        expect(await rpc('veo_handoff', [rechecked.delivery_submission])).toBeNull();
+        expect((await db.query('SELECT id FROM veo_orders WHERE contact_id=$1', [contactId])).rows).toHaveLength(0);
+    });
+    it('does not turn stale membership from one group into a fresh missed-vote warning when another group leaves', async () => {
+        await twoGroups();await db.query("UPDATE veo_accounts SET enrolled_at=now()-interval '1 day' WHERE user_id=$1", [member]);
+        const tomorrow = (await db.query<any>('SELECT (veo_today()+1)::text AS work_day')).rows[0].work_day;
+        await observe(chatA, 'member', 100, { availability: { work_date: tomorrow, poll_id: 'group-a-poll', has_vote: false, created_at: new Date(Date.now() - 10800000).toISOString() } });
+        await db.query("UPDATE veo_telegram_group_states SET observed_at=now()-interval '1 hour' WHERE user_id=$1 AND chat_id=$2", [member, chatA]);
+        await observe(chatB, 'left', 200);
+        expect((await rpc('veo_workflow_warnings', [owner, member])).workers[0].warnings.some((w: any) => w.kind === 'availability_unanswered')).toBe(false);
+    });
+});

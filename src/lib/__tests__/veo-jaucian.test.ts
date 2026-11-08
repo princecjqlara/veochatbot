@@ -21,11 +21,11 @@ function database(tables: Record<string, any[]>, errorTable?: string) {
 }
 it('binds the shared VEO directory to CJ’s launched tenant and never selects credentials or page tokens', async () => {
     const calls = database({ veo_tenants: [{ id: tenant, owner_id: CJ_OWNER_USER_ID, name: 'VEO', launch_at: '2026-11-05T00:00:00Z' }],
-        veo_accounts: [{ user_id: member, tenant_id: tenant, active: true, role: 'member', parent_id: 'manager', telegram_username: 'declared' }],
-        users: [{ id: member, name: 'Worker', is_active: true }],
+        veo_accounts: [{ user_id: member, tenant_id: tenant, active: true, role: 'member', parent_id: 'manager', telegram_username: 'declared' }, { user_id: 'manager', tenant_id: tenant, active: true, role: 'manager', parent_id: CJ_OWNER_USER_ID }, { user_id: CJ_OWNER_USER_ID, tenant_id: tenant, active: true, role: 'owner', parent_id: null }],
+        users: [{ id: member, name: 'Worker', is_active: true }, { id: 'manager', is_active: true }, { id: CJ_OWNER_USER_ID, is_active: true }],
         veo_worker_mappings: [{ user_id: member, telegram_user_id: 42 }],
         pages: [{ id: 'page', name: 'VEO page', veo_tenant_id: tenant, veo_enabled: true }],
-        user_pages: [{ user_id: member, page_id: 'page' }], veo_attendance: [] });
+        user_pages: [member, 'manager', CJ_OWNER_USER_ID].map(user_id => ({ user_id, page_id: 'page' })), veo_attendance: [] });
     const data = await veoDirectory(tenant);
     expect(data.accounts[0]).toMatchObject({ name: 'Worker', telegram_user_id: 42, telegram_username_verified: false, page_ids: ['page'] });
     expect(data.commission_rule).toMatchObject({ qualified_rate: 40, default_rate: 35, team_override: false });

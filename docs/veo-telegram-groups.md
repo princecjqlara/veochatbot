@@ -1,0 +1,21 @@
+# Telegram groups, Pages and Tokko assignments
+
+Open **VEO workspace > Telegram Groups & Pages**. The Head can fetch the approved VEO groups registered with the existing Jaucian bot, their configured Pages and observed human identities. This is metadata discovery, not permission to join an unapproved group. Observed identities are an incomplete list; saving a person verifies current human membership with Telegram.
+
+Choose an application team, a fetched group and one or more permitted Pages. A team may use several groups, and a group may handle several Pages. Each team/Page has one delivery destination. Moving an already routed Page requires the explicit Move Pages option. The Head can configure every branch; team leaders and managers can configure only their own branches and permitted Pages. Group routing never grants access to another Page.
+
+Add each person, including selling managers, to each applicable linked group. Use the same numeric Telegram identity across memberships. Unlinking a group does not fire an account. Leaving one group does not remove a worker who remains in another applicable group; offboarding requires fresh confirmed departure observations for every current applicable membership. Unknown or unavailable membership checks cannot fire anyone.
+
+The existing Jaucian bot supports `/ready`, `/busy`, `/clients`, `/offers`, `/myclients` and `/reassign`. These commands and bound buttons use the same assignments as Tokko. Offers retain the existing client owner until accepted; acceptance makes the recipient Busy and pauses the chatbot. Readiness expires after 30 minutes or Philippine midnight, and offers expire after 15 minutes or the recipient's readiness expiry. There is no second Telegram client owner and no automatic assignment just from becoming Ready. Supervisors can offer clients, or eligible workers can choose available clients.
+
+Client menus and offers are scoped to the group's routed Pages and the account's current branch and Page permissions. The normal scheduled outbox sends replies and offer notifications; access and membership are checked again at delivery. Expired menus require a fresh command. Existing legacy assignment buttons cannot modify a parallel assignment system.
+
+Receipts use the seller's verified membership and the team's destination for the receipt's Page. The strict Facebook lead-stage, order and payment checks still apply. For configured teams, missing Page routing or seller membership blocks submission. A routing or permission change also blocks an already queued receipt from reaching its former destination.
+
+Scheduled performance reports show the group's Page results and client lists. Personal commission qualification and attendance remain one set of records per person across all Pages. Tomorrow's polls use Jaucian's existing active-for-tomorrow topic, one poll per group. The latest valid declaration across applicable groups determines a worker's tomorrow state; duplicate group observations do not duplicate workers or salary.
+
+## Rollout
+
+Apply migrations `202611080003` through `202611080006` before deploying the app and bot. Existing single-group teams remain compatible until explicitly configured. Preserve the launch cutoff, archived records, account identities and Page grants. Enable `VEO_TELEGRAM_INTAKE_ENABLED=true` on Jaucian only with the authenticated app bridge deployed; both services continue using the existing tenant and shared integration secret. Keep the current approved chat allowlist.
+
+Run the app workflow/API/UI tests and production build, and Jaucian's `py validate_project.py`. After deployment run `remote_windows.ps1 configure-scheduler --verify-recovery`, `scheduler-status`, and read-only health checks. Do not manually dispatch Telegram messages. Fetching the approved directory is safe after rollout; actual team and identity bindings require deliberate choices by an authorized supervisor.

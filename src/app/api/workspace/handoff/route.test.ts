@@ -7,6 +7,16 @@ vi.mock('@/lib/veo-jaucian', () => ({ connectedVeoTenant: m.connected, veoDirect
 import { GET, POST } from './route';
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
 describe('temporary photo access for Jaucian', () => {
+    it('authenticates Telegram assignment requests, whitelists inputs and resolves the actor from the numeric mapping', async () => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');m.connected.mockResolvedValue({});m.rpc.mockResolvedValue({ data: { request_id: 'request' } });
+        const body = { resource: 'intake', tenant_id: '00000000-0000-4000-8000-000000000001', chat_id: -123, telegram_user_id: 42, action: 'ready', data: { request_id: '00000000-0000-4000-8000-000000000002', actor_id: 'forged' } };
+        const request = (key: string, payload = body) => new NextRequest('https://veo.test/api/workspace/handoff', { method: 'POST', headers: { Authorization: key }, body: JSON.stringify(payload) });
+        expect((await POST(request('Bearer wrong'))).status).toBe(401);expect(m.rpc).not.toHaveBeenCalled();
+        expect((await POST(request('Bearer test-key'))).status).toBe(200);
+        expect(m.rpc).toHaveBeenCalledWith('veo_telegram_intake', { p_tenant: body.tenant_id, p_telegram: 42, p_chat: -123, p_action: 'ready', p_data: { request_id: body.data.request_id, offer_id: undefined, token_id: undefined } });
+        m.rpc.mockClear();expect((await POST(request('Bearer test-key', { ...body, chat_id: 123 }))).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled();
+        m.connected.mockRejectedValueOnce(Object.assign(Error('Wrong tenant'), { status: 403 }));expect((await POST(request('Bearer test-key'))).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();
+    });
     it('refuses to release a photo when the last-minute Facebook refresh fails', async () => {
         vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key'); m.refresh.mockRejectedValueOnce(Error('Facebook unavailable'));
         const r = await GET(new NextRequest('https://veo.test/api/workspace/handoff?submission_id=00000000-0000-4000-8000-000000000001', { headers: { Authorization: 'Bearer test-key' } }));

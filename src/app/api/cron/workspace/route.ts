@@ -40,6 +40,8 @@ export async function GET(request: NextRequest) {
         let integration: any = { retry: true }, operations: any = { error: true };
         try { integration = await syncTelegramWorkforce(); } catch { /* Retry independently of new-event collection. */ }
         try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
+        let intakeRetry = false;
+        try { const cleaned = await db.rpc('veo_telegram_intake_maintenance');intakeRetry = !!cleaned.error; } catch { intakeRetry = true; }
         let budgetRetry = false;
         try { await refreshPageBudgets(); } catch { budgetRetry = true; }
         const processed = await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin, Math.max(0, 210000 - (Date.now() - startedAt)));
@@ -69,6 +71,6 @@ export async function GET(request: NextRequest) {
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
         }
-        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, budget_retry: budgetRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
+        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, budget_retry: budgetRetry, intake_retry: intakeRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }

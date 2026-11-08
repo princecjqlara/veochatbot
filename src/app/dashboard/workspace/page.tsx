@@ -14,6 +14,7 @@ import VeoPageBudget from '@/components/VeoPageBudget';
 import VeoReceiptInbox from '@/components/VeoReceiptInbox';
 import VeoStaffWarnings from '@/components/VeoStaffWarnings';
 import VeoNewClients from '@/components/VeoNewClients';
+import VeoTelegramGroups from '@/components/VeoTelegramGroups';
 
 const field = 'border border-slate-300 rounded px-3 py-2 bg-white text-slate-900 w-full';
 const button = 'rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40';
@@ -37,12 +38,13 @@ function Workspace() {
     const refreshGeneration = useRef(0);
     async function refresh() {
         const generation = ++refreshGeneration.current;
-        const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : ['profile', 'capacity', 'calendar', 'budget', 'performance', 'rankings', 'receipts', 'warnings', 'new_clients'].includes(view) ? 'dashboard' : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
-        const r = await fetch(view === 'new_clients' ? '/api/workspace/new-clients?context=1' : `/api/workspace?${filters}`);
+        const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : ['profile', 'capacity', 'calendar', 'budget', 'performance', 'rankings', 'receipts', 'warnings', 'new_clients', 'telegram'].includes(view) ? 'dashboard' : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
+        const lightweight = ['new_clients', 'telegram'].includes(view);
+        const r = await fetch(lightweight ? '/api/workspace/new-clients?context=1' : `/api/workspace?${filters}`);
         const body = await r.json();
         if (!r.ok) throw new Error(body.error);
         if (generation !== refreshGeneration.current) return;
-        setData(view === 'new_clients' ? { scope: body.scope, accounts: [], tomorrow: [] } : body);
+        setData(lightweight ? { scope: body.scope, accounts: [], tomorrow: [] } : body);
     }
     useEffect(() => {
         const controller = new AbortController();
@@ -58,7 +60,7 @@ function Workspace() {
         return () => { current = false; refreshGeneration.current++; clearTimeout(timer); };
     }, [day, view, dealStatus, page, query, offset]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
-        const id = params.get('contact_id'); if (!id || view === 'new_clients') return;
+        const id = params.get('contact_id'); if (!id || ['new_clients', 'telegram'].includes(view)) return;
         const controller = new AbortController();
         fetch(`/api/workspace?contact_id=${encodeURIComponent(id)}`, { signal: controller.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw new Error(b.error); if (b.contact) setPicked({ ...b.contact, page_name: pages.find(p => p.id === b.contact.page_id)?.name || 'Assigned Page' }); }).catch(e => { if (e.name !== 'AbortError') setMessage(e.message); });
         return () => controller.abort();
@@ -91,7 +93,7 @@ function Workspace() {
     if (!data) return <div className="p-8 text-slate-900"><h1 className="text-2xl font-bold">VEO workspace</h1><p className="mt-4" role="status">{message || 'Loading…'}</p></div>;
     const workers = data.accounts.filter((a: any) => a.active !== false && ['member', 'manager'].includes(a.role));
     const isOwner = data.scope.role === 'owner', executive = ['owner', 'team_leader'].includes(data.scope.role);
-    const activeView = !executive && ['calendar', 'budget'].includes(view) ? 'dashboard' : isOwner && !['accounts', 'sync', 'profile', 'capacity', 'performance', 'rankings', 'salary', 'calendar', 'budget', 'receipts', 'warnings', 'new_clients'].includes(view) ? 'dashboard' : view;
+    const activeView = !executive && ['calendar', 'budget'].includes(view) ? 'dashboard' : isOwner && !['accounts', 'sync', 'profile', 'capacity', 'performance', 'rankings', 'salary', 'calendar', 'budget', 'receipts', 'warnings', 'new_clients', 'telegram'].includes(view) ? 'dashboard' : view;
     const availableContacts = picked && !contacts.some(c => c.id === picked.id) ? [picked, ...contacts] : contacts;
     const chosenContact = availableContacts.find(c => c.id === contact);
     const tomorrowTotal = data.tomorrow.filter((w: any) => w.active === true).reduce((n: number, w: any) => n + w.target, 0);
@@ -99,12 +101,13 @@ function Workspace() {
     const formData = (e: React.FormEvent<HTMLFormElement>) => { e.preventDefault(); return Object.fromEntries(new FormData(e.currentTarget)); };
     return <div className="mx-auto max-w-7xl p-4 md:p-8 text-slate-900 space-y-6">
         <header><p className="text-xs uppercase tracking-widest">CJ Lara / VEO / {label(data.scope.role)}</p><h1 className="text-3xl font-bold mt-2">{executive && activeView === 'dashboard' ? 'Teams dashboard' : activeView === 'clients' ? 'Clients' : activeView === 'deals' ? 'Deals' : activeView === 'profile' ? 'My profile' : label(activeView)}</h1><p className="mt-2 text-sm text-slate-600">Launch: {new Date(data.scope.launch_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })} PHT. All work dates use Philippine time.</p></header>
-        <nav className="flex flex-wrap gap-2">{(executive ? ['dashboard', 'new_clients', 'performance', 'rankings', 'salary', 'receipts', 'warnings', 'capacity', 'calendar', 'budget', 'accounts', 'sync', 'profile'] : ['dashboard', 'new_clients', 'clients', 'deals', 'salary', 'receipts', 'warnings', 'capacity', ...(supervisor ? ['performance', 'rankings', 'accounts'] : []), 'sync', 'profile']).map(v => <Link className={`rounded border px-3 py-2 text-sm ${activeView === v ? 'bg-slate-900 text-white' : 'bg-white'}`} key={v} href={`/dashboard/workspace?view=${v}`}>{executive && v === 'dashboard' ? 'Teams dashboard' : v === 'capacity' ? 'Capacity & Quotas' : v === 'accounts' ? 'Accounts & Teams' : v === 'profile' ? 'My profile' : label(v)}</Link>)}</nav>
+        <nav className="flex flex-wrap gap-2">{(executive ? ['dashboard', 'new_clients', 'telegram', 'performance', 'rankings', 'salary', 'receipts', 'warnings', 'capacity', 'calendar', 'budget', 'accounts', 'sync', 'profile'] : ['dashboard', 'new_clients', 'telegram', 'clients', 'deals', 'salary', 'receipts', 'warnings', 'capacity', ...(supervisor ? ['performance', 'rankings', 'accounts'] : []), 'sync', 'profile']).map(v => <Link className={`rounded border px-3 py-2 text-sm ${activeView === v ? 'bg-slate-900 text-white' : 'bg-white'}`} key={v} href={`/dashboard/workspace?view=${v}`}>{executive && v === 'dashboard' ? 'Teams dashboard' : v === 'capacity' ? 'Capacity & Quotas' : v === 'accounts' ? 'Accounts & Teams' : v === 'profile' ? 'My profile' : label(v)}</Link>)}</nav>
         {!executive && ['dashboard'].includes(activeView) && <div className="grid gap-3 md:grid-cols-3"><label>Page<select className={field} value={page} onChange={e => { setPage(e.target.value); setOffset(0); setContactOffset(0); setContact(''); setPicked(null); setOrder(''); }}><option value="">All assigned pages</option>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Client search<input className={field} value={query} maxLength={200} onChange={e => { setQuery(e.target.value); setOffset(0); setContactOffset(0); setOrder(''); }} placeholder={activeView === 'deals' ? 'Search client, seller or order' : 'Search client name, ID or saved details'} /></label><label>Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => { setDay(e.target.value); setOffset(0); }} /></label></div>}
         {(activeView === 'capacity' || (executive && activeView === 'dashboard')) && <label className="block max-w-xs">Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => setDay(e.target.value)} /></label>}
         {!executive && activeView === 'deals' && <label className="block max-w-xs font-semibold">Deal type<select className={field} value={dealStatus} onChange={e => { setOffset(0); setOrder(''); router.replace(`/dashboard/workspace?view=deals&status=${e.target.value}`); }}><option value="closed">Closed Deals</option><option value="done">Done Deals</option></select></label>}
         {message && <p role="status" className="rounded border bg-amber-50 p-3">{message}</p>}
         {activeView === 'new_clients' && <VeoNewClients scope={data.scope} pages={pages} initialContactId={params.get('contact_id') || ''} />}
+        {activeView === 'telegram' && <VeoTelegramGroups />}
         {['receipts', 'salary'].includes(activeView) && <VeoReceiptInbox scope={data.scope} accounts={data.accounts} compact={activeView === 'salary'} initialContactId={params.get('contact_id') || ''} initialKind={params.get('receipt_kind') === 'done' ? 'done' : 'closed'} />}
         {['warnings', 'dashboard'].includes(activeView) && <VeoStaffWarnings compact={activeView === 'dashboard'} refreshToken={data} />}
         {activeView === 'calendar' && executive && <VeoWorkCalendar scope={data.scope} pages={pages} />}
@@ -123,7 +126,7 @@ function Workspace() {
         {activeView === 'accounts' && supervisor && <section className="space-y-5"><form className="rounded border bg-white p-5 space-y-3" onSubmit={async e => { const f = formData(e); await submit({ ...f, action: 'create_account', role, parent_id: parent, page_ids: assigned }); }}><h2 className="font-bold text-xl">Create account</h2><div className="grid md:grid-cols-2 gap-3"><label>Name<input name="name" required className={field} /></label><label>Email<input name="email" required type="email" className={field} /></label><label>Password<input name="password" required type="password" autoComplete="new-password" className={field} /></label><label>Role<select className={field} value={role} onChange={e => { setRole(e.target.value); setParent(''); }}>{['member', ...(['owner', 'team_leader'].includes(data.scope.role) ? ['manager'] : []), ...(data.scope.role === 'owner' ? ['team_leader'] : [])].map(r => <option key={r} value={r}>{label(r)}</option>)}</select></label><label>Supervisor<select required className={field} value={parent} onChange={e => setParent(e.target.value)}><option value="">Select supervisor</option>{data.accounts.filter((a: any) => a.active !== false && (role === 'member' ? a.role === 'manager' : role === 'manager' ? ['owner', 'team_leader'].includes(a.role) : a.role === 'owner')).map((a: any) => <option key={a.id} value={a.id}>{a.name} ({label(a.role)})</option>)}</select></label></div><fieldset><legend className="font-semibold">Assigned pages (required)</legend>{pages.filter(p => data.accounts.find((a: any) => a.id === parent)?.page_ids?.includes(p.id)).map(p => <label key={p.id} className="flex gap-2 py-1"><input type="checkbox" checked={assigned.includes(p.id)} onChange={e => setAssigned(old => e.target.checked ? [...old, p.id] : old.filter(id => id !== p.id))} />{p.name}</label>)}</fieldset><button className={button} disabled={busy || !assigned.length}>Create account</button></form>
         {data.accounts.filter((a: any) => a.active !== false && a.id !== data.scope.user_id).map((a: any) => <form key={a.id} className="border rounded bg-white p-5" onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); await submit({ action: 'assign_pages', user_id: a.id, page_ids: f.getAll('page_ids') }); }}><h3 className="font-bold">{a.name} · {label(a.role)}</h3><p className="text-sm text-slate-500">{a.email}</p><p className="text-sm text-slate-500">Telegram: {a.telegram_username ? '@' + a.telegram_username : a.telegram_profile_completed_at ? 'No username declared' : 'Not provided yet'}</p><div className="flex flex-wrap gap-4 my-3">{pages.map(p => <label key={p.id} className="flex gap-2"><input name="page_ids" value={p.id} type="checkbox" defaultChecked={a.page_ids?.includes(p.id)} />{p.name}</label>)}</div><button className={button} disabled={busy}>Update page assignments</button><p className="text-xs text-slate-500 mt-2">Removing a supervisor’s page also revokes it from their descendants and blocks queued sends.</p></form>)}
         <VeoStaffOffboarding accounts={data.accounts} scope={data.scope} busy={busy} submit={submit} />
-        {data.scope.role === 'owner' && <VeoJaucianIntegration submit={submit} busy={busy} />}
+        {data.scope.role === 'owner' && <><Link className="underline" href="/dashboard/workspace?view=telegram">Open Telegram groups, Pages and people</Link><VeoJaucianIntegration submit={submit} busy={busy} editable={false} /></>}
         </section>}
         {activeView === 'sync' && <section className="rounded border bg-white p-5"><h2 className="font-bold text-xl">Collection health</h2>{data.sync.map((s: any) => <article className="py-4 border-t" key={s.page_id}><h3 className="font-semibold">{pages.find(p => p.id === s.page_id)?.name || 'Unknown page'}</h3><p>Last recorded event: {s.last_event_at ? new Date(s.last_event_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'Unavailable'} · pending {s.pending} · errors {s.errors}</p><p className="text-sm text-slate-500">{s.coverage}</p></article>)}</section>}
         {activeView === 'profile' && <VeoTelegramProfile />}

@@ -46,7 +46,7 @@ try {
         workspace_accounts: data.workspace.accounts.length, teams: data.workspace.teams.length,
         approved_veo_groups: data.jaucian.groups.length,
         observed_identities: data.jaucian.groups.reduce((n, g) => n + g.identities.length, 0),
-        unmapped_teams: data.workspace.teams.filter(t => !groups.has(String(t.telegram_chat_id))).length,
+        unmapped_teams: data.workspace.teams.filter(t => t.telegram_groups_managed ? !(t.telegram_groups || []).some(g => g.page_ids?.length && groups.has(String(g.chat_id))) : !groups.has(String(t.telegram_chat_id))).length,
         unmapped_workers: workers.filter(w => !w.telegram_user_id).length,
         recent_deliveries: data.jaucian.recent_deliveries.length, jaucian_healthy: true,
         production_mutations: false, manual_telegram_dispatch: false };

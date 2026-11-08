@@ -19,6 +19,7 @@ async function render(role = 'member', params = 'view=dashboard') {
         if (query.pathname === '/api/pages') return new Response(JSON.stringify({ pages: [{ id: 'page-1', name: 'VEO One' }, { id: 'page-2', name: 'VEO Two' }] }));
         if (query.pathname === '/api/workspace/operations') return new Response(JSON.stringify({ summary: {}, orders: [], finance: { days: [] }, employees: [], page_rankings: [], order_page: { total: 0 }, client_assignments: [] }));
         if (query.pathname === '/api/workspace/budget') return new Response(JSON.stringify({ plans: [], saved: [], defaults: {} }));
+        if (query.pathname === '/api/workspace/telegram-groups') return new Response(JSON.stringify({ scope: dashboard(role).scope, groups: [], teams: [], accounts: [], memberships: [], can_manage: role !== 'member' }));
         if (query.pathname === '/api/workspace/new-clients') return new Response(JSON.stringify(query.searchParams.has('context') ? { scope: dashboard(role).scope } : { items: [], roster: [], readiness: { ready: false }, total: 0 }));
         if (query.pathname === '/api/workspace/contacts') {
             const search = query.searchParams.get('search') || '';
@@ -74,5 +75,11 @@ describe('workspace contacts, unified deals and Owner separation', () => {
         expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace/new-clients?'))).toBe(true);
         expect(m.fetch.mock.calls.some(([u]) => u === '/api/workspace/new-clients?context=1')).toBe(true);
         expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace?'))).toBe(false);
+    });
+    it('opens Telegram setup for the Head without fetching financial dashboards or contact history', async () => {
+        await render('owner', 'view=telegram&contact_id=client');
+        expect(JSON.stringify(view.toJSON())).toContain('Fetch teams and Pages from Jaucian');
+        expect(m.fetch.mock.calls.some(([u]) => u === '/api/workspace/telegram-groups')).toBe(true);
+        expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace?') || u.startsWith('/api/workspace/profile'))).toBe(false);
     });
 });

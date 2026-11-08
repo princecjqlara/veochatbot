@@ -15,8 +15,24 @@ export async function POST(request: NextRequest) {
     try {
         const raw = await request.text(); if (Buffer.byteLength(raw) > 2000000) return NextResponse.json({ error: 'Workforce observation batch too large' }, { status: 413 });
         const body = JSON.parse(raw);
-        if (body.resource !== 'workforce') return NextResponse.json({ error: 'Unknown resource' }, { status: 400 });
         await connectedVeoTenant(body.tenant_id);
+        if (body.resource === 'intake') {
+            if (Buffer.byteLength(raw) > 20000) return NextResponse.json({ error: 'Intake request too large' }, { status: 413 });
+            const db = getSupabaseAdmin();
+            if (body.action === 'pending') {
+                const pending = await db.rpc('veo_telegram_intake_pending', { p_tenant: body.tenant_id });
+                if (pending.error) return NextResponse.json({ error: 'Assignment notifications unavailable' }, { status: 503 });
+                return NextResponse.json({ ok: true, tenant_id: body.tenant_id, offers: pending.data }, { headers: { 'Cache-Control': 'no-store' } });
+            }
+            if (!['ready', 'busy', 'pool', 'offers', 'assigned', 'reassign', 'callback', 'render', 'render_offer'].includes(body.action) || !Number.isSafeInteger(body.telegram_user_id) || body.telegram_user_id <= 0 || !Number.isSafeInteger(body.chat_id) || body.chat_id >= 0) return NextResponse.json({ error: 'Invalid Telegram assignment context' }, { status: 400 });
+            const data = body.data || {};
+            if (body.action === 'render_offer' ? !uuid(data.offer_id) : !uuid(data.request_id)) return NextResponse.json({ error: 'Invalid assignment request reference' }, { status: 400 });
+            if (body.action === 'callback' && !uuid(data.token_id)) return NextResponse.json({ error: 'Invalid assignment button' }, { status: 400 });
+            const result = await db.rpc('veo_telegram_intake', { p_tenant: body.tenant_id, p_telegram: body.telegram_user_id, p_chat: body.chat_id, p_action: body.action, p_data: { request_id: data.request_id, offer_id: data.offer_id, token_id: data.token_id } });
+            if (result.error) return NextResponse.json({ error: result.error.code === '42501' ? result.error.message : 'Assignment could not be updated; refresh the menu' }, { status: result.error.code === '42501' ? 403 : result.error.code === '57014' ? 503 : 400 });
+            return NextResponse.json({ ok: true, tenant_id: body.tenant_id, ...result.data }, { headers: { 'Cache-Control': 'no-store' } });
+        }
+        if (body.resource !== 'workforce') return NextResponse.json({ error: 'Unknown resource' }, { status: 400 });
         const result = await getSupabaseAdmin().rpc('veo_apply_telegram_observations', { p_tenant: body.tenant_id, p_payload: body });
         if (result.error) return NextResponse.json({ error: 'Workforce reconciliation unavailable' }, { status: 503 });
         return NextResponse.json({ ok: true, ...result.data }, { headers: { 'Cache-Control': 'no-store' } });

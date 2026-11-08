@@ -12,7 +12,8 @@ export const receiptHoldLabels: Record<string, string> = {
     seller_or_order_attribution_changed: 'Review the seller and order attribution',
     photo_expired_reupload: 'The temporary photo expired; upload it again',
     staff_or_page_access_changed: 'Review the staff account and Page permissions',
-    telegram_mapping_required: 'An authorized supervisor must complete the Telegram mapping'
+    telegram_mapping_required: 'An authorized supervisor must complete the Telegram mapping',
+    telegram_page_or_membership_required: 'Link this Page to a Telegram group and verify the seller’s membership in that group'
 };
 export function receiptPhoto(file: File, bytes: Uint8Array) {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || !file.size || file.size > 3 * 1024 * 1024) throw Error('Choose a JPG, PNG or WebP receipt up to 3 MB');
