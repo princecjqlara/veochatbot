@@ -9,7 +9,7 @@ const response = (data: any, status = 200) => NextResponse.json(data, { status, 
 async function access(request: NextRequest) {
     const session = await getSessionFromRequest(request);
     if (!session?.user?.id) throw Object.assign(Error('Sign in required'), { status: 401 });
-    const scope = await workspaceScope(session.user.id);
+    const scope = await workspaceScope(session.user.id, request);
     if (!scope?.launch_at) throw Object.assign(Error('Workspace access is inactive'), { status: 403 });
     return scope;
 }

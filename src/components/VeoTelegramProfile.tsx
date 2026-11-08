@@ -1,6 +1,7 @@
 'use client';
 import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
+import { startAdaptivePolling } from '@/lib/adaptive-polling';
 
 export default function VeoTelegramProfile({ confirmation = false }: { confirmation?: boolean }) {
     const { data: session, update } = useSession();
@@ -9,13 +10,15 @@ export default function VeoTelegramProfile({ confirmation = false }: { confirmat
     const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
     const [pairingCode, setPairingCode] = useState('');
     const [linked, setLinked] = useState<boolean | null>(null);
+    const isLinked = linked === true;
     useEffect(() => {
-        if (confirmation) return;
-        const c = new AbortController();
-        const check = async () => { try { const r = await fetch('/api/workspace/profile/telegram-link', { cache: 'no-store', signal: c.signal }), b = await r.json(); if (r.ok && !c.signal.aborted) setLinked(b.linked); } catch { /* Keep the current form during a status outage. */ } };
-        void check(); const timer = setInterval(() => void check(), 8000);
-        return () => { c.abort(); clearInterval(timer); };
-    }, [confirmation]);
+        if (confirmation || isLinked) return;
+        return startAdaptivePolling(async signal => {
+            const r = await fetch('/api/workspace/profile/telegram-link', { cache: 'no-store', signal }), b = await r.json();
+            if (!r.ok) throw new Error('Telegram link status unavailable');
+            if (!signal.aborted) setLinked(b.linked);
+        }, { intervalMs: pairingCode ? 8000 : 30000, immediate: true });
+    }, [confirmation, pairingCode, isLinked]);
     return <form className="rounded-xl border bg-white p-6 space-y-4 text-slate-900" onSubmit={async e => {
         e.preventDefault(); setBusy(true); setMessage('');
         try {

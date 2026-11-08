@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { startAdaptivePolling } from '@/lib/adaptive-polling';
 export default function VeoContactAutoFill({ contactId, data, onChanged }: { contactId: string; data: any; onChanged: () => Promise<any> }) {
     const [current, setCurrent] = useState(data), [label, setLabel] = useState(''), [busy, setBusy] = useState(false), [message, setMessage] = useState('');
     const active = useRef(contactId); active.current = contactId;
@@ -7,16 +8,15 @@ export default function VeoContactAutoFill({ contactId, data, onChanged }: { con
     useEffect(() => { setLabel(''); setMessage(''); setBusy(false); }, [contactId]);
     useEffect(() => {
         if (!['queued', 'processing'].includes(current?.analysis?.status)) return;
-        const controller = new AbortController();
-        const timer = setInterval(() => {
-            void fetch('/api/workspace/profile-details?contact_id=' + contactId, { cache: 'no-store', signal: controller.signal }).then(async response => {
+        return startAdaptivePolling(async signal => {
+            try {
+                const response = await fetch('/api/workspace/profile-details?contact_id=' + contactId, { cache: 'no-store', signal });
                 const body = await response.json(); if (!response.ok) throw Error(body.error);
-                if (active.current !== contactId || controller.signal.aborted) return;
+                if (active.current !== contactId || signal.aborted) return;
                 setCurrent(body);
                 if (body.analysis?.analyzed_at && body.analysis.analyzed_at !== current?.analysis?.analyzed_at) await onChanged();
-            }).catch(e => { if (active.current === contactId && !controller.signal.aborted) setMessage(e.message); });
-        }, 15000);
-        return () => { clearInterval(timer); controller.abort(); };
+            } catch (e: any) { if (active.current === contactId && !signal.aborted) setMessage(e.message); throw e; }
+        }, { intervalMs: 15000 });
     }, [contactId, current?.analysis?.status, current?.analysis?.analyzed_at, onChanged]);
     async function submit(action: 'request' | 'refresh') {
         const requested = contactId; setBusy(true); setMessage('');

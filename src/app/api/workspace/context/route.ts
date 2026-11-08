@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     try {
         const session = await getSessionFromRequest(request);
         if (!session?.user?.id) return reply({ error: 'Sign in required' }, 401);
-        const scope = await workspaceScope(session.user.id);
+        const scope = await workspaceScope(session.user.id, request);
         if (!scope?.launch_at) return reply({ error: 'Workspace unavailable' }, 403);
         const q = request.nextUrl.searchParams, view = q.get('view') || '', day = q.get('date') || philippineDate();
         if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < philippineDate(new Date(scope.launch_at)) || day > philippineDate()) return reply({ error: 'Choose a Philippine work date from launch through today' }, 400);

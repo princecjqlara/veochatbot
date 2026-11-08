@@ -19,10 +19,20 @@ export async function passwordMatches(password: string, stored: string) {
     if (!password || !stored?.startsWith('veo-sha256:')) return false;
     return compare(passwordInput(password), stored.slice(11));
 }
-export async function workspaceScope(userId: string): Promise<WorkspaceScope | null> {
+const requestScopes = new WeakMap<object, Map<string, Promise<WorkspaceScope | null>>>();
+async function readWorkspaceScope(userId: string): Promise<WorkspaceScope | null> {
     const { data, error } = await readVeoRpc(getSupabaseAdmin(), 'veo_scope', { p_actor: userId }, 20000);
     if (error) throw Object.assign(new Error('Workspace permissions are temporarily unavailable. Retry shortly.'), { status: 503 });
     return data;
+}
+/** Reuse only within one HTTP request. The next request rechecks live access. */
+export function workspaceScope(userId: string, request?: object): Promise<WorkspaceScope | null> {
+    if (!request) return readWorkspaceScope(userId);
+    let scopes = requestScopes.get(request);
+    if (!scopes) { scopes = new Map(); requestScopes.set(request, scopes); }
+    let scope = scopes.get(userId);
+    if (!scope) { scope = readWorkspaceScope(userId); scopes.set(userId, scope); }
+    return scope;
 }
 export async function workspaceAction(actor: string, action: string, payload: Record<string, unknown>) {
     const { data, error } = await getSupabaseAdmin().rpc('veo_action', { p_actor: actor, p_action: action, p_data: payload });

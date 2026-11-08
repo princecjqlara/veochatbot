@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     try {
         const session = await getSessionFromRequest(request);
         if (!session?.user?.id) return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-        const scope = await workspaceScope(session.user.id);
+        const scope = await workspaceScope(session.user.id, request);
         if (!scope?.launch_at) return NextResponse.json({ error: 'Workspace access inactive' }, { status: 403 });
         const worker = request.nextUrl.searchParams.get('worker_id') || null;
         if (worker && !uuid(worker)) return NextResponse.json({ error: 'Choose a staff account' }, { status: 400 });

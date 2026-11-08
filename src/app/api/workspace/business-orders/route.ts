@@ -9,7 +9,7 @@ async function run(request: NextRequest, refresh: boolean) {
     try {
         if (refresh && request.headers.get('origin') !== request.nextUrl.origin) return response({ error: 'Same-origin request required' }, 403);
         const session = await getSessionFromRequest(request);if (!session?.user?.id) return response({ error: 'Sign in required' }, 401);
-        const scope = await workspaceScope(session.user.id), contactId = request.nextUrl.searchParams.get('contact_id');
+        const scope = await workspaceScope(session.user.id, request), contactId = request.nextUrl.searchParams.get('contact_id');
         if (!scope?.launch_at) return response({ error: 'Workspace unavailable' }, 403);
         if (!uuid(contactId)) return response({ error: 'Choose a client' }, 400);
         const db = getSupabaseAdmin(), contact = await db.from('contacts').select('id,page_id,psid').eq('id', contactId).maybeSingle();

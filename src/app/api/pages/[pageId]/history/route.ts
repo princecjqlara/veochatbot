@@ -108,7 +108,7 @@ export async function GET(
             .limit(candidateLimit);
 
         if (workspaceEnabled()) {
-            const scope = await workspaceScope(session.user.id);
+            const scope = await workspaceScope(session.user.id, request);
             if (!scope?.launch_at || !scope.page_ids.includes(pageId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
             campaignQuery = campaignQuery.gte('created_at', scope.launch_at);
             auditQuery = auditQuery.gte('created_at', scope.launch_at);

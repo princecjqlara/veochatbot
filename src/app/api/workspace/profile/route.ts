@@ -3,6 +3,9 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
+    return workspaceService(() => handlePOST(request));
+}
+async function handlePOST(request: NextRequest) {
     if (request.headers.get('origin') !== request.nextUrl.origin) return NextResponse.json({ error: 'Same-origin request required' }, { status: 403 });
     const session = await getSessionFromRequest(request);
     if (!session?.user.id) return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
@@ -14,3 +17,4 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(saved.data, { headers: { 'Cache-Control': 'no-store' } });
     } catch { return NextResponse.json({ error: 'Could not save your Telegram profile. Please retry.' }, { status: 400 }); }
 }
+import { workspaceService } from '@/lib/workspace-service';

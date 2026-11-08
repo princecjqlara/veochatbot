@@ -14,7 +14,7 @@ const fail = (e: any) => response({ error: e.code === 'DATABASE_UNAVAILABLE' || 
 async function access(r: NextRequest) {
     const session = await getSessionFromRequest(r);
     if (!session?.user?.id) throw Object.assign(Error('Sign in required'), { status: 401 });
-    const scope = await workspaceScope(session.user.id);
+    const scope = await workspaceScope(session.user.id, r);
     if (!scope?.launch_at) throw Object.assign(Error('Workspace access is inactive'), { status: 403 });
     return scope;
 }

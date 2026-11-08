@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     try {
         const session = await getSessionFromRequest(request);
         if (!session?.user?.id) return json({ error: 'Sign in required' }, 401);
-        const scope = await workspaceScope(session.user.id);
+        const scope = await workspaceScope(session.user.id, request);
         if (!scope?.launch_at) return json({ error: 'Workspace access is inactive' }, 403);
         const q = request.nextUrl.searchParams, worker = q.get('worker_id') || (scope.role === 'member' ? scope.user_id : '');
         const page = q.get('page_id') || null, from = q.get('from') || philippineDate(), to = q.get('to') || philippineDate();

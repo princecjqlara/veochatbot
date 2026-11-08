@@ -60,12 +60,27 @@ export async function savePageBudget(actor: string, body: any) {
 export async function refreshPageBudgets() {
     const db = getSupabaseAdmin();
     const day = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10), tomorrow = new Date(Date.now() + 32 * 3600000).toISOString().slice(0, 10);
-    const due = await db.from('veo_ad_budget_plans').select('*').in('work_date', [day, tomorrow]).order('checked_at').limit(30);
+    const due = await db.from('veo_ad_budget_plans').select('*').in('work_date', [day, tomorrow])
+        .lt('checked_at', new Date(Date.now() - 300_000).toISOString()).order('checked_at').limit(30);
     if (due.error) throw new Error('Budget reconciliation unavailable');
     const owners = new Map<string, string>();
+    const capacities = new Map<string, any>();
     for (const row of due.data || []) {
         let owner = owners.get(row.tenant_id);
         if (!owner) { const t = await db.from('veo_tenants').select('owner_id').eq('id', row.tenant_id).single(); if (t.error) throw new Error('Budget owner unavailable'); owner = t.data.owner_id; owners.set(row.tenant_id, owner!); }
-        await savePageBudget(owner!, { action: 'budget_save', team_id: row.team_id, page_id: row.page_id, work_date: row.work_date, currency: row.currency, inputs: row.inputs, reason: 'Automatic reconciliation with current attendance and frozen worker capacity' });
+        const key = `${row.tenant_id}:${row.work_date}`;
+        if (!capacities.has(key)) {
+            const result = await readVeoRpc(db, 'veo_page_capacity', { p_actor: owner, p_day: row.work_date });
+            if (result.error) throw new Error('Budget capacity reconciliation unavailable');
+            capacities.set(key, result.data);
+        }
+        const plan = capacities.get(key)?.plans?.find((p: any) => p.team_id === row.team_id && p.page_id === row.page_id);
+        if (!plan) throw new Error('Team or Page outside the current budget scope');
+        const calculated = calculateVeoBudget(row.inputs, plan);
+        const saved = await db.rpc('veo_budget_action', { p_actor: owner, p_action: 'budget_save', p_data: {
+            team_id: row.team_id, page_id: row.page_id, work_date: row.work_date, currency: row.currency, ...calculated,
+            reason: 'Automatic reconciliation with current attendance and frozen worker capacity'
+        } });
+        if (saved.error) throw new Error('Budget reconciliation could not be saved');
     }
 }

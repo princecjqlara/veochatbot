@@ -20,6 +20,12 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 describe('stored roles and administrator-created sign-in', () => {
+    it('retains a valid signed identity during outages while withholding role authorization', async () => {
+        m.rpc.mockResolvedValueOnce({ data: null, error: { code: 'SUPABASE_CIRCUIT_OPEN' } });
+        const session = await (authOptions.callbacks!.session as any)({ session: { user: {} }, token: { id: 'member' } });
+        expect(session.user).toMatchObject({ id: 'member', workspaceUnavailable: true });
+        expect(session.user.role).toBeUndefined();
+    });
     it('asks for Telegram confirmation after each new sign-in and uses the saved database profile after session refresh', async () => {
         const loginAt = Date.now();
         const jwt = await (authOptions.callbacks!.jwt as any)({ token: {}, account: { provider: 'credentials' }, user: { id: 'member' } });
@@ -36,8 +42,17 @@ describe('stored roles and administrator-created sign-in', () => {
     });
     it('fails closed when the rate limit is exhausted and never looks up or creates a user', async () => {
         m.rpc.mockResolvedValue({ data: false });
-        expect(await credentials({ email: 'member@any-provider.example', password: 'x', role: 'member' })).toBeNull();
+        await expect(credentials({ email: 'member@any-provider.example', password: 'x', role: 'member' })).rejects.toThrow('TooManyAttempts');
         expect(m.maybeSingle).not.toHaveBeenCalled(); expect(m.update).not.toHaveBeenCalled();
+    });
+    it('reports database outages separately from rejected credentials and never skips verification', async () => {
+        m.rpc.mockResolvedValueOnce({ data: null, error: { code: 'SUPABASE_REQUEST_TIMEOUT' } });
+        await expect(credentials({ email: 'member@any-provider.example', password: 'x' })).rejects.toThrow('DatabaseUnavailable');
+        expect(m.maybeSingle).not.toHaveBeenCalled();
+        m.maybeSingle.mockResolvedValueOnce({ data: null, error: { code: 'SUPABASE_UPSTREAM_522' } });
+        await expect(credentials({ email: 'member@any-provider.example', password: 'x' })).rejects.toThrow('DatabaseUnavailable');
+        m.matches.mockResolvedValueOnce(false);
+        expect(await credentials({ email: 'member@any-provider.example', password: 'incorrect' })).toBeNull();
     });
     it('provides credentials only and rejects Facebook even for CJ Owner', async () => {
         expect(authOptions.providers.map(p => p.id)).toEqual(['credentials']);

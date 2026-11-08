@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {assertVeoDatabaseUrl} from './veo-database-scope';
 import { supabaseFetch } from './supabase-fetch';
+import { createSupabaseAvailabilityGate } from './supabase-availability';
 
 function getSupabaseUrl() {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
@@ -31,6 +32,9 @@ type GenericSupabaseClient = SupabaseClient<any, 'public', any>;
 
 let supabaseBrowserClient: GenericSupabaseClient | null = null;
 let supabaseAdminClient: GenericSupabaseClient | null = null;
+// A server request makes one attempt. Retrying at every layer multiplies load
+// during an outage; the gate allows one recovery probe after a short cooldown.
+const adminFetch = createSupabaseAvailabilityGate((input, init) => supabaseFetch(input, init, 1));
 
 export function getSupabaseClient(): GenericSupabaseClient {
     if (!supabaseBrowserClient) {
@@ -42,9 +46,9 @@ export function getSupabaseClient(): GenericSupabaseClient {
 export function getSupabaseAdmin(signal?: AbortSignal): GenericSupabaseClient {
     if (signal || !supabaseAdminClient) {
         const client = createClient(getSupabaseUrl(), getSupabaseServiceKey(), {
-            global: { fetch: signal ? (input, init) => supabaseFetch(input, {
+            global: { fetch: signal ? (input, init) => adminFetch(input, {
                 ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal
-            }) : supabaseFetch },
+            }) : adminFetch },
             auth: {
                 autoRefreshToken: false,
                 persistSession: false

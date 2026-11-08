@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { startAdaptivePolling } from '@/lib/adaptive-polling';
 const field = 'block w-full rounded border border-slate-300 bg-white p-2 text-sm';
 const button = 'rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-40';
 const stamp = (v: string | null) => v ? new Date(v).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) + ' PHT' : 'Not set';
@@ -9,7 +10,11 @@ export default function VeoNewClients({ scope, pages, initialContactId = '', onO
     const [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [version, setVersion] = useState(0);
     const [targets, setTargets] = useState<Record<string, string>>({}), requests = useRef(new Map<string, string>());
     const [sourceContact, setSourceContact] = useState(''), [sourceData, setSourceData] = useState<any>(null), [sourceBusy, setSourceBusy] = useState(false);
-    useEffect(() => { const timer = setInterval(() => setVersion(v => v + 1), 30000); return () => clearInterval(timer); }, []);
+    const hasData = Boolean(data);
+    useEffect(() => {
+        if (loading || busy) return;
+        return startAdaptivePolling(async () => setVersion(v => v + 1), { intervalMs: hasData ? 30000 : 60000 });
+    }, [loading, busy, hasData]);
     useEffect(() => {
         const c = new AbortController();setLoading(true);
         const timer = setTimeout(async () => {

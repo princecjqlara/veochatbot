@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
             .select('page_id')
             .eq('user_id', session.user.id);
 
-        const scope = workspaceEnabled() ? await workspaceScope(session.user.id) : null;
+        const scope = workspaceEnabled() ? await workspaceScope(session.user.id, request) : null;
         const accessiblePageIds = workspaceEnabled() ? scope?.page_ids || [] : userPages?.map(up => up.page_id) || [];
 
         if (accessiblePageIds.length === 0) {

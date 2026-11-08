@@ -18,6 +18,9 @@ export async function middleware(request: NextRequest) {
     const token = await getToken({ req: request });
     if (!token?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (token.facebookId || token.accessToken) return NextResponse.json({ error: 'Facebook sign-in has been removed. Sign in with email and password.' }, { status: 401 });
+    // Workspace routes verify this signed identity and current database scope
+    // themselves. Do not repeat the same expensive scope RPC in the middleware.
+    if (path.startsWith('/api/workspace')) return NextResponse.next();
     try {
         const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
         const headers = { apikey: key!, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
@@ -29,7 +32,6 @@ export async function middleware(request: NextRequest) {
         const scope = await read('veo_scope', { p_actor: token.id });
         if (!scope?.launch_at) return NextResponse.json({ error: 'Workspace access is inactive' }, { status: 403 });
         const forbidden = () => NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        if (path.startsWith('/api/workspace')) return NextResponse.next();
         if (scope.role === 'team_leader' && request.method === 'GET' && (path === '/api/ad-calendar' || /^\/api\/ad-quality(?:\/(?:connection|performance|contacts))?$/.test(path))) {
             const page = request.nextUrl.searchParams.get('pageId');
             if (page && !scope.page_ids.includes(page)) return forbidden();

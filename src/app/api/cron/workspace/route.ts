@@ -6,35 +6,23 @@ import { syncTelegramWorkforce } from '@/lib/veo-telegram-sync';
 import { refreshPageBudgets } from '@/lib/veo-budget';
 import { processJevInterruptionReviews } from '@/lib/veo-jev-review';
 import { processVeoSourceJobs } from '@/lib/veo-source-jobs';
+import { cleanupWorkspacePhotos } from '@/lib/veo-photo-cleanup';
+import { runBackgroundJob } from '@/lib/background-run';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
     if (!process.env.CRON_SECRET || request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (process.env.VEO_WORKSPACE_ENABLED !== 'true') return NextResponse.json({ enabled: false });
+    const result = await runBackgroundJob('workspace', () => processWorkspace(request));
+    return result instanceof NextResponse ? result : NextResponse.json(result);
+}
+async function processWorkspace(request: NextRequest) {
     const db = getSupabaseAdmin();
     const startedAt = Date.now();
     try {
         // Expiry is enforced independently of delivery. A failed deletion remains visible and retries.
-        const cleanup = await db.from('veo_submissions').select('id,object_path,expires_at,status').is('deleted_at', null)
-            .or(`status.eq.delivered,expires_at.lte.${new Date().toISOString()}`).limit(30);
-        if (cleanup.error) throw new Error('Photo cleanup unavailable');
-        for (const s of cleanup.data || []) {
-            const removed = await db.storage.from('veo-conversation-submissions').remove([s.object_path]);
-            if (removed.error) throw new Error('Temporary photo deletion pending');
-            const objectSaved = await db.from('veo_photo_objects').update({ deleted_at: new Date().toISOString() }).eq('object_path', s.object_path);
-            if (objectSaved.error) throw new Error('Photo deletion metadata unavailable');
-            const saved = await db.from('veo_submissions').update({ deleted_at: new Date().toISOString(), ...(s.status === 'delivered' ? {} : { status: 'expired', last_error: 'Photo expired; re-upload required' }) }).eq('id', s.id);
-            if (saved.error) throw new Error('Photo deletion checkpoint unavailable');
-        }
-        const orphans = await db.from('veo_photo_objects').select('object_path').is('deleted_at', null).lte('expires_at', new Date().toISOString()).limit(30);
-        if (orphans.error) throw new Error('Temporary photo expiry scan unavailable');
-        for (const item of orphans.data || []) {
-            const removed = await db.storage.from('veo-conversation-submissions').remove([item.object_path]);
-            if (removed.error) throw new Error('Expired photo deletion pending');
-            const saved = await db.from('veo_photo_objects').update({ deleted_at: new Date().toISOString() }).eq('object_path', item.object_path);
-            if (saved.error) throw new Error('Expired photo checkpoint unavailable');
-        }
+        await cleanupWorkspacePhotos(db);
 
         const maintained = await db.rpc('veo_maintenance');
         if (maintained.error) throw new Error('Salary finalization unavailable');

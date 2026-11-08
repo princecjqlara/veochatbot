@@ -12,7 +12,7 @@ const errorResponse = (error: any) => NextResponse.json({ error: error.code === 
 async function actor(request: NextRequest) {
     const session = await getSessionFromRequest(request);
     if (!session?.user?.id) throw Object.assign(new Error('Sign in required'), { status: 401 });
-    const scope = await workspaceScope(session.user.id);
+    const scope = await workspaceScope(session.user.id, request);
     if (!scope?.launch_at) throw Object.assign(new Error('Workspace launch is pending'), { status: 403 });
     return scope;
 }

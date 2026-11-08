@@ -40,7 +40,7 @@ describe('private photo cleanup during unrelated worker failures', () => {
                 select: () => q, is: () => q, or: () => q, lte: () => q,
                 limit: async () => ({ data: table === 'veo_submissions' ? [{ id: 'expired', object_path: 'private/photo', status: 'queued' }] : [] }),
                 update: (values: any) => { checkpoints.push({ table, values }); return q; },
-                eq: async () => ({ error: null })
+                eq: async () => ({ error: null }), in: async () => ({ error: null })
             };
             return q;
         });

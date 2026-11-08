@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     try {
         const session = await getSessionFromRequest(request);
         if (!session?.user?.id) return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-        const scope = await workspaceScope(session.user.id);
+        const scope = await workspaceScope(session.user.id, request);
         if (!scope?.launch_at || !['owner', 'team_leader'].includes(scope.role)) return NextResponse.json({ error: 'Calendar requires Owner or Team Leader access' }, { status: 403 });
         const q = request.nextUrl.searchParams, month = q.get('month') || philippineDate().slice(0, 7), range = calendarRange(month), page = q.get('page_id') || null;
         const day = q.get('day') || (range.today.startsWith(month) ? range.today : range.days[0]);

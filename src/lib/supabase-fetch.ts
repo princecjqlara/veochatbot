@@ -67,23 +67,24 @@ async function fetchSupabaseOnce(input: RequestInfo | URL, init?: RequestInit): 
 }
 
 /** Retry only idempotent reads. A timed-out write may already have reached Postgres. */
-export async function supabaseFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+export async function supabaseFetch(input: RequestInfo | URL, init?: RequestInit, readAttempts = 3): Promise<Response> {
     const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
     const canRetry = method === 'GET' || method === 'HEAD';
     const parentSignal = requestSignal(input, init);
     let response: Response | undefined;
+    const attempts = canRetry ? Math.max(1, Math.min(3, readAttempts)) : 1;
 
-    for (let attempt = 0; attempt < (canRetry ? 3 : 1); attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
         parentSignal?.throwIfAborted();
         if (attempt) await sleep(attempt * 250);
         parentSignal?.throwIfAborted();
         try {
             response = await fetchSupabaseOnce(input, init);
-            if (!canRetry || !retryableStatuses.has(response.status) || attempt === 2) break;
+            if (!retryableStatuses.has(response.status) || attempt === attempts - 1) break;
             await response.body?.cancel();
         } catch (error) {
             response = undefined;
-            if (parentSignal?.aborted || !canRetry || attempt === 2) throw error;
+            if (parentSignal?.aborted || attempt === attempts - 1) throw error;
         }
     }
 

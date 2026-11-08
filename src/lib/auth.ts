@@ -3,21 +3,33 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import { createHash } from 'node:crypto';
 import { getSupabaseAdmin } from './supabase';
 import { passwordMatches, roles, workspaceEnabled, workspaceScope, type WorkspaceRole } from './veo-workspace';
+import { requestDeadline } from './request-deadline';
+import { isSupabaseUnavailable } from './supabase-errors';
 
 export const authOptions: NextAuthOptions = {
     providers: [
         CredentialsProvider({ name: 'VEO account', credentials: { email: { type: 'email' }, password: { type: 'password' } },
             async authorize(credentials) {
                 if (!credentials || !credentials.password || !credentials.email) return null;
-                const db = getSupabaseAdmin(), email = credentials.email.trim().toLowerCase();
-                const key = createHash('sha256').update(email).digest('hex');
-                const limit = await db.rpc('veo_login_attempt', { p_key: key });
-                if (limit.error || limit.data !== true) return null;
-                const row = await db.from('users').select('id,name,email,image,password_hash,is_active').eq('email', email).maybeSingle();
-                if (row.error || !row.data?.is_active || !await passwordMatches(credentials.password, row.data.password_hash)) return null;
-                const scope = await workspaceScope(row.data.id);
-                if (!scope || !roles.includes(scope.role)) return null;
-                return { id: row.data.id, name: row.data.name, email: row.data.email, image: row.data.image };
+                try {
+                    return await requestDeadline(async signal => {
+                        const db = getSupabaseAdmin(signal), email = credentials.email.trim().toLowerCase();
+                        const key = createHash('sha256').update(email).digest('hex');
+                        const limit = await db.rpc('veo_login_attempt', { p_key: key });
+                        if (limit.error) throw new Error('DatabaseUnavailable');
+                        if (limit.data !== true) throw new Error('TooManyAttempts');
+                        const row = await db.from('users').select('id,name,email,image,password_hash,is_active').eq('email', email).maybeSingle();
+                        if (row.error) throw new Error('DatabaseUnavailable');
+                        if (!row.data?.is_active || !await passwordMatches(credentials.password!, row.data.password_hash)) return null;
+                        const scope = await db.rpc('veo_scope', { p_actor: row.data.id });
+                        if (scope.error) throw new Error('DatabaseUnavailable');
+                        if (!scope.data?.launch_at || !roles.includes(scope.data.role)) return null;
+                        return { id: row.data.id, name: row.data.name, email: row.data.email, image: row.data.image };
+                    }, 12_000);
+                } catch (error) {
+                    if (isSupabaseUnavailable(error)) throw new Error('DatabaseUnavailable');
+                    throw error;
+                }
             }
         })
     ],
@@ -38,9 +50,13 @@ export const authOptions: NextAuthOptions = {
             return token;
         },
         async session({ session, token }) {
-            const scope = workspaceEnabled() && token.id ? await workspaceScope(token.id).catch(() => null) : null;
+            let workspaceUnavailable = false;
+            const scope = workspaceEnabled() && token.id ? await workspaceScope(token.id).catch(() => {
+                workspaceUnavailable = true; return null;
+            }) : null;
             return { ...session,
-                user: { ...session.user, id: workspaceEnabled() && !scope ? undefined : token.id, role: scope?.role,
+                user: { ...session.user, id: workspaceEnabled() && !scope && !workspaceUnavailable ? undefined : token.id, role: scope?.role,
+                    workspaceUnavailable,
                     telegramUsername: scope?.telegram_username || null,
                     telegramProfileCompleted: Boolean(scope?.telegram_profile_completed_at),
                     telegramProfileConfirmed: Boolean(scope?.telegram_profile_completed_at && (!token.loginStartedAt || Date.parse(scope.telegram_profile_completed_at) >= token.loginStartedAt)) } };
@@ -54,7 +70,7 @@ declare module 'next-auth' {
     interface Session {
         accessToken?: string;
         accessTokenExpiresAt?: string;
-        user: { id?: string; role?: WorkspaceRole; name?: string | null; email?: string | null; image?: string | null; facebookId?: string; telegramUsername?: string | null; telegramProfileCompleted?: boolean; telegramProfileConfirmed?: boolean };
+        user: { id?: string; role?: WorkspaceRole; name?: string | null; email?: string | null; image?: string | null; facebookId?: string; telegramUsername?: string | null; telegramProfileCompleted?: boolean; telegramProfileConfirmed?: boolean; workspaceUnavailable?: boolean };
     }
 }
 declare module 'next-auth/jwt' {

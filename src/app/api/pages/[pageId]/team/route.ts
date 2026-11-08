@@ -65,7 +65,7 @@ export async function GET(
             })
             .filter((member): member is TeamMember => member !== null);
 
-        const scope = workspaceEnabled() ? await workspaceScope(session.user.id) : null;
+        const scope = workspaceEnabled() ? await workspaceScope(session.user.id, _request) : null;
         const visible = scope ? normalizedMembers.filter(m => scope.worker_ids.includes(m.id)) : normalizedMembers;
         return NextResponse.json({
             members: visible,

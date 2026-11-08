@@ -4,6 +4,9 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { uuid } from '@/lib/veo-workspace';
 export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
+    return workspaceService(() => handleGET(request));
+}
+async function handleGET(request: NextRequest) {
     const session = await getSessionFromRequest(request);
     if (!session?.user.id) return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
     const params = request.nextUrl.searchParams, page = params.get('page_id') || null, search = (params.get('search') || '').trim();
@@ -13,3 +16,4 @@ export async function GET(request: NextRequest) {
     if (result.error) return NextResponse.json({ error: result.error.code === '42501' ? 'Forbidden' : 'Contact search is unavailable. Please retry.' }, { status: result.error.code === '42501' ? 403 : 503 });
     return NextResponse.json(result.data, { headers: { 'Cache-Control': 'no-store' } });
 }
+import { workspaceService } from '@/lib/workspace-service';

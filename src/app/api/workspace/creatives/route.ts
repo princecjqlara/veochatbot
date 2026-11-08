@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     try {
         const session = await getSessionFromRequest(request);
         if (!session?.user?.id) return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
-        const scope = await workspaceScope(session.user.id), q = request.nextUrl.searchParams, page = q.get('pageId') || q.get('page_id'), ad = q.get('ad_id') || null;
+        const scope = await workspaceScope(session.user.id, request), q = request.nextUrl.searchParams, page = q.get('pageId') || q.get('page_id'), ad = q.get('ad_id') || null;
         if (!scope?.launch_at || !['owner', 'team_leader'].includes(scope.role)) return NextResponse.json({ error: 'Owner or Team Leader required' }, { status: 403 });
         if (!uuid(page) || !scope.page_ids.includes(page)) return NextResponse.json({ error: 'Select one assigned Page for creative reporting' }, { status: 400 });
         if (ad && !/^\d{1,100}$/.test(ad)) throw Error('Choose a creative');
