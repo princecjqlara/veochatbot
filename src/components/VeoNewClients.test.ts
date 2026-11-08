@@ -45,3 +45,25 @@ it('shows assigned offers and acceptance expiry with decline and refresh actions
     expect(view.root.findAllByType('button').find(b => text(b) === 'Accept offered client')!.props.disabled).toBe(true);
     expect(view.root.findAllByType('button').some(b => text(b) === 'Decline')).toBe(true);
 });
+it('sends a handover offer and keeps the current worker shown until the recipient accepts', async () => {
+    let offered = false;
+    const fetcher = vi.fn(async (_url: string, options?: any) => {
+        if (options?.method === 'POST') { offered = true;return new Response(JSON.stringify({ saved: {} })); }
+        return new Response(JSON.stringify({ readiness: { ready: false }, total: 1,
+            items: [{ ...item, owner_id: 'current', owner_name: 'Current Worker', can_offer: true,
+                ...(offered ? { offer_id: 'handover-offer', offered_to: 'next', offered_to_name: 'Next Worker', offer_authorized: true } : {}) }],
+            roster: [{ id: 'next', name: 'Next Worker', role: 'member', ready: true, page_ids: ['page'] }] }));
+    });vi.stubGlobal('fetch', fetcher);
+    await act(async () => { view = create(createElement(Clients, { scope: { user_id: 'leader', role: 'team_leader' }, pages: [] })); });await tick();
+    await act(async () => view.root.findAllByType('button').find(b => text(b) === 'Assigned clients / Handovers')!.props.onClick());await tick();
+    const recipient = view.root.findAllByType('select').find(s => s.findAllByType('option').some(o => o.props.value === 'next'))!;
+    await act(async () => recipient.props.onChange({ target: { value: 'next' } }));
+    expect(view.root.findByProps({ name: 'reason' }).props.required).toBe(true);
+    vi.stubGlobal('FormData', class { get() { return 'Next shift takes over'; } });
+    await act(async () => view.root.findByType('form').props.onSubmit({ preventDefault() {}, currentTarget: { reset() {} } }));await tick();
+    const writes = fetcher.mock.calls.filter(([, o]) => o?.method === 'POST').map(([, o]) => JSON.parse(o.body));
+    expect(writes).toEqual([{ action: 'offer', contact_id: 'client', user_id: 'next', reason: 'Next shift takes over', request_id: expect.any(String) }]);
+    expect(text(view.toJSON())).toContain('Assigned to: Current Worker');
+    expect(text(view.toJSON())).toContain('Offered to Next Worker');
+    expect(text(view.toJSON())).toContain('does not create a Closed Deal, Done Deal or commission');
+});

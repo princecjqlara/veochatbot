@@ -550,6 +550,8 @@ describe('Tokko Ready/Busy and client acceptance', () => {
         expect((await pageFor(member, 'assigned')).items[0].owner_id).toBe(member);expect((await pageFor(member)).readiness.ready).toBe(false);
         expect((await db.query<any>('SELECT chatbot_enabled FROM contacts WHERE id=$1', [cid])).rows[0].chatbot_enabled).toBe(false);
         expect((await db.query('SELECT id FROM veo_orders WHERE contact_id=$1', [cid])).rows).toHaveLength(0);
+        expect((await db.query('SELECT id FROM veo_closed_deals WHERE contact_id=$1', [cid])).rows).toHaveLength(0);
+        expect((await db.query('SELECT p.id FROM veo_payments p JOIN veo_orders o ON o.id=p.order_id WHERE o.contact_id=$1', [cid])).rows).toHaveLength(0);
     });
     it('reserves offers and prevents another branch or a second accept from taking them', async () => {
         await ready(member);await ready(foreign);const offer = await intake(manager, 'offer', { user_id: member });

@@ -1,5 +1,9 @@
 # Tokko client intake
 
+New client assignment handles fresh inquiries before a sale. Choosing Ready does not assign a client automatically: a worker accepts an available inquiry, or the team leader offers it to a Ready worker who must accept. Assignment changes conversation responsibility only; it creates no order, Closed Deal, Done Deal, payment or commission.
+
+For a handover, open **New Clients > My clients / Handovers** (or **Assigned clients / Handovers** for supervisors), select a Ready recipient, enter a handover reason and choose **Send handover offer**. The original worker stays assigned until the recipient accepts. In an approved linked Telegram group, `/handover` opens the same handover menu as `/reassign`; `/offers` shows incoming offers. Telegram and VEO share one current assignment. A team leader can arrange service handovers for clients with recorded sales; those sales keep their original seller and financial history.
+
 Open **VEO workspace > New Clients**. Selling managers and members choose **Ready** before accepting a client; Ready lasts up to 30 minutes and stops at Philippine midnight. **Busy** cancels incoming offers. Acceptance automatically sets Busy and pauses the contact's chatbot using the existing bot-permission controls. A worker can choose Ready again when able to take another client.
 
 The available queue includes contacts with activity since the workspace launch on currently permitted Pages, excluding existing sales, opted-out or unqualified contacts, accepted assignments, released clients and live reservations. Search by client name, ID, PSID or Page, and filter by Page. Existing client history remains accessible in contact profiles. Released clients retain their existing separate claim workflow.
