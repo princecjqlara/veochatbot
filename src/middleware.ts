@@ -5,6 +5,19 @@ import { getToken } from 'next-auth/jwt';
 export async function middleware(request: NextRequest) {
     const path = request.nextUrl.pathname;
     if (['/api/facebook/connect', '/api/facebook/pages'].includes(path)) return NextResponse.json({ error: 'Facebook connection setup has been removed. Sign in with email and password.' }, { status: 410 });
+    if (process.env.VEO_DATABASE_RECOVERY_MODE === 'true') {
+        const safeAuth = ['/api/auth/providers', '/api/auth/csrf', '/api/auth/signout'].includes(path);
+        const durableInbox = path === '/api/facebook/webhook' && process.env.VEO_WORKSPACE_ENABLED === 'true';
+        if (!safeAuth && !durableInbox) {
+            if (path.startsWith('/api/cron/')) {
+                if (!process.env.CRON_SECRET || request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+                return NextResponse.json({ success: true, skipped: true, reason: 'database_recovery' }, { headers: { 'Cache-Control': 'no-store' } });
+            }
+            const headers = { 'Cache-Control': 'no-store', 'Retry-After': '60' };
+            if (path === '/api/auth/callback/credentials') return NextResponse.json({ url: new URL('/?error=DatabaseRecovery', request.nextUrl.origin).toString() }, { status: 503, headers });
+            return NextResponse.json({ error: 'Database recovery is in progress. Please retry after maintenance.', code: 'DATABASE_RECOVERY', retryable: true }, { status: 503, headers });
+        }
+    }
     if (process.env.VEO_WORKSPACE_ENABLED !== 'true') return NextResponse.next();
     if (path === '/api/sales-form') return NextResponse.next(); // The route requires an expiring, contact-scoped capability.
     if (/^\/api\/chatbot-media\/[a-f0-9-]{36}$/i.test(path) && request.nextUrl.searchParams.has('token')) return NextResponse.next(); // Route verifies a short-lived, asset-bound signature.
