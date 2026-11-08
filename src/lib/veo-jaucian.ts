@@ -5,9 +5,9 @@ import { philippineDate, uuid } from './veo-workspace';
 export const commissionRule = { qualified_rate: 40, default_rate: 35, qualification: 'both_personal_closed_and_done_targets', timezone: 'Asia/Manila', team_override: false };
 const unavailable = (message: string, status = 503) => Object.assign(new Error(message), { status });
 
-export async function connectedVeoTenant(tenant: string) {
+export async function connectedVeoTenant(tenant: string, db?: ReturnType<typeof getSupabaseAdmin>) {
     if (!uuid(tenant)) throw unavailable('Invalid tenant', 400);
-    const result = await getSupabaseAdmin().from('veo_tenants').select('id,name,owner_id,launch_at').eq('id', tenant).eq('owner_id', CJ_OWNER_USER_ID).maybeSingle();
+    const result = await (db || getSupabaseAdmin()).from('veo_tenants').select('id,name,owner_id,launch_at').eq('id', tenant).eq('owner_id', CJ_OWNER_USER_ID).maybeSingle();
     if (result.error) throw unavailable('Tenant connection unavailable');
     if (!result.data?.launch_at) throw unavailable('Tenant is not connected', 403);
     return result.data;
@@ -15,8 +15,8 @@ export async function connectedVeoTenant(tenant: string) {
 
 // Only the two authenticated servers can read this directory. The financial
 // ledger stays in VEO; reports and eligible submissions are shared separately.
-export async function veoDirectory(tenant: string) {
-    const db = getSupabaseAdmin(), connection = await connectedVeoTenant(tenant);
+export async function veoDirectory(tenant: string, db = getSupabaseAdmin()) {
+    const connection = await connectedVeoTenant(tenant, db);
     async function read(query: () => any) {
         const rows: any[] = [];
         for (let offset = 0; offset <= 10000; offset += 500) {

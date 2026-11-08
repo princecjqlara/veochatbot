@@ -1,12 +1,51 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), connected: vi.fn(), refresh: vi.fn(), identity: vi.fn(), storage: { from: vi.fn() } }));
+const m = vi.hoisted(() => ({ client: vi.fn(), rpc: vi.fn(), from: vi.fn(), connected: vi.fn(), directory: vi.fn(), refresh: vi.fn(), identity: vi.fn(), storage: { from: vi.fn() } }));
 vi.mock('@/lib/veo-facebook-check', () => ({ refreshSubmissionFacebook: m.refresh }));
-vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
-vi.mock('@/lib/veo-jaucian', () => ({ connectedVeoTenant: m.connected, veoDirectory: vi.fn(), jaucianRead: m.identity }));
+vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: (signal: AbortSignal) => { m.client(signal); return m; } }));
+vi.mock('@/lib/veo-jaucian', () => ({ connectedVeoTenant: m.connected, veoDirectory: m.directory, jaucianRead: m.identity }));
 import { GET, POST } from './route';
-afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 describe('temporary photo access for Jaucian', () => {
+    it.each(['submission_id=00000000-0000-4000-8000-000000000001', 'resource=directory&tenant_id=00000000-0000-4000-8000-000000000001'])('cancels a stalled handoff before the bot times out: %s', async query => {
+        vi.useFakeTimers(); vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');
+        m.rpc.mockImplementation(() => new Promise(() => {}));
+        m.directory.mockImplementation(() => new Promise(() => {}));
+        const pending = GET(new NextRequest('https://veo.test/api/workspace/handoff?' + query, { headers: { Authorization: 'Bearer test-key' } }));
+        await vi.advanceTimersByTimeAsync(12_000);
+        const response = await pending;
+        expect(response.status).toBe(503);
+        expect(response.headers.get('retry-after')).toBe('30');
+        expect(await response.json()).toMatchObject({ retryable: true });
+        expect(m.client.mock.calls[0][0].aborted).toBe(true);
+        expect(m.storage.from).not.toHaveBeenCalled();
+    });
+    it('reports a failed tenant read as retryable rather than an invalid workforce payload', async () => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');
+        m.connected.mockRejectedValueOnce(new Error('Error: Supabase request timed out'));
+        const response = await POST(new NextRequest('https://veo.test/api/workspace/handoff', { method: 'POST', headers: { Authorization: 'Bearer test-key' },
+            body: JSON.stringify({ resource: 'workforce', tenant_id: '00000000-0000-4000-8000-000000000001', workers: [] }) }));
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ retryable: true });
+        expect(m.rpc).not.toHaveBeenCalled();
+    });
+    it('keeps invalid JSON and unauthorized input distinct from a database outage', async () => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');
+        const request = (key: string) => new NextRequest('https://veo.test/api/workspace/handoff', { method: 'POST', headers: { Authorization: key }, body: '{bad' });
+        expect((await POST(request('Bearer wrong'))).status).toBe(401);
+        expect(m.client).not.toHaveBeenCalled();
+        expect((await POST(request('Bearer test-key'))).status).toBe(400);
+        expect(m.connected).not.toHaveBeenCalled();
+    });
+    it('does not report a storage outage as a permanently missing photo', async () => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');
+        m.rpc.mockResolvedValue({ data: { order_id: 'order' }, error: null });
+        m.from.mockReturnValue({ select: () => ({ eq: () => ({ single: async () => ({ data: { object_path: 'private-photo', status: 'delivered' }, error: null }) }) }) });
+        m.storage.from.mockReturnValue({ createSignedUrl: async () => ({ data: null, error: { code: 'SUPABASE_UPSTREAM_522' } }) });
+        const response = await GET(new NextRequest('https://veo.test/api/workspace/handoff?submission_id=00000000-0000-4000-8000-000000000001', { headers: { Authorization: 'Bearer test-key' } }));
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ retryable: true });
+    });
     it('rechecks live human membership and hashes a self-link code before accepting the bot sender identity', async () => {
         vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');vi.stubEnv('VEO_APPROVED_TELEGRAM_CHAT_IDS', '-123');
         m.connected.mockResolvedValue({});m.identity.mockResolvedValue({ verified: true, user_id: 42, chat_id: -123, username: 'actual' });m.rpc.mockResolvedValue({ data: { linked: true } });

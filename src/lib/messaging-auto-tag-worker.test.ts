@@ -12,6 +12,7 @@ import {
     buildMessengerOutcomeTagRows,
     choosePositiveOutcomeTag,
     processOneMessagingAutoTagPage,
+    processMessagingStageSyncBatch,
     MESSENGER_OUTCOME_TAGS
 } from './messaging-auto-tag-worker';
 
@@ -39,7 +40,14 @@ describe('choosePositiveOutcomeTag', () => {
     });
 });
 
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+it('leaves legacy stage leases untouched when the workspace owns automation', async () => {
+    vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
+    mocks.getSupabaseAdmin.mockClear();
+    expect(await processMessagingStageSyncBatch()).toEqual({ pages: 0, completed: 0, failed: 0 });
+    expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
+});
 
 describe('durable Messenger lead-stage stops', () => {
     it.each([

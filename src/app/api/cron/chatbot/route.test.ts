@@ -21,6 +21,14 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe('scheduled live chatbot worker', () => {
+    it('skips every legacy chatbot worker in workspace mode, even during a database outage', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
+        const response = await GET(request('scheduled-bot-secret'));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ success: true, skipped: true, reason: 'workspace_mode' });
+        for (const worker of [mocks.recover, mocks.tag, mocks.review, mocks.followUp]) expect(worker).not.toHaveBeenCalled();
+        expect((await GET(request('wrong-secret'))).status).toBe(401);
+    });
     it.each([undefined, 'wrong-secret'])('rejects unauthorized invocations before touching contacts: %s', async token => {
         expect((await GET(request(token))).status).toBe(401);
         for (const worker of [mocks.recover, mocks.tag, mocks.review, mocks.followUp]) expect(worker).not.toHaveBeenCalled();

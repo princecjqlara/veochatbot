@@ -4,8 +4,23 @@ const mocks = vi.hoisted(() => ({ processPage: vi.fn(), processBatch: vi.fn() })
 vi.mock('@/lib/messaging-auto-tag-worker', () => ({ processOneMessagingAutoTagPage: mocks.processPage, processMessagingStageSyncBatch: mocks.processBatch }));
 import { GET } from './route';
 beforeEach(() => { vi.stubEnv('CRON_SECRET', 'test-secret'); mocks.processPage.mockReset().mockResolvedValue({ pages: 1, webhookHealth: { verified: true } }); mocks.processBatch.mockReset().mockResolvedValue({pages:6,completed:6,failed:0}); });
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 describe('targeted chatbot Page maintenance', () => {
+    it('does not claim legacy stage scans in workspace mode', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
+        const response = await GET(new NextRequest('https://app.test/api/cron/messaging-auto-tag', { headers: { Authorization: 'Bearer test-secret' } }));
+        expect(await response.json()).toMatchObject({ success: true, skipped: true });
+        expect(mocks.processBatch).not.toHaveBeenCalled();
+        expect(mocks.processPage).not.toHaveBeenCalled();
+    });
+    it('returns a retryable service error for database transport failures', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        mocks.processBatch.mockRejectedValueOnce(new Error('Error: Supabase request timed out'));
+        const response = await GET(new NextRequest('https://app.test/api/cron/messaging-auto-tag', { headers: { Authorization: 'Bearer test-secret' } }));
+        expect(response.status).toBe(503);
+        expect(response.headers.get('retry-after')).toBe('60');
+        expect(await response.json()).toMatchObject({ success: false, retryable: true });
+    });
     it('schedules all connected Pages independently of chatbot enablement', async () => {
         const response = await GET(new NextRequest('https://app.test/api/cron/messaging-auto-tag', { headers: { Authorization: 'Bearer test-secret' } }));
         expect(response.status).toBe(200);

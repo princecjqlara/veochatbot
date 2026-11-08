@@ -1,6 +1,11 @@
 import {describe,it,expect,vi,afterEach} from 'vitest';import {getAutomationPageScope,scopeAutomationQuery} from '../page-automation-scope';
 afterEach(()=>{vi.unstubAllEnvs();});
 describe('separated Page automation ownership',()=>{
+ it('preserves the database failure while refusing to release automation scope',async()=>{
+  vi.stubEnv('VEO_WORKSPACE_ENABLED','true');
+  const cause={code:'SUPABASE_UPSTREAM_522',message:'Supabase API temporarily unavailable (HTTP 522)'};
+  await expect(getAutomationPageScope({rpc:vi.fn().mockResolvedValue({data:null,error:cause})})).rejects.toMatchObject({message:'Workspace page scope unavailable',cause});
+ });
  it('preserves the original worker behavior while enforcement is disabled',async()=>{
   vi.stubEnv('VEO_ENFORCE_PAGE_RUNTIME_SCOPE','');const rpc=vi.fn(),query={in:vi.fn()};
   expect(await getAutomationPageScope({rpc})).toBeNull();expect(rpc).not.toHaveBeenCalled();expect(scopeAutomationQuery(query,null)).toBe(query);expect(query.in).not.toHaveBeenCalled();

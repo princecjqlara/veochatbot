@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processOneMessagingAutoTagPage, processMessagingStageSyncBatch } from '@/lib/messaging-auto-tag-worker';
+import { isSupabaseUnavailable } from '@/lib/supabase-errors';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -9,6 +10,9 @@ export async function GET(request: NextRequest) {
     if (!secret) return NextResponse.json({ error: 'CRON_SECRET is not configured' }, { status: 503 });
     if (request.headers.get('authorization') !== `Bearer ${secret}`) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+        return NextResponse.json({ success: true, skipped: true, reason: 'workspace_mode' });
     }
     try {
         const params = new URL(request.url).searchParams;
@@ -20,6 +24,12 @@ export async function GET(request: NextRequest) {
         const success = !('failed' in result && result.failed);
         return NextResponse.json({ success, ...result }, { status: success ? 200 : 503 });
     } catch (error) {
+        if (isSupabaseUnavailable(error)) {
+            console.warn('[MESSAGING_AUTO_TAG] Supabase unavailable; sync deferred');
+            return NextResponse.json({ success: false, error: 'Messaging auto-tag sync temporarily unavailable', retryable: true }, {
+                status: 503, headers: { 'Retry-After': '60' }
+            });
+        }
         console.error('[MESSAGING_AUTO_TAG] Failed:', error);
         return NextResponse.json({ error: 'Messaging auto-tag sync failed' }, { status: 500 });
     }

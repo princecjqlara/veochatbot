@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {assertVeoDatabaseUrl} from './veo-database-scope';
+import { supabaseFetch } from './supabase-fetch';
 
 function getSupabaseUrl() {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
@@ -28,65 +29,6 @@ function getSupabaseServiceKey() {
 
 type GenericSupabaseClient = SupabaseClient<any, 'public', any>;
 
-const retryableStatuses = new Set([502, 503, 504, 522, 524]);
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const SUPABASE_REQUEST_TIMEOUT_MS = 10_000;
-
-async function fetchSupabaseOnce(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    const controller = new AbortController();
-    const parentSignal = init?.signal;
-    const abortFromParent = () => controller.abort(parentSignal?.reason);
-    if (parentSignal?.aborted) abortFromParent();
-    else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
-    const timeout = setTimeout(() => controller.abort(new Error('Supabase request timed out')), SUPABASE_REQUEST_TIMEOUT_MS);
-    try {
-        return await globalThis.fetch(input, { ...init, signal: controller.signal });
-    } catch (error) {
-        if (controller.signal.aborted && !parentSignal?.aborted) throw new Error('Supabase request timed out');
-        throw error;
-    } finally {
-        clearTimeout(timeout);
-        parentSignal?.removeEventListener('abort', abortFromParent);
-    }
-}
-
-/** Retry only idempotent reads. A timed-out write may already have reached Postgres. */
-async function supabaseFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-    const canRetry = method === 'GET' || method === 'HEAD';
-    let response: Response | undefined;
-    let lastError: unknown;
-
-    for (let attempt = 0; attempt < (canRetry ? 3 : 1); attempt++) {
-        if (attempt) await sleep(attempt * 250);
-        try {
-            response = await fetchSupabaseOnce(input, init);
-            if (!canRetry || !retryableStatuses.has(response.status) || attempt === 2) break;
-        } catch (error) {
-            lastError = error;
-            response = undefined;
-            if (!canRetry || attempt === 2) throw error;
-        }
-    }
-
-    if (!response) throw lastError;
-    const isCloudflareTimeout = response.status >= 520 && response.status <= 524;
-    const isHtmlServerError = response.status >= 500 && response.headers.get('content-type')?.includes('text/html');
-    if (!isCloudflareTimeout && !isHtmlServerError) return response;
-
-    const ray = response.headers.get('cf-ray');
-    return new Response(JSON.stringify({
-        message: `Supabase API temporarily unavailable (HTTP ${response.status})`,
-        code: `SUPABASE_UPSTREAM_${response.status}`
-    }), {
-        status: response.status,
-        headers: {
-            'content-type': 'application/json',
-            ...(ray ? { 'x-supabase-upstream-ray': ray } : {})
-        }
-    });
-}
-
 let supabaseBrowserClient: GenericSupabaseClient | null = null;
 let supabaseAdminClient: GenericSupabaseClient | null = null;
 
@@ -97,15 +39,19 @@ export function getSupabaseClient(): GenericSupabaseClient {
     return supabaseBrowserClient;
 }
 
-export function getSupabaseAdmin(): GenericSupabaseClient {
-    if (!supabaseAdminClient) {
-        supabaseAdminClient = createClient(getSupabaseUrl(), getSupabaseServiceKey(), {
-            global: { fetch: supabaseFetch },
+export function getSupabaseAdmin(signal?: AbortSignal): GenericSupabaseClient {
+    if (signal || !supabaseAdminClient) {
+        const client = createClient(getSupabaseUrl(), getSupabaseServiceKey(), {
+            global: { fetch: signal ? (input, init) => supabaseFetch(input, {
+                ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal
+            }) : supabaseFetch },
             auth: {
                 autoRefreshToken: false,
                 persistSession: false
             }
         });
+        if (signal) return client;
+        supabaseAdminClient = client;
     }
     return supabaseAdminClient;
 }

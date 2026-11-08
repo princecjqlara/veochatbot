@@ -4,6 +4,7 @@ import { recoverMissingChatbotMessages } from '@/lib/chatbot-inbound-recovery';
 import { processOneMessagingAutoTagPage } from '@/lib/messaging-auto-tag-worker';
 import { processChatbotContinuationReviews } from '@/lib/chatbot-continuation';
 import { processDueChatbotFollowUps } from '@/lib/chatbot-follow-ups';
+import { isSupabaseUnavailable } from '@/lib/supabase-errors';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -15,6 +16,9 @@ export async function GET(request: NextRequest) {
     if (request.headers.get('authorization') !== `Bearer ${secret}`) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+        return NextResponse.json({ success: true, skipped: true, reason: 'workspace_mode' });
+    }
     const results: Record<string, unknown> = {};
     let success = true;
     const run = async (name: string, operation: () => Promise<unknown>) => {
@@ -25,7 +29,8 @@ export async function GET(request: NextRequest) {
         } catch (error) {
             success = false;
             results[name] = { failed: true, retryable: true };
-            console.error('[CHATBOT_CRON] ' + name + ' failed:', error);
+            if (isSupabaseUnavailable(error)) console.warn('[CHATBOT_CRON] ' + name + ' deferred: Supabase unavailable');
+            else console.error('[CHATBOT_CRON] ' + name + ' failed:', error);
         }
     };
     await run('inboundRecovery', () => recoverMissingChatbotMessages());
@@ -34,5 +39,5 @@ export async function GET(request: NextRequest) {
     await run('messagingAutoTag', () => processOneMessagingAutoTagPage({ chatbotOnly: true }));
     await run('intakeReviews', () => processChatbotContinuationReviews({ limit: 2 }));
     await run('chatbotFollowUps', () => processDueChatbotFollowUps({ supabase: getSupabaseAdmin(), limit: 20 }));
-    return NextResponse.json({ success, ...results }, { status: success ? 200 : 503 });
+    return NextResponse.json({ success, ...results }, { status: success ? 200 : 503, headers: success ? {} : { 'Retry-After': '60' } });
 }

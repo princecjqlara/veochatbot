@@ -280,6 +280,7 @@ export async function processOneMessagingAutoTagPage(input: { chatbotOnly?: bool
 
 /** Independent of chatbot enablement; leases keep concurrent scans on distinct Pages. */
 export async function processMessagingStageSyncBatch(limit = 6) {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') return { pages: 0, completed: 0, failed: 0 };
     const db = getSupabaseAdmin();
     const { data: pages, error } = await db.rpc('claim_messenger_stage_pages', { p_limit: limit });
     if (error) throw new Error(error.message || 'Could not claim Page stage scans');
