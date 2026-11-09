@@ -37,6 +37,18 @@ describe('VEO authentication boundary', () => {
         expect((await middleware(new NextRequest('https://veo.test/api/ad-quality/performance'))).status).toBe(403);
         vi.unstubAllGlobals();
     });
+    it('passes only the authenticated identity sync to its owner-scoped handler', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
+        const request = new NextRequest('https://veo.test/api/workspace/contacts/sync', { method: 'POST' });
+        vi.mocked(getToken).mockResolvedValue(null);
+        expect((await middleware(request)).status).toBe(401);
+        vi.mocked(getToken).mockResolvedValue({ id: 'owner' });
+        const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+        expect((await middleware(request)).status).toBe(200);
+        expect((await middleware(new NextRequest('https://veo.test/api/pages/page/sync'))).status).toBe(410);
+        expect((await middleware(new NextRequest('https://veo.test/api/workspace/contacts/history/sync'))).status).toBe(410);
+        expect(fetcher).not.toHaveBeenCalled();
+    });
     it('rejects a previously issued Facebook session belonging to any account before reading workspace data', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
         vi.mocked(getToken).mockResolvedValue({ id: 'member', facebookId: 'old-facebook-binding' });

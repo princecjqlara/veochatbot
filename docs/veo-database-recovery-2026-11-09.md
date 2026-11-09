@@ -4,7 +4,7 @@ The later fresh-start instruction supersedes the upgrade plan below. Use
 replacement `mjuluaqrvbnycisnarzi` with verified saved chatbot setup/knowledge and
 the saved workforce roster; leave customer history empty. Preserve the original
 project unchanged for possible later recovery. See `veo-supabase-replacement.md`
-for restored data coverage, missing credentials and remaining Page connection.
+for restored data coverage, missing credentials and Page reauthorization needs.
 
 Earlier direction: the owner planned to upgrade the original project. Keep its current
 identities, roles, permissions, contacts, tags and financial records in place.

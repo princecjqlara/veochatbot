@@ -29,7 +29,8 @@ export async function middleware(request: NextRequest) {
         return NextResponse.next();
     }
     if (/^\/api\/(test-|check-oauth)/.test(path)) return NextResponse.json({ error: 'Unavailable' }, { status: 404 });
-    if (/\/sync$|\/refresh-evidence$|\/profile\/finance$/.test(path)) return NextResponse.json({ error: 'Historical imports are disabled. Record verified sales in the VEO workspace.' }, { status: 410 });
+    const identitySync = path === '/api/workspace/contacts/sync';
+    if (!identitySync && /\/sync$|\/refresh-evidence$|\/profile\/finance$/.test(path)) return NextResponse.json({ error: 'Historical imports are disabled. Record verified sales in the VEO workspace.' }, { status: 410 });
     const token = await getToken({ req: request });
     if (!token?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (token.facebookId || token.accessToken) return NextResponse.json({ error: 'Facebook sign-in has been removed. Sign in with email and password.' }, { status: 401 });
