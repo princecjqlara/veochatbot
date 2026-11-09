@@ -1,11 +1,31 @@
 # VEO replacement database preparation
 
-The owner subsequently chose to keep and upgrade the original project
-`vhtbmdizugnxkgocmruq`. Replacement migration is paused; do not import older
-records, switch production, or recreate accounts in the replacement. Production
-still uses the original project with database recovery mode enabled. The empty
-replacement has not been deleted. Both projects belong to the same organization,
-so review its effect on paid compute charges before upgrading that organization.
+Current direction supersedes the earlier upgrade plan: the owner requested a
+fresh start on replacement `mjuluaqrvbnycisnarzi`, retaining the saved workforce,
+chatbot setup and knowledge, with customer/contact history left empty. The
+original project remains intact. No paid plan change is authorized.
+
+Verified setup recovery restored 12 chatbot configurations, 479 knowledge
+documents, 504 vector chunks, 476 Drive references, 12 pricing experiments and
+48 packages. All selected setup values match their verified November 3 backup.
+The saved November 7 directory restored seven account identities, their roles,
+supervisor links, scoped Page grants and three teams. Fourteen backed-up Page
+tokens were verified against Facebook. AIkita Studio has no backed-up connection
+and remains pending; no Facebook identity or token was invented for it.
+
+The database is about 39 MB with zero contacts, message history, old orders,
+payments, archives or follow-up jobs. All seven restored scopes were checked.
+Old password hashes and six staff emails are unavailable. The retained owner's
+backed-up email receives a new random password saved only in the ignored local
+owner sign-in file; other restored identities remain unable to sign in until
+their email/password is configured by Owner in Accounts. This preserves IDs,
+roles and Page grants, and cannot reactivate departed accounts.
+
+Migration `202611090003` adds explicit, owner-only, 50-contact identity batches.
+It imports names and Page-scoped identities without conversation messages,
+historical stage events or source-processing jobs. Existing contact records are
+untouched on retries. Owner starts each batch from the Sync view. Migration
+`202611090004` provides scoped account-login recovery with private audit entries.
 
 The owner supplied replacement project `mjuluaqrvbnycisnarzi` on 2026-11-09.
 Read-only inspection found an empty application schema and a working PostgreSQL
@@ -13,13 +33,14 @@ Read-only inspection found an empty application schema and a working PostgreSQL
 denied REST OpenAPI discovery, while normal SDK requests authenticate correctly.
 Credentials remain in an ignored environment file, separate from production.
 
-Preparation is verified: all 132 committed migrations are installed, creating
+Initial preparation verified: the first 132 committed migrations installed,
 115 public tables in a database of about 22 MB. The private photo bucket is
 private, anonymous access to workspace finance/scope is denied, service-role
 access works, all hierarchy definitions match the guarded source, and the
 database maintenance job is inactive. All 14 targeted checks and TypeScript
-validation passed. Users, contacts, tags, orders and payments are still empty:
-data migration and production cutover have not completed.
+validation passed. The setup-only recovery described above was subsequently
+applied, together with the two recovery migrations. Production cutover is gated
+on owner sign-in, build validation and live database/API checks.
 
 The schema installer accepts only the original VEO project or this explicitly
 approved replacement, and still checks every configured connection/key route.

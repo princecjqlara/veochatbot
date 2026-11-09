@@ -14,6 +14,8 @@ import VeoStaffOffboarding from '@/components/VeoStaffOffboarding';
 import VeoPageBudget from '@/components/VeoPageBudget';
 import VeoReceiptInbox from '@/components/VeoReceiptInbox';
 import VeoStaffWarnings from '@/components/VeoStaffWarnings';
+import VeoContactIdentitySync from '@/components/VeoContactIdentitySync';
+import VeoAccountLoginSetup from '@/components/VeoAccountLoginSetup';
 import VeoNewClients from '@/components/VeoNewClients';
 import VeoTelegramGroups from '@/components/VeoTelegramGroups';
 import VeoClientDrawer from '@/components/VeoClientDrawer';
@@ -146,6 +148,8 @@ function Workspace() {
         <VeoStaffOffboarding accounts={data.accounts} scope={data.scope} busy={busy} submit={submit} />
         {data.scope.role === 'owner' && <><Link className="underline" href="/dashboard/workspace?view=telegram">Open Telegram groups, Pages and people</Link><VeoJaucianIntegration submit={submit} busy={busy} editable={false} /></>}
         </section>}
+        {activeView === 'accounts' && isOwner && data.accounts.filter((a: any) => a.active !== false && !a.email).map((a: any) => <VeoAccountLoginSetup key={a.id} account={a} onSaved={refresh} />)}
+        {activeView === 'sync' && isOwner && <VeoContactIdentitySync pages={pages} />}
         {activeView === 'sync' && <section className="rounded border bg-white p-5"><h2 className="font-bold text-xl">Collection health</h2>{data.sync.map((s: any) => <article className="py-4 border-t" key={s.page_id}><h3 className="font-semibold">{pages.find(p => p.id === s.page_id)?.name || 'Unknown page'}</h3><p>Last recorded event: {s.last_event_at ? new Date(s.last_event_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'Unavailable'} · pending {s.pending} · errors {s.errors}</p><p className="text-sm text-slate-500">{s.coverage}</p></article>)}</section>}
         {activeView === 'profile' && <VeoTelegramProfile />}
         {['accounts', 'profile'].includes(activeView) && <form className="rounded border bg-white p-5 space-y-3" onSubmit={async e => { const f = formData(e); await submit({ ...f, action: 'password' }); e.currentTarget?.reset(); }}><h2 className="font-bold">Email sign-in password</h2><label className="block">Account<select name="user_id" className={field}>{data.accounts.filter((a: any) => activeView !== 'profile' || a.id === data.scope.user_id).map((a: any) => <option key={a.id} value={a.id}>{a.name} · {a.email || 'Email unavailable'}</option>)}</select></label><label className="block">New password<input name="password" required type="password" autoComplete="new-password" className={field} /></label><button className={button} disabled={busy}>Set password</button></form>}
