@@ -46,6 +46,10 @@ Monitor the project state, then verify restore information before resuming. Do
 not restore the November 3 local migration backup over current data. The active
 project's downloadable backup list was empty before pausing. A project-list
 status of `ACTIVE_HEALTHY` did not reflect PostgreSQL's actual failed health.
+By 08:12, the pause attempt had returned to `ACTIVE_HEALTHY` without recovering
+PostgreSQL: metrics still showed `pg_up = 0` and 13,824,000 available bytes,
+SQL connections returned `08006`, and fresh logs repeated the same `53100`
+startup failure. Do not treat that project-list status as a successful recovery.
 
 The earlier raw-history cleanup is independently confirmed by its saved receipt:
 554,206 raw message rows became zero and the raw transcript table was dropped.
