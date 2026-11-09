@@ -14,6 +14,11 @@ export const sqlIdentifier = name => {
  return '"' + name + '"';
 };
 export const digest = value => crypto.createHash('sha256').update(value).digest('hex');
+// Execution already normalizes Windows newlines. Accept either original byte
+// representation without rewriting receipts or accepting any SQL change.
+export function migrationFingerprintMatches(recorded, item, project) {
+ return recorded?.project_ref === project && (recorded.sha256 === item.sha256 || item.compatibleSha256?.includes(recorded.sha256) === true);
+}
 
 export function assertProjectCredentials(env, expected) {
  if (!/^[a-z]{20}$/.test(expected)) throw Error('Invalid expected database project');
@@ -49,7 +54,8 @@ export function schemaMigrationPlan(directory = 'supabase/migrations') {
   // so existing installation receipts remain valid.
   const sql = original.replace(/\r\n?/g, '\n').replace(/^[ \t]*(?:BEGIN|COMMIT);[ \t]*$/gm, '');
   if (/\b(?:CREATE|DROP)\s+INDEX\s+CONCURRENTLY\b/i.test(sql)) throw Error('Nontransactional migration needs explicit handling: ' + name);
-  return { name, sha256: digest(original), sql };
+  const normalized = original.replace(/\r\n?/g, '\n');
+  return { name, sha256: digest(original), compatibleSha256: [...new Set([digest(normalized), digest(normalized.replace(/\n/g, '\r\n'))])], sql };
  });
 }
 

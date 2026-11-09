@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { loadVeoCalendarInputs } from '../veo-calendar-loader';
+import { loadVeoCalendarInputs, loadVeoCalendarDetails } from '../veo-calendar-loader';
 function slice(p: string, from: string, day: string) { return { as_of: '2026-11-06T00:00:00Z', scope: {}, pages: [{ id: p }], leads: [{ id: p + from }], selected_clients: [{ id: p + day, inquiry_at: day + 'T00:00:00+08:00' }], orders: [{ order_key: p + ':same' }], cash: [{ contact_id: p, page_id: p, currency: 'PHP', source: 'workspace', paid_day: '2026-11-01', amount_minor: 20 }], spend: [], messages: [{ day: from, inbound: 1, answered: 1 }], page_plans: [], team_plans: [{ team_id: 'team', work_date: '2026-11-01' }], employees: [{ id: 'worker' }], message_coverage: [{ page_id: p }], peer_lag_hours: [24], missing_inquiry_dates: 4 }; }
 it('merges all Pages with bounded requests, unique records and summed daily response counts', async () => {
     let running = 0, max = 0;
@@ -8,6 +8,14 @@ it('merges all Pages with bounded requests, unique records and summed daily resp
     expect(max).toBeLessThanOrEqual(2); expect(r.pages).toHaveLength(4); expect(r.leads).toHaveLength(4);
     expect(r.team_plans).toHaveLength(1); expect(r.employees).toHaveLength(1); expect(r.missing_inquiry_dates).toBe(16);
     expect(r.messages[0]).toMatchObject({ inbound: 4, answered: 4 }); expect(r.peer_lag_hours).toHaveLength(4);
+});
+it('reads a month without expensive day detail and reads a selected day separately', async () => {
+    const db = { rpc: vi.fn(async (name: string, a: any) => ({ data: name === 'veo_calendar_day_details'
+        ? { selected_clients: [{ id: a.p_page }], peer_lag_hours: [24] } : slice(a.p_page, a.p_from, a.p_from) })) };
+    await loadVeoCalendarInputs(db, 'owner', ['one', 'two'], '2026-11-01', '2026-11-30', null);
+    expect(db.rpc.mock.calls.slice(0, 2).every(c => c[1].p_day === null)).toBe(true);
+    const details = await loadVeoCalendarDetails(db, 'owner', ['one', 'two'], '2026-11-05');
+    expect(details.selected_clients).toHaveLength(2); expect(details.peer_lag_hours).toEqual([24, 24]);
 });
 it('bisects a timed-out date range and deduplicates financial facts while using only the chosen day’s cohort and reference sample', async () => {
     const db = { rpc: vi.fn(async (_: string, a: any) => a.p_from === '2026-11-01' && a.p_to === '2026-11-06' ? { error: { code: '57014' } } : { data: slice(a.p_page, a.p_from, a.p_day) }) };

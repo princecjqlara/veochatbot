@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import { VEO_TARGET_PROJECT, assertSchemaDestination, assertProjectCredentials, schemaMigrationPlan, migrationTrackingSql, preserveEmptyLegacyTables, digest } from './lib/database-migration-safety.mjs';
+import { VEO_TARGET_PROJECT, assertSchemaDestination, assertProjectCredentials, schemaMigrationPlan, migrationTrackingSql, preserveEmptyLegacyTables, digest, migrationFingerprintMatches } from './lib/database-migration-safety.mjs';
 import { migrationConnectionOptions } from './lib/migration-retry.mjs';
 import { randomUUID } from 'node:crypto';
 const mode = process.argv.includes('--apply') ? 'apply' : process.argv.includes('--preflight') ? 'preflight' : process.argv.includes('--plan') ? 'plan' : null;
@@ -32,7 +32,7 @@ try {
   const recorded = new Map((await db.query('SELECT filename,sha256,project_ref FROM app_private.veobot_project_migrations')).rows.map(row => [row.filename, row]));
   for (const item of plan) {
    const existing = recorded.get(item.name);
-   if (existing) { if (existing.sha256 !== item.sha256 || existing.project_ref !== requested) throw Error('Applied migration fingerprint changed: ' + item.name); report.migrations_skipped.push(item.name); continue; }
+   if (existing) { if (!migrationFingerprintMatches(existing,item,requested)) throw Error('Applied migration fingerprint changed: ' + item.name); report.migrations_skipped.push(item.name); continue; }
    report.current_migration = item.name; flush(); await db.query(item.sql);
    await db.query('INSERT INTO app_private.veobot_project_migrations(filename,sha256,project_ref) VALUES($1,$2,$3)', [item.name, item.sha256, requested]);
    report.migrations_applied.push(item.name);

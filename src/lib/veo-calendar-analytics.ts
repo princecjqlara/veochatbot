@@ -1,5 +1,6 @@
 import { recordedDemographics, demographicSubgroups } from './veo-demographics';
 import { calendarRange } from './ad-calendar';
+import { calendarEarnings, createdOrderTotals } from './veo-calendar-earnings';
 
 const DAY = 86400000;
 const dayOf = (date: string) => new Date(Date.parse(date) + 8 * 3600000).toISOString().slice(0, 10);
@@ -51,8 +52,8 @@ export function cohortProjection(leads: any[], peers: Array<number | null>, now:
     const center = (p + z * z / (2 * n)) / denominator, margin = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denominator;
     return { ...common, status: 'estimated', additional: remaining * p, lower: remaining * Math.max(0, center - margin), upper: remaining * Math.min(1, center + margin) };
 }
-function financials(orders: any[], cash: any[], spend: any[], pageCount: number, beforeLaunch: boolean) {
-    const currencies = [...new Set<string>([...orders, ...cash, ...spend].map(r => r.currency))];
+function financials(orders: any[], cash: any[], spend: any[], pageCount: number, beforeLaunch: boolean, reportCurrencies: string[] = []) {
+    const currencies = [...new Set<string>([...reportCurrencies, ...[...orders, ...cash, ...spend].map(r => r.currency)])];
     return currencies.map(currency => {
         const o = orders.filter(r => r.currency === currency), payments = cash.filter(r => r.currency === currency), ads = spend.filter(r => r.currency === currency);
         const done = o.filter(r => r.done_at), values = done.map(r => Number(r.total_minor));
@@ -60,7 +61,10 @@ function financials(orders: any[], cash: any[], spend: any[], pageCount: number,
         const salary = salaryKnown ? sum(done, 'commission_minor') : null, gross = sum(done, 'paid_minor'), received = sum(payments, 'amount_minor');
         const mixedRevenue = [...orders, ...cash].some(r => r.currency !== currency && Number(r.paid_minor || r.amount_minor || 0) !== 0);
         const spendComplete = amount != null && ads.every(r => r.complete) && new Set(ads.map(r => r.page_id)).size === pageCount;
-        return { currency, gross_minor: gross, received_minor: received, salary_minor: salary, known_salary_minor: sum(done, 'commission_minor'), ad_spend_minor: amount,
+        return { currency, gross_minor: gross, received_minor: received,
+            gross_before_refunds_minor: done.every(r => r.gross_before_refunds_minor != null) ? sum(done, 'gross_before_refunds_minor') : null,
+            refunds_minor: done.every(r => r.refunds_minor != null) ? sum(done, 'refunds_minor') : null,
+            salary_minor: salary, known_salary_minor: sum(done, 'commission_minor'), ad_spend_minor: amount,
             spend_complete: spendComplete, spend_pages_covered: ads.filter(r => r.complete).length, spend_pages_expected: pageCount,
             spend_accounts_checked: Math.max(0, ...ads.map(r => Number(r.accounts_checked || 0))),
             spend_checked_at: ads.map(r => r.checked_at).filter(Boolean).sort()[0] || null,
@@ -76,11 +80,20 @@ function quotaProgress(actual: number, target: number | null) { return { actual,
 export function buildVeoCalendar(input: any, finance: any, month: string, selectedDay: string, pageId: string | null = null) {
     const now = Date.parse(input.as_of), range = calendarRange(month, now), launchDay = dayOf(input.scope.launch_at);
     const leads = input.leads || [], orders = input.orders || [], payments = input.cash || [], spends = input.spend || [];
-    const byContact = new Map<string, any[]>(); for (const order of orders) byContact.set(order.contact_id, [...(byContact.get(order.contact_id) || []), order]);
+    const createdOrders = input.created_orders || [];
+    const currencies = [...new Set<string>([...orders, ...payments, ...spends, ...createdOrders].map(r => r.currency))];
+    if (!currencies.length) currencies.push('PHP');
+    const group = (rows: any[], key: (row: any) => string) => {
+        const map = new Map<string, any[]>(); for (const row of rows) { const k = key(row), list = map.get(k); if (list) list.push(row); else map.set(k, [row]); } return map;
+    };
+    const leadsByDay = group(leads, c => dayOf(c.inquiry_at)), doneByDay = group(orders, o => o.done_date), closedByDay = group(orders, o => o.closed_date);
+    const cashByDay = group(payments, p => p.paid_day), cashByContact = group(payments, p => p.contact_id), spendByDay = group(spends, s => s.spend_date);
+    const createdByDay = group(createdOrders, o => o.created_date);
+    const byContact = group(orders, o => o.contact_id);
     const cohort = (day: string) => {
-        const clients = leads.filter((c: any) => dayOf(c.inquiry_at) === day), ids = new Set(clients.map((c: any) => c.id));
-        const co = orders.filter((o: any) => ids.has(o.contact_id)), cash = payments.filter((p: any) => ids.has(p.contact_id) && p.paid_day >= day &&
-            (p.source !== 'workspace' || clients.some((c: any) => c.id === p.contact_id && c.stage === 'converted')));
+        const clients = leadsByDay.get(day) || [], convertedIds = new Set(clients.filter(c => c.stage === 'converted').map(c => c.id));
+        const co = clients.flatMap(c => byContact.get(c.id) || []), cash = clients.flatMap(c => cashByContact.get(c.id) || []).filter((p: any) => p.paid_day >= day &&
+            (p.source !== 'workspace' || convertedIds.has(p.contact_id)));
         const converted = clients.filter((c: any) => c.converted_at || c.stage === 'converted'), payers = new Set(co.filter((o: any) => o.closed_at && Number(o.paid_minor) > 0).map((o: any) => o.contact_id));
         const money = financials(co, cash, spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay && !co.some((o: any) => o.financial_source === 'workspace' && o.done_at)).map(f => ({ ...f,
             acquisition_cost_minor: f.spend_complete ? ratio(f.ad_spend_minor!, payers.size) : null, cost_per_inquiry_minor: f.spend_complete ? ratio(f.ad_spend_minor!, clients.length) : null,
@@ -92,7 +105,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
             pending: clients.filter((c: any) => !['qualified', 'not_qualified', 'converted', 'order_created'].includes(c.stage)).length, finance: money, clients, orders: co };
     };
     const days = range.days.map(day => {
-        const dailyOrders = orders.filter((o: any) => o.done_date === day), closed = orders.filter((o: any) => o.closed_date === day).length, done = dailyOrders.length;
+        const dailyOrders = doneByDay.get(day) || [], closedOrders = closedByDay.get(day) || [], closed = closedOrders.length, done = dailyOrders.length;
         const plans = pageId ? input.page_plans.filter((p: any) => p.work_date === day) : input.team_plans.filter((p: any) => p.work_date === day);
         const target = plans.length ? sum(plans, 'quota') : null;
         const active = plans.length ? sum(plans, pageId ? 'active_workers' : 'participating') : null;
@@ -101,17 +114,19 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
         const start = Date.parse(day + 'T00:00:00+08:00');
         const fullCoverage = input.pages.length > 0 && input.pages.every((p: any) => input.message_coverage.some((c: any) => c.page_id === p.id && Date.parse(c.capture_from) <= start));
         const summary = cohort(day);
-        const archivedClosed = orders.filter((o: any) => o.closed_date === day && o.financial_source === 'retained').length, archivedDone = dailyOrders.filter((o: any) => o.financial_source === 'retained').length;
+        const archivedClosed = closedOrders.filter((o: any) => o.financial_source === 'retained').length, archivedDone = dailyOrders.filter((o: any) => o.financial_source === 'retained').length;
         const salaryRates = (finance.salary_days || []).filter((d: any) => d.work_date === day && d.done > 0 && [35, 40].includes(d.rate));
         return { work_date: day, future: day > range.today, before_launch: day < launchDay, provisional: day === range.today, closed, done, archived_closed: archivedClosed, archived_done: archivedDone,
             inquiries: summary.inquiries, cohort_converted: summary.converted, converted_later: summary.converted_later, cohort_finance: summary.finance,
             salary_rates: [...new Set<number>(salaryRates.map((d: any) => d.rate))].sort().map(rate => ({ rate, workers: salaryRates.filter((d: any) => d.rate === rate).length,
                 totals: salaryRates.filter((d: any) => d.rate === rate).flatMap((d: any) => d.totals.map((t: any) => ({ user_id: d.user_id, ...t }))) })),
-            finance: financials(dailyOrders, payments.filter((p: any) => p.paid_day === day), spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay),
+            finance: financials(dailyOrders, cashByDay.get(day) || [], spendByDay.get(day) || [], input.pages.length, day < launchDay, currencies),
+            created_orders: createdOrderTotals(createdByDay.get(day) || []), orders_created_count: (createdByDay.get(day) || []).length,
             quota: { closed: quotaProgress(closed - archivedClosed, target), done: quotaProgress(done - archivedDone, target) }, staffing: { available: active, unknown, roster: plans.length && !pageId ? sum(plans, 'workers') : null, capacity: plans.length ? sum(plans, pageId ? 'full_capacity' : 'capacity') : null },
             response: { inbound: rate ? Number(rate.inbound) : fullCoverage ? 0 : null, answered: rate ? Number(rate.answered) : fullCoverage ? 0 : null, rate: rate ? ratio(Number(rate.answered), Number(rate.inbound)) : null, coverage_complete: fullCoverage } };
     });
-    const selected = cohort(selectedDay), rawClients = input.selected_clients || [];
+    const selected = cohort(selectedDay), cohortIds = new Set(selected.clients.map((c: any) => c.id));
+    const rawClients = (input.selected_clients || []).filter((c: any) => cohortIds.has(c.id));
     const touchpoints = [1, 7, 14, 30].map(day => {
         const mature = selected.clients.filter((c: any) => now - Date.parse(c.inquiry_at) >= day * DAY).length;
         const conversions = selected.clients.filter((c: any) => c.converted_at && Date.parse(c.converted_at) - Date.parse(c.inquiry_at) <= day * DAY).length;
@@ -138,6 +153,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
     const selectedRow = days.find(d => d.work_date === selectedDay);
     if (!selectedRow) throw new Error('Choose a date inside the calendar month');
     return { month, selected_day: selectedDay, generated_at: input.as_of, scope: { role: input.scope.role, launch_at: input.scope.launch_at }, pages: input.pages, days,
+        earnings: calendarEarnings(days, launchDay, range.today), created_orders: createdOrderTotals(createdOrders),
         selected: { ...selectedRow, cohort: cohortTotals, clients, touchpoints, timing, demographics: demographics(rawClients), subdemographics: demographicSubgroups(rawClients), objections: objections(rawClients), projection: { ...projection,
             revenue: selected.finance.map((f: any) => ({ currency: f.currency, expected_minor: projection.additional != null && f.mean_order_minor != null ? projection.additional * f.mean_order_minor : null })) },
             top_members: topMembers, salary_days: salaryDays, cohort_response: { clients_with_history: historyClients.length, clients_total: selected.inquiries, rate: ratio(sum(historyClients, 'customer_messages_replied'), sum(historyClients, 'customer_message_count')), latest_source: historyClients.map((c: any) => c.message_history_as_of).filter(Boolean).sort().at(-1) || null } },

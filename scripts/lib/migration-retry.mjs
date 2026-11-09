@@ -1,6 +1,6 @@
 import dns from 'node:dns/promises';
 import pg from 'pg';
-import { assertProjectCredentials, digest } from './database-migration-safety.mjs';
+import { assertProjectCredentials, digest, migrationFingerprintMatches } from './database-migration-safety.mjs';
 
 export function migrationRetryDelay(error, failures) {
  const standard = Math.min(300000, 30000 * 2 ** Math.min(Math.max(0, failures - 1), 4));
@@ -20,7 +20,7 @@ export function migrationInputsHash(sourceBytes, targetBytes) {
  return digest(Buffer.concat([Buffer.from(sourceBytes), Buffer.from('\n---destination---\n'), Buffer.from(targetBytes)]));
 }
 export function installedMigrationPlanMatches(rows, plan, expectedProject) {
- return rows.length === plan.length && plan.every(item => rows.some(row => row.filename === item.name && row.sha256 === item.sha256 && row.project_ref === expectedProject));
+ return rows.length === plan.length && plan.every(item => rows.some(row => row.filename === item.name && migrationFingerprintMatches(row,item,expectedProject)));
 }
 export async function migrationSchemaIsInstalled(env, project, plan) {
  const endpoint = assertProjectCredentials(env, project), db = new pg.Client({ ...await migrationConnectionOptions(endpoint.connectionString), connectionTimeoutMillis: 6000, query_timeout: 6000 }); db.on('error', () => {});

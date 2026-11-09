@@ -14,8 +14,12 @@ export const maxDuration = 300;
 export async function GET(request: NextRequest) {
     if (!process.env.CRON_SECRET || request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (process.env.VEO_WORKSPACE_ENABLED !== 'true') return NextResponse.json({ enabled: false });
-    const result = await runBackgroundJob('workspace', () => processWorkspace(request));
-    return result instanceof NextResponse ? result : NextResponse.json(result);
+    try {
+        const result = await runBackgroundJob('workspace', () => processWorkspace(request));
+        return result instanceof NextResponse ? result : NextResponse.json(result);
+    } catch {
+        return NextResponse.json({ ok: false, error: 'Workspace worker is temporarily unavailable' }, { status: 503 });
+    }
 }
 async function processWorkspace(request: NextRequest) {
     const db = getSupabaseAdmin();

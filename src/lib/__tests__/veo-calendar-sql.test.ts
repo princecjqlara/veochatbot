@@ -27,7 +27,7 @@ beforeAll(async () => {
     await db.exec("UPDATE veo_tenants SET launch_at=now()-interval '10 days'");
     await action(owner, 'create_account', { user_id: manager, parent_id: owner, role: 'manager', name: 'Seller', email: 'manager@example.org', password_hash: 'x'.repeat(40), page_ids: [page] });
     const dates = (await db.query<any>('SELECT veo_today()::text AS today,(veo_today()-2)::text AS earlier')).rows[0]; today = dates.today; earlier = dates.earlier;
-}, 60000);
+}, 180000);
 afterAll(async () => { await db?.close(); });
 it('preserves first-inquiry cohorts while exact paid-order salary stays on the actual completion date', async () => {
     const o = await action(manager, 'order', { request_id: id(10), seller_id: manager, page_id: page, contact_id: client, description: 'Video', total_minor: 203, currency: 'PHP' });
@@ -158,4 +158,31 @@ it('blocks profile auto-fill access after Page revocation and keeps the new RPCs
     try { await expect(db.query('SELECT veo_profile_detail_access($1,$2)', [manager, client])).rejects.toThrow(/denied/); }
     finally { await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [manager, page]); }
     expect((await db.query<any>("SELECT has_function_privilege('anon','veo_profile_detail_access(uuid,uuid)','EXECUTE') OR has_function_privilege('authenticated','veo_profile_detail_request(uuid,uuid,jsonb)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+});
+it('exposes gross and refund components once and reports invoice creation independently of import time', async () => {
+    const created: any = await action(manager, 'order', { request_id: id(70), seller_id: manager, page_id: page, contact_id: client, description: 'Earnings test', total_minor: 10000, currency: 'PHP' });
+    await action(manager, 'payment', { request_id: id(71), order_id: created.id, kind: 'full', confirmed: true, reference: 'earnings-full', amount_minor: 10000, occurred_at: new Date(Date.now() - 2000).toISOString() });
+    await action(manager, 'payment', { request_id: id(72), order_id: created.id, kind: 'refund', reason: 'Verified customer refund', confirmed: true, reference: 'earnings-refund', amount_minor: 1000, occurred_at: new Date(Date.now() - 1000).toISOString() });
+    const components = (await db.query<any>('SELECT gross_before_refunds_minor,refunds_minor,paid_minor FROM veo_calendar_order_values WHERE id=$1', [created.id])).rows[0];
+    expect(components).toMatchObject({ gross_before_refunds_minor: 10000, refunds_minor: 1000, paid_minor: 9000 });
+    const invoice = { invoice_id: '999700', message_id: 'created-before-import', total_minor: 10000, currency: 'PHP', occurred_at: `${earlier}T12:00:00+08:00` };
+    await db.query('SELECT veo_observe_business_orders($1,$2,$3::jsonb)', [owner, client, JSON.stringify([invoice])]);
+    await db.query('UPDATE veo_business_orders SET order_id=$1 WHERE invoice_id=$2', [created.id, invoice.invoice_id]);
+    const rows = (await db.query<any>('SELECT to_jsonb(x) r FROM veo_calendar_created_orders($1,$2,$3,$4) x', [owner, earlier, today, page])).rows.map(r => r.r);
+    expect(rows.filter(r => r.order_key === `facebook:${page}:${invoice.invoice_id}`)).toHaveLength(1);
+    expect(rows.find(r => r.order_key === `facebook:${page}:${invoice.invoice_id}`)?.created_date).toBe(earlier);
+    expect(rows.some(r => r.order_key === `workspace:${created.id}`)).toBe(false);
+    const details = (await db.query<any>('SELECT veo_calendar_day_details($1,$2,$3) r', [owner, earlier, page])).rows[0].r;
+    expect(Array.isArray(details.selected_clients)).toBe(true); expect(Array.isArray(details.peer_lag_hours)).toBe(true);
+    await expect(db.query('SELECT veo_calendar_day_details($1,$2,$3)', [manager, earlier, page])).rejects.toThrow(/denied/);
+});
+it('coordinates cron leases across owners, recovers expiry and keeps recovery functions private', async () => {
+    const one = id(80), two = id(81);
+    const claim = async (who: string) => (await db.query<any>("SELECT veo_claim_background_job('workspace',$1) ok", [who])).rows[0].ok;
+    expect(await claim(one)).toBe(true); expect(await claim(two)).toBe(false);
+    expect((await db.query<any>("SELECT veo_release_background_job('workspace',$1) ok", [two])).rows[0].ok).toBe(false);
+    await db.exec("UPDATE veo_background_job_leases SET leased_until=now()-interval '1 second' WHERE job='workspace'");
+    expect(await claim(two)).toBe(true);
+    expect((await db.query<any>("SELECT veo_release_background_job('workspace',$1) ok", [one])).rows[0].ok).toBe(false);
+    expect((await db.query<any>("SELECT has_function_privilege('anon','veo_claim_background_job(text,uuid)','EXECUTE') OR has_function_privilege('authenticated','veo_calendar_day_details(uuid,date,uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
 });

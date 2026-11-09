@@ -4,7 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { uuid_ossp } from '@electric-sql/pglite/contrib/uuid_ossp';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { vector } from '@electric-sql/pglite-pgvector';
-import { assertProjectCredentials, assertSchemaDestination, LEGACY_SOURCE_PROJECT, VEO_TARGET_PROJECT, VEO_RECOVERY_PROJECT, preserveEmptyLegacyTables, schemaMigrationPlan, sqlIdentifier, digest } from '../../../scripts/lib/database-migration-safety.mjs';
+import { assertProjectCredentials, assertSchemaDestination, LEGACY_SOURCE_PROJECT, VEO_TARGET_PROJECT, VEO_RECOVERY_PROJECT, preserveEmptyLegacyTables, schemaMigrationPlan, sqlIdentifier, digest, migrationFingerprintMatches } from '../../../scripts/lib/database-migration-safety.mjs';
 
 const credential = (ref: string, role: string) => 'header.' + Buffer.from(JSON.stringify({ ref, role })).toString('base64url') + '.signature';
 const targetEnv = () => ({ NEXT_PUBLIC_SUPABASE_URL: 'https://' + VEO_TARGET_PROJECT + '.supabase.co',
@@ -12,6 +12,12 @@ const targetEnv = () => ({ NEXT_PUBLIC_SUPABASE_URL: 'https://' + VEO_TARGET_PRO
  DATABASE_URL: 'postgresql://postgres:example@db.' + VEO_TARGET_PROJECT + '.supabase.co:5432/postgres' });
 const adapter = (db: PGlite) => ({ query: async (sql: string, args?: any[]) => args ? db.query(sql, args) : (await db.exec(sql)).at(-1) || { rows: [] } });
 describe('VeoBot database migration safeguards', () => {
+ it('accepts newline-only fingerprint differences and rejects SQL changes or another project', () => {
+  const item = { sha256: digest('SELECT 1;\n'), compatibleSha256: [digest('SELECT 1;\r\n')] };
+  expect(migrationFingerprintMatches({sha256:digest('SELECT 1;\r\n'),project_ref:VEO_RECOVERY_PROJECT},item,VEO_RECOVERY_PROJECT)).toBe(true);
+  expect(migrationFingerprintMatches({sha256:digest('SELECT 2;\n'),project_ref:VEO_RECOVERY_PROJECT},item,VEO_RECOVERY_PROJECT)).toBe(false);
+  expect(migrationFingerprintMatches({sha256:item.sha256,project_ref:LEGACY_SOURCE_PROJECT},item,VEO_RECOVERY_PROJECT)).toBe(false);
+ });
  it('limits schema installation to the original or explicitly approved recovery project', () => {
   expect(assertSchemaDestination(VEO_TARGET_PROJECT)).toBe(VEO_TARGET_PROJECT);
   expect(assertSchemaDestination(VEO_RECOVERY_PROJECT)).toBe(VEO_RECOVERY_PROJECT);

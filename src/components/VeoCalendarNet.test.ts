@@ -10,7 +10,7 @@ afterEach(async () => { if (view) await act(async () => view.unmount()); vi.unst
 it('defaults to signed net shading, shows the actual loss and mixed salary rates, and exposes net ROAS', async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-07T04:00:00Z'));
     const scope = { role: 'owner', launch_at: '2026-11-05T00:00:00Z' }, page = { id: 'page', name: 'VEO' }, day = '2026-11-06';
-    const orders = [35, 40].map((rate, i) => ({ order_key: `o${i}`, contact_id: 'client', page_id: page.id, seller_id: `worker${i}`, currency: 'PHP', total_minor: 10000, paid_minor: 10000, commission_minor: rate * 100, financial_source: 'workspace', closed_date: day, done_date: day, closed_at: day + 'T04:00:00Z', done_at: day + 'T04:00:00Z' }));
+    const orders = [35, 40].map((rate, i) => ({ order_key: `o${i}`, contact_id: 'client', page_id: page.id, seller_id: `worker${i}`, currency: 'PHP', total_minor: 10000, paid_minor: 10000, gross_before_refunds_minor: 10000, refunds_minor: 0, commission_minor: rate * 100, financial_source: 'workspace', closed_date: day, done_date: day, closed_at: day + 'T04:00:00Z', done_at: day + 'T04:00:00Z' }));
     const leads = [{ id: 'client', page_id: page.id, inquiry_at: day + 'T01:00:00Z', stage: 'converted', converted_at: day + 'T04:00:00Z' }];
     const salary = [35, 40].map((rate, i) => ({ user_id: `worker${i}`, work_date: day, target: i ? 1 : 2, closed: 1, done: 1, rate, totals: [{ currency: 'PHP', gross_minor: 10000, commission_minor: rate * 100 }] }));
     const data = buildVeoCalendar({ as_of: '2026-11-07T04:00:00Z', scope, pages: [page], leads, selected_clients: leads, orders, cash: [{ contact_id: 'client', currency: 'PHP', paid_day: day, amount_minor: 20000 }], spend: [{ page_id: page.id, spend_date: day, currency: 'PHP', amount_minor: 15000, complete: true }], team_plans: [], page_plans: [], employees: [], message_coverage: [], messages: [] }, { salary_days: salary }, '2026-11', day);
@@ -23,4 +23,7 @@ it('defaults to signed net shading, shows the actual loss and mixed salary rates
     const rendered = text(view.toJSON());
     expect(rendered).toContain('Net loss after salary and ads'); expect(rendered).toContain('Net ROAS after salary'); expect(rendered).toContain('0.83×');
     expect(rendered).toContain('35%: 1 worker'); expect(rendered).toContain('40%: 1 worker'); expect(rendered).toContain('gray incomplete costs');
+    expect(rendered).toContain('Average gross / day'); expect(rendered).toContain('Average net / day');
+    expect(rendered).toContain('3 calendar days'); expect(rendered).toContain('66.67');
+    expect(rendered).toContain('Orders created in this period');
 });

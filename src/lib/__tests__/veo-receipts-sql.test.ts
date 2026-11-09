@@ -344,7 +344,7 @@ describe('strict Facebook receipt submission after migrating retained records', 
         return { o, notice };
     }
     beforeAll(async () => {
-        for (const migration of schemaMigrationPlan().filter(m => m.name >= '202611070021_' && m.name !== '202611080011_veo_source_reconciliation.sql')) await db.exec(migration.sql);
+        for (const migration of schemaMigrationPlan().filter(m => m.name >= '202611070021_' && m.name < '202611090003_' && m.name !== '202611080011_veo_source_reconciliation.sql')) await db.exec(migration.sql);
     });
     beforeEach(async () => {
         await db.exec('BEGIN'); transactionalTest = true;
@@ -971,7 +971,10 @@ describe('automatic fresh inquiry editor rotation', () => {
 });
 
 describe('saved Facebook source reconciliation',()=>{
-    beforeAll(async()=>{const migration=schemaMigrationPlan().find(m=>m.name==='202611080011_veo_source_reconciliation.sql');if(migration)await db.exec(migration.sql);});
+    beforeAll(async()=>{
+        const migrations=schemaMigrationPlan();const migration=migrations.find(m=>m.name==='202611080011_veo_source_reconciliation.sql');if(migration)await db.exec(migration.sql);
+        for(const dependent of migrations.filter(m=>m.name>='202611090003_'))await db.exec(dependent.sql);
+    });
     it('queues refreshes, supports supervisor evidence review and preserves client intake fields',async()=>{
         const cid=id(request++),fields={ 'Business Name':'Studio','Business Location':'Manila','Goal ng video':'Promote products' };
         await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage) VALUES($1,$2,$3,'Source review client','engaged')",[cid,page,'source-'+cid]);
