@@ -3,14 +3,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import { VEO_TARGET_PROJECT, assertProjectCredentials, schemaMigrationPlan, migrationTrackingSql, preserveEmptyLegacyTables, digest } from './lib/database-migration-safety.mjs';
+import { VEO_TARGET_PROJECT, assertSchemaDestination, assertProjectCredentials, schemaMigrationPlan, migrationTrackingSql, preserveEmptyLegacyTables, digest } from './lib/database-migration-safety.mjs';
 import { migrationConnectionOptions } from './lib/migration-retry.mjs';
 import { randomUUID } from 'node:crypto';
 const mode = process.argv.includes('--apply') ? 'apply' : process.argv.includes('--preflight') ? 'preflight' : process.argv.includes('--plan') ? 'plan' : null;
 if (!mode || ['--apply', '--preflight', '--plan'].filter(arg => process.argv.includes(arg)).length !== 1) throw Error('Choose --plan, --preflight or --apply');
 const requested = process.argv.find(arg => arg.startsWith('--target-project='))?.slice(17);
-if (requested !== VEO_TARGET_PROJECT) throw Error('Schema installation requires the explicit intended VeoBot project');
-const dir = path.resolve('.vercel/database-migration'); fs.mkdirSync(dir, { recursive: true });
+assertSchemaDestination(requested);
+// Keep historical migration/import receipts bound to their original project.
+const dir = path.resolve('.vercel/database-migration', requested === VEO_TARGET_PROJECT ? '' : requested); fs.mkdirSync(dir, { recursive: true });
 const plan = schemaMigrationPlan();
 const report = { run_id: process.argv.find(arg => arg.startsWith('--run-id='))?.slice(9) || randomUUID(), started_at: new Date().toISOString(), target_project: requested, mode, applied: false,
  plan: plan.map(({ name, sha256 }) => ({ name, sha256 })), migrations_applied: [], migrations_skipped: [], source_database_writes: 0, customer_messages_sent: 0, openrouter_calls: 0, production_configuration_changed: false };
@@ -40,6 +41,10 @@ try {
   const tables = (await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename=ANY($1::text[])", [required])).rows.map(row => row.tablename);
   if (required.some(name => !tables.includes(name))) throw Error('Destination schema is incomplete');
   report.required_tables_verified = tables.length;
+  if (requested !== VEO_TARGET_PROJECT) {
+   const jobs = await db.query("SELECT jobid,jobname,cron.alter_job(jobid,active := false) FROM cron.job WHERE jobname IN('tokko-database-retention','tokko-database-maintenance')");
+   report.quarantined_database_jobs = jobs.rows.map(({jobid,jobname}) => ({jobid,jobname}));
+  }
   await db.query(mode === 'apply' ? 'COMMIT' : 'ROLLBACK'); report.applied = mode === 'apply'; report.passed = true;
  }
  report.completed_at = new Date().toISOString();

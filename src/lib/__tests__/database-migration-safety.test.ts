@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { uuid_ossp } from '@electric-sql/pglite/contrib/uuid_ossp';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { vector } from '@electric-sql/pglite-pgvector';
-import { assertProjectCredentials, LEGACY_SOURCE_PROJECT, VEO_TARGET_PROJECT, preserveEmptyLegacyTables, schemaMigrationPlan, sqlIdentifier } from '../../../scripts/lib/database-migration-safety.mjs';
+import { assertProjectCredentials, assertSchemaDestination, LEGACY_SOURCE_PROJECT, VEO_TARGET_PROJECT, VEO_RECOVERY_PROJECT, preserveEmptyLegacyTables, schemaMigrationPlan, sqlIdentifier, digest } from '../../../scripts/lib/database-migration-safety.mjs';
 
 const credential = (ref: string, role: string) => 'header.' + Buffer.from(JSON.stringify({ ref, role })).toString('base64url') + '.signature';
 const targetEnv = () => ({ NEXT_PUBLIC_SUPABASE_URL: 'https://' + VEO_TARGET_PROJECT + '.supabase.co',
@@ -11,6 +12,15 @@ const targetEnv = () => ({ NEXT_PUBLIC_SUPABASE_URL: 'https://' + VEO_TARGET_PRO
  DATABASE_URL: 'postgresql://postgres:example@db.' + VEO_TARGET_PROJECT + '.supabase.co:5432/postgres' });
 const adapter = (db: PGlite) => ({ query: async (sql: string, args?: any[]) => args ? db.query(sql, args) : (await db.exec(sql)).at(-1) || { rows: [] } });
 describe('VeoBot database migration safeguards', () => {
+ it('limits schema installation to the original or explicitly approved recovery project', () => {
+  expect(assertSchemaDestination(VEO_TARGET_PROJECT)).toBe(VEO_TARGET_PROJECT);
+  expect(assertSchemaDestination(VEO_RECOVERY_PROJECT)).toBe(VEO_RECOVERY_PROJECT);
+  for (const project of [LEGACY_SOURCE_PROJECT, 'other', undefined]) expect(() => assertSchemaDestination(project)).toThrow('approved');
+  const env={ NEXT_PUBLIC_SUPABASE_URL:'https://'+VEO_RECOVERY_PROJECT+'.supabase.co',NEXT_PUBLIC_SUPABASE_ANON_KEY:'sb_publishable_test',SUPABASE_SERVICE_ROLE_KEY:'sb_secret_test',
+   DATABASE_POOLER_URL_5432:'postgresql://postgres.'+VEO_RECOVERY_PROJECT+':example@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres' };
+  expect(assertProjectCredentials(env,VEO_RECOVERY_PROJECT).project).toBe(VEO_RECOVERY_PROJECT);
+  expect(()=>assertProjectCredentials({...env,DATABASE_URL:targetEnv().DATABASE_URL},VEO_RECOVERY_PROJECT)).toThrow('differs');
+ });
  it('accepts only consistent project credentials and refuses an inherited Tokko Dev route or key', () => {
   expect(assertProjectCredentials(targetEnv(), VEO_TARGET_PROJECT).project).toBe(VEO_TARGET_PROJECT);
   for (const changed of [
@@ -48,6 +58,10 @@ describe('VeoBot database migration safeguards', () => {
    await db.exec('BEGIN');
    await preserveEmptyLegacyTables(adapter(db));
    const plan = schemaMigrationPlan();
+   for (const item of plan) {
+    expect(item.sql).not.toContain('\r');
+    expect(item.sha256).toBe(digest(fs.readFileSync('supabase/migrations/'+item.name)));
+   }
    expect(plan.length).toBeGreaterThanOrEqual(64);
    expect(plan.some(m => m.sql.includes('CREATE TABLE public.veo_tenants'))).toBe(true);
    for (const migration of plan) await db.exec(migration.sql.replace(/CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;/g, '-- local scheduler stub'));
@@ -65,6 +79,21 @@ describe('VeoBot database migration safeguards', () => {
    await db.exec(`INSERT INTO chatbot_configs(page_id,enabled) VALUES('${own}',true),('${other}',true);INSERT INTO chatbot_inbound_recovery_pages(page_id,enabled) VALUES('${own}',true),('${other}',true) ON CONFLICT(page_id) DO UPDATE SET enabled=true;`);
    expect((await db.query<any>('SELECT page_id FROM public.claim_chatbot_inbound_recovery_pages(3,now())')).rows.map(r=>r.page_id)).toEqual([own]);
    expect((await db.query<any>('SELECT enabled,lease_until FROM chatbot_inbound_recovery_pages WHERE page_id=$1',[other])).rows[0]).toMatchObject({enabled:true,lease_until:null});
+   const owner='00000000-0000-4000-8000-000000000003',contact='00000000-0000-4000-8000-000000000004',tag='00000000-0000-4000-8000-000000000005';
+   await db.query("INSERT INTO users(id,email,name) VALUES($1,'owner@example.test','Owner')",[owner]);
+   await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)',[owner,own]);
+   await db.query("INSERT INTO contacts(id,page_id,psid,name,best_contact_hour) VALUES($1,$2,'person','Retained contact',10)",[contact,own]);
+   await db.query("INSERT INTO tags(id,name,owner_type,owner_id,page_id) VALUES($1,'Important','page',$2,$2)",[tag,own]);
+   await db.query('INSERT INTO contact_tags(contact_id,tag_id) VALUES($1,$2)',[contact,tag]);
+   await db.query("INSERT INTO contact_profile_snapshots(contact_id,page_id,generation,source_cutoff_at,message_count,model,payload) VALUES($1,$2,1,now(),1,'test','{}'),($1,$2,2,now(),2,'test','{}')",[contact,own]);
+   await db.query("INSERT INTO contact_verified_payments(request_id,page_id,contact_id,kind,amount_minor,currency,occurred_at,reference,verified_by) VALUES(gen_random_uuid(),$1,$2,'full',10000,'PHP',now(),'verified-test',$3)",[own,contact,owner]);
+   await db.query('SELECT veo_launch($1,ARRAY[$2]::uuid[])',[owner,own]);
+   expect((await db.query<any>("SELECT count(*)::int AS n FROM veo_archive_records WHERE source_table='contact_profile_snapshots'")).rows[0].n).toBe(0);
+   expect((await db.query<any>('SELECT count(*)::int AS n FROM contact_profile_snapshots')).rows[0].n).toBe(2);
+   expect((await db.query<any>("SELECT count(*)::int AS n FROM veo_archive_records WHERE source_table='contact_verified_payments'")).rows[0].n).toBe(1);
+   expect((await db.query<any>('SELECT count(*)::int AS n FROM contact_verified_payments')).rows[0].n).toBe(1);
+   expect((await db.query<any>('SELECT best_contact_hour FROM contacts WHERE id=$1',[contact])).rows[0].best_contact_hour).toBe(10);
+   expect((await db.query<any>('SELECT count(*)::int AS n FROM contact_tags WHERE contact_id=$1 AND tag_id=$2',[contact,tag])).rows[0].n).toBe(1);
    await db.exec('ROLLBACK');
    expect((await db.query<any>("SELECT to_regclass('public.contacts') AS contacts")).rows[0].contacts).toBeNull();
    expect((await db.query<any>("SELECT to_regclass('public.pages') AS original")).rows[0].original).toBe('pages');

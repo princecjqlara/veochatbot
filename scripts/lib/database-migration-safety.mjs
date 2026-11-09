@@ -3,7 +3,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 export const VEO_TARGET_PROJECT = 'vhtbmdizugnxkgocmruq';
+export const VEO_RECOVERY_PROJECT = 'mjuluaqrvbnycisnarzi';
 export const LEGACY_SOURCE_PROJECT = 'pnhzpeyzpwsmwcuafgpw';
+export function assertSchemaDestination(project) {
+ if (![VEO_TARGET_PROJECT, VEO_RECOVERY_PROJECT].includes(project)) throw Error('Schema installation requires an explicitly approved VeoBot destination');
+ return project;
+}
 export const sqlIdentifier = name => {
  if (!/^[a-z_][a-z0-9_]*$/.test(name)) throw Error('Unsafe SQL identifier');
  return '"' + name + '"';
@@ -39,7 +44,10 @@ export function schemaMigrationPlan(directory = 'supabase/migrations') {
  return files.map(name => {
   const original = fs.readFileSync(path.join(directory, name), 'utf8');
   // The installer owns the transaction, including preflight rollback.
-  const sql = original.replace(/^[ \t]*(?:BEGIN|COMMIT);[ \t]*$/gm, '');
+  // SQL patch migrations compare function bodies with LF literals. Normalize
+  // Windows checkouts before execution, while retaining original file hashes
+  // so existing installation receipts remain valid.
+  const sql = original.replace(/\r\n?/g, '\n').replace(/^[ \t]*(?:BEGIN|COMMIT);[ \t]*$/gm, '');
   if (/\b(?:CREATE|DROP)\s+INDEX\s+CONCURRENTLY\b/i.test(sql)) throw Error('Nontransactional migration needs explicit handling: ' + name);
   return { name, sha256: digest(original), sql };
  });
