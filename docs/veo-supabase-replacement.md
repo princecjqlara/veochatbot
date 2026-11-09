@@ -40,6 +40,19 @@ Preserve the original project, all contacts, tagging/assignments, best-contact
 summaries, current controls and financial records. Do not cut production over
 on the assumption that an older backup includes newer workspace records.
 
+The owner explicitly requires the app's owner and staff accounts as part of the
+transfer. The verified November 3 backup contains 36 legacy `users` records,
+all without password hashes, and no `veo_*` workspace tables. It cannot restore
+current VEO logins or staff access by itself. Account recovery needs current
+`users` identities/credential hashes and activity flags, `veo_tenants`,
+`veo_accounts` roles and supervisor links, Page permissions, teams and relevant
+Telegram mappings. Preserve identity IDs and revoked/departed account status.
+Do not infer roles from names, activate old legacy users, or claim the account
+transfer complete based only on restoring a `users` table. Verify sign-in and
+per-role access before production cutover. Recreating accounts or changing
+passwords is a separate recovery decision, not an implicit part of an older
+backup restore.
+
 The source launch function also copied every profile snapshot into an immutable
 archive. This is intentional duplicate storage, but its actual contribution to
 the failed project's disk use remains unmeasured. Migration `202611090002`
