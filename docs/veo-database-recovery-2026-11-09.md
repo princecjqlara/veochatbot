@@ -1,5 +1,14 @@
 # Database recovery and bounded hierarchy traversal
 
+Current direction: the owner will upgrade the original project. Keep its current
+identities, roles, permissions, contacts, tags and financial records in place.
+Replacement migration is paused. At 2026-11-09 10:14 Asia/Manila, production still
+targeted the original project in recovery mode, its disk was still 2 GB and SQL
+connections were refused. After the upgrade, verify expanded disk capacity and
+actual SQL health; restart through the normal managed operation if needed.
+Back up current records and validate the prepared repairs before re-enabling
+application traffic. A healthy project-list label alone is insufficient.
+
 The source SQL used recursive `UNION ALL` hierarchy walks without detecting
 cycles. A cyclic or corrupted staff graph could keep permission and reporting
 queries running indefinitely. This is a confirmed code risk; a production cycle

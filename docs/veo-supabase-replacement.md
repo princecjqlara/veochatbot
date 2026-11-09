@@ -1,5 +1,12 @@
 # VEO replacement database preparation
 
+The owner subsequently chose to keep and upgrade the original project
+`vhtbmdizugnxkgocmruq`. Replacement migration is paused; do not import older
+records, switch production, or recreate accounts in the replacement. Production
+still uses the original project with database recovery mode enabled. The empty
+replacement has not been deleted. Both projects belong to the same organization,
+so review its effect on paid compute charges before upgrading that organization.
+
 The owner supplied replacement project `mjuluaqrvbnycisnarzi` on 2026-11-09.
 Read-only inspection found an empty application schema and a working PostgreSQL
 17 database. Both supplied API keys work: a publishable key is intentionally
