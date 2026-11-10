@@ -1,5 +1,6 @@
 import { DatabaseReadTimeout, requestDeadline } from './request-deadline';
 import { isFacebookReauthMessage } from './facebook-errors';
+import { FACEBOOK_PAGE_WEBHOOK_FIELDS } from './facebook-permissions';
 
 export class FacebookPageConnectionError extends Error {
  constructor(message: string, readonly code: string, readonly status: number, readonly requiresReauth = false, readonly retryable = false) { super(message); }
@@ -39,13 +40,16 @@ export async function facebookWebhookConnectionStatus(pageId: string, accessToke
  if (!appId) return 'unknown';
  try {
   return await requestDeadline(async signal => {
-   const response = await fetch('https://graph.facebook.com/v21.0/' + pageId + '/subscribed_apps?fields=id', {
+   const response = await fetch('https://graph.facebook.com/v21.0/' + pageId + '/subscribed_apps?fields=id,subscribed_fields', {
     headers: { Authorization: 'Bearer ' + accessToken }, cache: 'no-store', signal
    });
    const body = await response.json();
    if (!response.ok || body.error) return [10, 190, 200].includes(Number(body.error?.code)) ? 'incomplete' : 'unknown';
    if (!Array.isArray(body.data)) return 'unknown';
-   return body.data.some((app: { id: string }) => app.id === appId) ? 'ready' : 'incomplete';
+   const app = body.data.find((app: { id: string }) => app.id === appId);
+   if (!app) return 'incomplete';
+   if (!Array.isArray(app.subscribed_fields)) return 'unknown';
+   return FACEBOOK_PAGE_WEBHOOK_FIELDS.every(field => app.subscribed_fields.includes(field)) ? 'ready' : 'incomplete';
   }, 2000);
  } catch { return 'unknown'; }
 }

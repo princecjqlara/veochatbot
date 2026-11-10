@@ -105,7 +105,7 @@ describe('GET /api/pages', () => {
             const url = new URL(value);
             const missing = url.pathname.includes('697291860141214');
             return new Response(JSON.stringify(url.pathname.endsWith('/subscribed_apps')
-                ? { data: missing ? [] : [{ id: 'app-id' }] } : { id: url.pathname.split('/').at(-1) }), { status: 200 });
+                ? { data: missing ? [] : [{ id: 'app-id', subscribed_fields: ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'] }] } : { id: url.pathname.split('/').at(-1) }), { status: 200 });
         }));
         mocks.getSessionFromRequest.mockResolvedValue({ user: { id: 'user_1' } });
         mocks.getSupabaseAdmin.mockReturnValue(createSupabaseMock());
@@ -141,7 +141,7 @@ describe('GET /api/pages', () => {
         vi.stubGlobal('fetch', vi.fn(async (value: string | URL) => {
             const url = new URL(value);
             return new Response(JSON.stringify(url.pathname.endsWith('/subscribed_apps')
-                ? { data: url.pathname.includes('697291860141214') ? [] : [{ id: 'app-id' }] }
+                ? { data: url.pathname.includes('697291860141214') ? [] : [{ id: 'app-id', subscribed_fields: ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'] }] }
                 : { id: url.pathname.split('/').at(-1) }), { status: 200 });
         }));
         mocks.getSessionFromRequest.mockResolvedValue({ user: { id: 'user_1' } });

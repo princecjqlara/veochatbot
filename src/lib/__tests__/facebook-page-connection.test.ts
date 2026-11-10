@@ -4,10 +4,22 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe('Page credentials before connection', () => {
  it('retains a missing app subscription as incomplete across reloads and leaves transport failures unknown', async () => {
-  const fetcher = vi.fn().mockResolvedValueOnce(json({ data: [] })).mockResolvedValueOnce(json({ data: [{ id: 'app' }] })).mockRejectedValueOnce(Error('Network unavailable'));
+  const fetcher = vi.fn().mockResolvedValueOnce(json({ data: [] })).mockResolvedValueOnce(json({ data: [{ id: 'app', subscribed_fields: ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'] }] })).mockRejectedValueOnce(Error('Network unavailable'));
   vi.stubGlobal('fetch', fetcher);
   expect(await facebookWebhookConnectionStatus('100', 'token', 'app')).toBe('incomplete');
   expect(await facebookWebhookConnectionStatus('100', 'token', 'app')).toBe('ready');
+  expect(await facebookWebhookConnectionStatus('100', 'token', 'app')).toBe('unknown');
+ });
+ it('rejects legacy subscriptions missing referrals or echoes even when the correct app is present', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(json({ data: [{ id: 'app', subscribed_fields: ['messages', 'messaging_postbacks', 'message_echoes'] }] }))
+   .mockResolvedValueOnce(json({ data: [{ id: 'app', subscribed_fields: ['messages', 'messaging_postbacks', 'messaging_referrals'] }] }));
+  vi.stubGlobal('fetch', fetcher);
+  expect(await facebookWebhookConnectionStatus('100', 'token', 'app')).toBe('incomplete');
+  expect(await facebookWebhookConnectionStatus('100', 'token', 'app')).toBe('incomplete');
+  expect(new URL(String(fetcher.mock.calls[0][0])).searchParams.get('fields')).toBe('id,subscribed_fields');
+ });
+ it('leaves missing event metadata unknown rather than claiming a completed connection', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ data: [{ id: 'app' }] })));
   expect(await facebookWebhookConnectionStatus('100', 'token', 'app')).toBe('unknown');
  });
  it('checks token identity and inbox access, accepts empty inboxes and keeps credentials out of URLs', async () => {

@@ -14,5 +14,7 @@ export const FACEBOOK_PERMISSION_LIST = [
 
 export const FACEBOOK_PERMISSION_SCOPE = FACEBOOK_PERMISSION_LIST.join(',');
 
+export const FACEBOOK_PAGE_WEBHOOK_FIELDS = ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'] as const;
+
 export const FACEBOOK_REAUTH_MESSAGE =
     'Facebook could not list pages with the current login token. Refresh permissions, continue with the Facebook account that admins the page, and approve all requested Page permissions.';

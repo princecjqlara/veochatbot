@@ -10,13 +10,20 @@ or add/reconnect a Page. Other roles retain their existing assigned-Page tools.
 1. Select **Authorize Facebook Pages**. Authorize the Facebook account managing
    the Page and approve the requested Page permissions. This authorization is
    separate from VEO email/password sign-in and does not change VEO identity.
-2. Select **Connect Page** beside a newly authorized Page, or **Reconnect** beside
-   an existing one. New verified Facebook IDs are supported without editing the
-   original static Page-name catalog.
+2. Returning from successful authorization automatically reconnects enabled saved
+   Pages included in that grant. This renews their saved credentials and finishes
+   live message-update setup. Per-Page failures remain visible; **Finish saved
+   Page setup** retries unfinished authorized connections. Disabled Pages require
+   **Reconnect & enable**. Newly authorized Pages require **Connect Page**.
+   New verified Facebook IDs are supported without editing the original static
+   Page-name catalog. Existing individual and bulk reconnect tools remain available.
 3. VEO verifies the credential's Facebook app, actual Page identity and inbox
    access. It subscribes the app to messages, postbacks, echoes and referrals,
-   verifies the subscription, and registers the Page's runtime app ownership.
-4. Missing utility templates and contact-name/identity collection run by default
+   verifies all four subscribed event fields, and registers the Page's runtime
+   app ownership. An app entry with missing events is incomplete; missing event
+   metadata or transport failures remain unverified rather than Connected.
+4. When using **Connect Page** or the individual/bulk **Reconnect** actions,
+   missing utility templates and contact-name/identity collection run by default
    after a successful connection. Each can be switched off before connecting.
    Their results remain separate from connection health. Template approval or
    collection failures retain the saved connection and provide retry controls.
@@ -38,6 +45,7 @@ without storing credentials in audit records.
 | --- | --- |
 | Facebook Page discovery | Authorize Facebook Pages; all authorized listing pages are read, including new Page IDs |
 | Refresh permissions | Refresh Facebook permissions, with an expiring Owner-bound selection session |
+| Finish renewed authorization | Returning from Facebook reconnects authorized enabled saved Pages once; Finish saved Page setup retries unfinished connections |
 | Individual connect/reconnect | Available Page cards and saved Page rows |
 | Bulk reconnect | Reconnect selected / Reconnect all saved Pages; reports each failure and continues; disabled Pages require the separate Reconnect & enable action |
 | Connection and webhook health | Check connections; distinguishes Connected, Reconnect required, Setup incomplete, Unable to verify and Disabled |
@@ -77,6 +85,18 @@ rewrite existing Page data. Deployment should apply only this additive migration
 after its transaction-rollback preflight and deploy the clean application commit.
 The unrelated local receipt-policy migration must remain excluded.
 
+The authorization-completion follow-up changes the connection screen only and
+requires no database migration. It consumes the successful callback before
+starting a batch, preventing a browser reload from repeating connection writes.
+A normal visit with an active grant stays read-only. Reconnect actions wait for
+Page discovery so they can use renewed authorization rather than stale saved
+credentials. A connection becomes complete only after the server confirms its
+saved Page ID and webhook subscription, and the batch finishes with a fresh
+health read. New, disabled and unlisted Pages require their existing explicit
+actions. Automatic renewal performs connection setup only; it does not run
+template submissions or contact imports. The existing tools still provide those
+operations separately.
+
 Implementation references are Meta's [manual authorization flow](https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow/),
 [Pages setup](https://developers.facebook.com/docs/pages-api/getting-started/),
 and [token debugger example](https://www.postman.com/meta/whatsapp-business-platform/request/i1mz7w8/debug-token).
@@ -86,7 +106,7 @@ It does not connect an invented Page or send a customer/Telegram message.
 
 ## Validation
 
-The final regression suite passes 2,044 tests in 271 files, including the existing
+The initial Page management release passed 2,044 tests in 271 files, including the existing
 receipt, campaign, messaging, contact and financial suites. A later focused run
 passes 34 checks covering Page management, complete directories, authorization,
 bulk recovery and credential boundaries. TypeScript checks pass. The migration's
@@ -100,3 +120,15 @@ No browser is connected in this environment. The component tests exercise the
 screen controls; production checks verify deployed assets and authenticated API
 responses. A real Meta authorization/permission dialog still requires the Owner
 to complete their own Facebook consent.
+
+The authorization-completion follow-up passes **2,070 tests in 275 files**,
+including **43 focused checks** for the screen, OAuth grants, Page connection
+route, Page selectors and complete event subscriptions. The production build
+passes lint and type checking. Callback completion, discovery failures, stale
+credential avoidance, partial webhook failures, retry, stop/resume and reload
+without repeated writes are covered. Live verification confirms all **15 Pages**
+have valid current-app credentials, readable inboxes, correct runtime ownership
+and all four subscribed event fields. The two older subscriptions missing
+referrals were renewed through the existing protected connection route. Record
+counts and Page IDs remain preserved; no customer messages are sent by these
+checks. The release requires no migration and excludes unrelated local drafts.

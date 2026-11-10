@@ -1,6 +1,6 @@
 import { FacebookPage, FacebookConversation } from '@/types';
 import { assertVeoSendAllowed } from './veo-delivery';
-import { FACEBOOK_REAUTH_MESSAGE } from './facebook-permissions';
+import { FACEBOOK_PAGE_WEBHOOK_FIELDS, FACEBOOK_REAUTH_MESSAGE } from './facebook-permissions';
 import { isFacebookReauthMessage } from './facebook-errors';
 import type { TemplateMediaType } from './facebook-templates';
 import { getUtilityTemplateParameterValidationError } from './send-errors';
@@ -347,7 +347,7 @@ export async function getUserProfile(
 export async function subscribePageToAppWebhook(
     pageId: string,
     pageAccessToken: string,
-    subscribedFields: string[] = ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'],
+    subscribedFields: readonly string[] = FACEBOOK_PAGE_WEBHOOK_FIELDS,
     signal?: AbortSignal
 ): Promise<void> {
     const formData = new URLSearchParams();
@@ -355,7 +355,7 @@ export async function subscribePageToAppWebhook(
 
     // Every reconnect/sync must retain the echoes used to stop human handoffs,
     // including callers that pass a legacy two-field list or an empty list.
-    formData.set('subscribed_fields', [...new Set([...subscribedFields, 'messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'])].join(','));
+    formData.set('subscribed_fields', [...new Set([...subscribedFields, ...FACEBOOK_PAGE_WEBHOOK_FIELDS])].join(','));
 
     const response = await fetch(
         `${FACEBOOK_GRAPH_URL}/${pageId}/subscribed_apps`,

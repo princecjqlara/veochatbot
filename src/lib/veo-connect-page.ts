@@ -7,6 +7,7 @@ import { checkedPageResult, PageSetupError, pageSetupResponse, requirePageOwner 
 import { requestDeadline } from './request-deadline';
 import { pageConnectionCache } from './page-connection-cache';
 import { uuid } from './veo-workspace';
+import { FACEBOOK_PAGE_WEBHOOK_FIELDS } from './facebook-permissions';
 
 export async function connectOwnerPage(request: NextRequest) {
     const scope = await requirePageOwner(request, true), db = getSupabaseAdmin();
@@ -46,7 +47,7 @@ export async function connectOwnerPage(request: NextRequest) {
     if (!verified.name) throw new PageSetupError('Facebook did not confirm this Page’s name. Retry shortly.', 503, 'FACEBOOK_UNAVAILABLE');
     let ready = false, message = 'Page access saved. Live message updates could not be confirmed. Retry reconnect to finish setup.';
     try {
-        await requestDeadline(signal => subscribePageToAppWebhook(facebookId, token!, ['messages', 'messaging_postbacks', 'message_echoes', 'messaging_referrals'], signal), 10000);
+        await requestDeadline(signal => subscribePageToAppWebhook(facebookId, token!, FACEBOOK_PAGE_WEBHOOK_FIELDS, signal), 10000);
         ready = await facebookWebhookConnectionStatus(facebookId, token!, process.env.FACEBOOK_CLIENT_ID) === 'ready';
     } catch { /* Keep verified credentials for a deliberate retry; do not report setup complete. */ }
     const saved = checkedPageResult(await db.rpc('veo_connect_page', { p_actor: scope.user_id, p_facebook_id: facebookId,
