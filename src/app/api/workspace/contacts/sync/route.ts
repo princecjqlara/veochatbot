@@ -6,6 +6,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { requestDeadline } from '@/lib/request-deadline';
 import { readContactIdentityBatch } from '@/lib/veo-contact-identity-sync';
 import { workspaceService } from '@/lib/workspace-service';
+import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
 export const maxDuration = 30;
 export async function POST(request: NextRequest) {
     return workspaceService(async () => {
@@ -18,6 +19,7 @@ export async function POST(request: NextRequest) {
         if (!uuid(body.page_id) || !scope.page_ids.includes(body.page_id) || (body.cursor != null && (typeof body.cursor !== 'string' || body.cursor.length > 2048))) return NextResponse.json({ error: 'Invalid Page or cursor' }, { status: 400 });
         return requestDeadline(async signal => {
             const db = getSupabaseAdmin(signal), owner = randomUUID();
+            await requireStorageForOptionalWork(db);
             const page = await db.from('pages').select('fb_page_id,access_token').eq('id', body.page_id).single();
             if (page.error) throw Object.assign(new Error('Page connection is unavailable'), { status: 503 });
             const lease = await db.rpc('acquire_page_sync_lease', { p_page_id: body.page_id, p_owner: owner, p_lease_seconds: 60 });

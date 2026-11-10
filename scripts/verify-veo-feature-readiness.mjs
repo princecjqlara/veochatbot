@@ -13,7 +13,8 @@ const features = {
     orders_and_payments: { tables: ['veo_orders', 'veo_payments', 'veo_business_orders'], functions: ['veo_observe_business_orders', 'veo_action'] },
     receipts_and_delivery: { tables: ['veo_receipts', 'veo_submissions', 'veo_photo_objects'], functions: ['veo_receipt_requirements', 'veo_handoff'] },
     calendar_and_costs: { tables: ['veo_ad_spend_coverage', 'veo_daily_targets'], functions: ['veo_calendar_inputs', 'veo_calendar_day_details', 'veo_calendar_created_orders', 'veo_finance_days'] },
-    background_jobs: { tables: ['veo_event_inbox', 'veo_source_jobs', 'veo_background_job_leases'], functions: ['veo_claim_background_job', 'veo_release_background_job', 'veo_claim_events'] }
+    background_jobs: { tables: ['veo_event_inbox', 'veo_source_jobs', 'veo_background_job_leases'], functions: ['veo_claim_background_job', 'veo_release_background_job', 'veo_claim_events'] },
+    storage_protection: { tables: [], functions: ['veo_storage_maintenance', 'veo_storage_status', 'veo_record_storage_metrics', 'veo_owner_storage_health'] }
 };
 await db.connect();
 try {

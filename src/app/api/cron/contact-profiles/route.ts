@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processContactProfiles } from '@/lib/contact-profile-worker';
 import { processVeoDemographics } from '@/lib/veo-demographics-worker';
 import { runBackgroundJob } from '@/lib/background-run';
+import { getSupabaseAdmin } from '@/lib/supabase';
+import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 export async function GET(request: NextRequest) {
@@ -9,7 +11,7 @@ export async function GET(request: NextRequest) {
     if (request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     try {
         const result = await runBackgroundJob('contact-profiles', async () => {
-            if (process.env.VEO_WORKSPACE_ENABLED === 'true') return await processVeoDemographics(2);
+            if (process.env.VEO_WORKSPACE_ENABLED === 'true') { await requireStorageForOptionalWork(getSupabaseAdmin());return await processVeoDemographics(2); }
             return await processContactProfiles({ limit: 2, budgetMs: 120000 });
         });
         return NextResponse.json(result, { status: 'failed' in result && result.failed ? 503 : 200 });

@@ -186,3 +186,28 @@ it('coordinates cron leases across owners, recovers expiry and keeps recovery fu
     expect((await db.query<any>("SELECT veo_release_background_job('workspace',$1) ok", [one])).rows[0].ok).toBe(false);
     expect((await db.query<any>("SELECT has_function_privilege('anon','veo_claim_background_job(text,uuid)','EXECUTE') OR has_function_privilege('authenticated','veo_calendar_day_details(uuid,date,uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
 });
+it('cleans only old completed payloads in bounded batches and keeps business records and duplicate keys', async () => {
+    const before = (await db.query<any>('SELECT (SELECT count(*) FROM contacts)::int contacts,(SELECT count(*) FROM tags)::int tags,(SELECT count(*) FROM veo_orders)::int orders,(SELECT count(*) FROM veo_payments)::int payments')).rows[0];
+    await db.query("INSERT INTO veo_event_inbox(event_key,page_id,occurred_at,received_at,status,payload) VALUES('storage:pending',$1,now()-interval '8 days',now()-interval '8 days','queued','{\"keep\":true}'),('storage:recent',$1,now(),now(),'done','{\"keep\":true}')", [page]);
+    await db.query("INSERT INTO veo_event_inbox(event_key,page_id,occurred_at,received_at,status,payload) SELECT 'storage:old:'||i,$1,now()-interval '8 days',now()-interval '8 days','done','{\"discard\":true}' FROM generate_series(1,501) i", [page]);
+    const result = (await db.query<any>('SELECT veo_storage_maintenance() r')).rows[0].r;expect(result.completed_event_payloads_cleared).toBe(500);
+    const rows = (await db.query<any>("SELECT event_key,payload FROM veo_event_inbox WHERE event_key LIKE 'storage:%'")).rows;
+    expect(rows).toHaveLength(503);expect(rows.filter(r => r.event_key.startsWith('storage:old:') && Object.keys(r.payload).length)).toHaveLength(1);
+    expect(rows.find(r => r.event_key === 'storage:pending').payload.keep).toBe(true);expect(rows.find(r => r.event_key === 'storage:recent').payload.keep).toBe(true);
+    expect((await db.query<any>('SELECT (SELECT count(*) FROM contacts)::int contacts,(SELECT count(*) FROM tags)::int tags,(SELECT count(*) FROM veo_orders)::int orders,(SELECT count(*) FROM veo_payments)::int payments')).rows[0]).toEqual(before);
+    expect((await db.query<any>("SELECT count(*)::int n FROM cron.job WHERE jobname='veo-storage-protection'")).rows[0].n).toBe(1);
+});
+it('tracks physical disk pressure, stale monitoring and failed cleanup without exposing health functions publicly', async () => {
+    const record = async (body: any) => (await db.query<any>('SELECT veo_record_storage_metrics($1::jsonb) r', [JSON.stringify(body)])).rows[0].r;
+    const healthy = await record({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 1500000000, wal_bytes: 64000000 });
+    expect(healthy).toMatchObject({ status: 'healthy', metrics_fresh: true, maintenance_healthy: true, optional_work_paused: false });
+    expect(await record({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 500000000 })).toMatchObject({ status: 'warning', optional_work_paused: false });
+    expect(await record({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 200000000 })).toMatchObject({ status: 'critical', optional_work_paused: true });
+    expect(await record({ available: false })).toMatchObject({ status: 'critical', metrics_fresh: false, optional_work_paused: true });
+    await record({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 1500000000 });
+    await db.exec("UPDATE app_private.veo_storage_state SET metrics_ok_at=now()-interval '16 minutes'");
+    expect((await db.query<any>('SELECT veo_storage_status() r')).rows[0].r).toMatchObject({ status: 'unknown', optional_work_paused: true });
+    await expect(db.query('SELECT veo_owner_storage_health($1)', [manager])).rejects.toThrow(/Owner access/);
+    expect((await db.query<any>("SELECT count(*)::int n FROM app_private.veo_storage_state")).rows[0].n).toBe(1);
+    expect((await db.query<any>("SELECT has_function_privilege('anon','veo_storage_maintenance()','EXECUTE') OR has_function_privilege('authenticated','veo_owner_storage_health(uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+});

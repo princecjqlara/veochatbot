@@ -4,6 +4,7 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "crons": [
+    { "path": "/api/cron/database-health", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/workspace", "schedule": "* * * * *" },
     { "path": "/api/cron/contact-profiles", "schedule": "* * * * *" },
     {

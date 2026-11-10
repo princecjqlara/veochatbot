@@ -13,6 +13,8 @@ import { chunkArray } from '../../../../../lib/chunking';
 import { composeContactName, hasUsableContactName, normalizeContactName, pickPreferredContactName } from '../../../../../lib/contact-names';
 import { SUPABASE_IN_FILTER_BATCH_SIZE } from '@/lib/supabase-pagination';
 import { isExpectedFacebookProfileLookupError } from '@/lib/facebook-errors';
+import { workspaceEnabled } from '@/lib/veo-workspace';
+import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
 
 // Increase timeout for sync operations (up to 5 minutes)
 export const maxDuration = 300;
@@ -181,6 +183,7 @@ export async function POST(
             );
         }
 
+        if (workspaceEnabled()) await requireStorageForOptionalWork(supabase);
         // Get page details including last_synced_at
         const { data: page } = await supabase
             .from('pages')
@@ -887,7 +890,7 @@ export async function POST(
         });
         return NextResponse.json(
             { error: 'Failed to sync contacts', message: (error as Error).message },
-            { status: 500 }
+            { status: (error as any).code === 'STORAGE_ATTENTION' ? 503 : 500 }
         );
     } finally {
         if (syncLease && !keepSyncLease) {

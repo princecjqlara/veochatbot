@@ -23,6 +23,7 @@ const VeoAccountLoginSetup = dynamic(() => import('@/components/VeoAccountLoginS
 const VeoNewClients = dynamic(() => import('@/components/VeoNewClients'), { loading: PanelLoading });
 const VeoTelegramGroups = dynamic(() => import('@/components/VeoTelegramGroups'), { loading: PanelLoading });
 const VeoClientDrawer = dynamic(() => import('@/components/VeoClientDrawer'), { loading: PanelLoading });
+const VeoStorageHealth = dynamic(() => import('@/components/VeoStorageHealth'), { loading: PanelLoading });
 
 const field = 'border border-slate-300 rounded px-3 py-2 bg-white text-slate-900 w-full';
 const button = 'rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40';
@@ -134,6 +135,7 @@ function Workspace() {
         {(activeView === 'capacity' || (executive && activeView === 'dashboard')) && <label className="block max-w-xs">Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => setDay(e.target.value)} /></label>}
         {!executive && activeView === 'deals' && <label className="block max-w-xs font-semibold">Deal type<select className={field} value={dealStatus} onChange={e => { setOffset(0); setOrder(''); router.replace(`/dashboard/workspace?view=deals&status=${e.target.value}`); }}><option value="closed">Closed Deals</option><option value="done">Done Deals</option></select></label>}
         {message && <p role="status" className="rounded border bg-amber-50 p-3">{message}</p>}
+        {isOwner && ['dashboard', 'sync'].includes(activeView) && <VeoStorageHealth compact={activeView === 'dashboard'} />}
         {activeView === 'new_clients' && <VeoNewClients scope={data.scope} pages={pages} initialContactId={params.get('contact_id') || ''} onOpenClient={setDrawerContact} />}
         {activeView === 'telegram' && <VeoTelegramGroups />}
         {['receipts', 'salary'].includes(activeView) && <VeoReceiptInbox scope={data.scope} accounts={data.accounts} compact={activeView === 'salary'} initialContactId={params.get('contact_id') || ''} initialKind={params.get('receipt_kind') === 'done' ? 'done' : 'closed'} />}
