@@ -9,7 +9,7 @@ workspace scope on every request. Only Facebook connection health is shared in
 memory for up to 30 seconds, keyed by Page, token fingerprint, app and check mode.
 Concurrent identical probes share a promise; unknown health expires after three
 seconds. Explicit connection-details requests recheck health. Token/app changes
-invalidate the key. Probes use four workers, the cache has 500 slots, tokens
+invalidate the key. Probes use fourteen workers, the cache has 500 slots, tokens
 never appear in cache keys or API responses, and errors are not retained.
 The default connected/reconnect-needed classifications remain the same.
 

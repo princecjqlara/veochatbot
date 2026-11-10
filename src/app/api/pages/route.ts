@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
         const checkWebhook = connectionDetails || process.env.VEO_ENFORCE_PAGE_RUNTIME_SCOPE === 'true';
         const pageStatuses: Array<{ page: PageRecord; tokenStatus: PageTokenStatus; webhookStatus: 'ready' | 'incomplete' | 'unknown' }> = [];
         let next = 0;
-        await Promise.all(Array.from({ length: Math.min(4, pageRecords.length) }, async () => {
+        await Promise.all(Array.from({ length: Math.min(14, pageRecords.length) }, async () => {
             while (next < pageRecords.length) {
                 const page = pageRecords[next++];
                 const status = await pageConnectionCache.read([page.id, page.fb_page_id, page.access_token || '', process.env.FACEBOOK_CLIENT_ID || '', String(checkWebhook)], async () => {
