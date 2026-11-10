@@ -44,12 +44,19 @@ describe('private photo cleanup during unrelated worker failures', () => {
             };
             return q;
         });
-        m.remove.mockResolvedValue({ error: null }); m.rpc.mockResolvedValue({ error: { message: 'Ledger unavailable' } });
+        m.remove.mockResolvedValue({ error: null });
+        // Acquire the worker lease before simulating the unrelated salary outage.
+        // Failing every RPC stops at coordination and never exercises cleanup.
+        m.rpc.mockImplementation(async name => name === 'veo_maintenance'
+            ? { error: { message: 'Ledger unavailable' } }
+            : { data: true });
         const response = await GET(new NextRequest('https://veo.test/api/cron/workspace', { headers: { Authorization: 'Bearer cron' } }));
         expect(response.status).toBe(503);
         expect(m.remove).toHaveBeenCalledWith(['private/photo']);
         expect(checkpoints).toContainEqual(expect.objectContaining({ table: 'veo_submissions', values: expect.objectContaining({ status: 'expired' }) }));
-        expect(m.remove.mock.invocationCallOrder[0]).toBeLessThan(m.rpc.mock.invocationCallOrder[0]);
+        const maintenance = m.rpc.mock.calls.findIndex(([name]) => name === 'veo_maintenance');
+        expect(maintenance).toBeGreaterThanOrEqual(0);
+        expect(m.remove.mock.invocationCallOrder[0]).toBeLessThan(m.rpc.mock.invocationCallOrder[maintenance]);
         expect(m.events).not.toHaveBeenCalled();
     });
 });
