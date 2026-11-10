@@ -4,7 +4,6 @@ import { getToken } from 'next-auth/jwt';
 // Service-role-backed legacy endpoints pass this boundary as well as their own checks.
 export async function middleware(request: NextRequest) {
     const path = request.nextUrl.pathname;
-    if (['/api/facebook/connect', '/api/facebook/pages'].includes(path)) return NextResponse.json({ error: 'Facebook connection setup has been removed. Sign in with email and password.' }, { status: 410 });
     if (process.env.VEO_DATABASE_RECOVERY_MODE === 'true') {
         const safeAuth = ['/api/auth/providers', '/api/auth/csrf', '/api/auth/signout'].includes(path);
         // Verification is read-free; event ingestion writes to the same database
@@ -36,7 +35,7 @@ export async function middleware(request: NextRequest) {
     if (token.facebookId || token.accessToken) return NextResponse.json({ error: 'Facebook sign-in has been removed. Sign in with email and password.' }, { status: 401 });
     // Workspace routes verify this signed identity and current database scope
     // themselves. Do not repeat the same expensive scope RPC in the middleware.
-    if (path.startsWith('/api/workspace')) return NextResponse.next();
+    if (path.startsWith('/api/workspace') || ['/api/facebook/connect', '/api/facebook/pages', '/api/facebook/authorize'].includes(path)) return NextResponse.next();
     try {
         const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
         const headers = { apikey: key!, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };

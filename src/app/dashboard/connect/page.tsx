@@ -1,4 +1,4 @@
-import { redirect } from 'next/navigation';
+import VeoPageConnections from '@/components/VeoPageConnections';
 export default function Page() {
-    redirect('/dashboard/workspace');
+    return <VeoPageConnections />;
 }

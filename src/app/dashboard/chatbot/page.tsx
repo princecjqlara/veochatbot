@@ -463,7 +463,8 @@ export default function ChatbotPage() {
                 if (controller.signal.aborted) return;
                 const nextPages = body.pages || [];
                 setPages(nextPages);
-                setSelectedPageId((current) => nextPages.some((page: PageSummary) => page.id === current) ? current : nextPages[0]?.id || '');
+                const requested = typeof window === 'undefined' ? null : new URLSearchParams(window.location?.search || '').get('pageId');
+                setSelectedPageId((current) => nextPages.some((page: PageSummary) => page.id === current) ? current : nextPages.some((page: PageSummary) => page.id === requested) ? requested! : nextPages[0]?.id || '');
             })
             .catch((loadError) => { if (!controller.signal.aborted) setError(loadError.message); });
         return () => controller.abort();

@@ -228,6 +228,7 @@ export interface FacebookPage {
   name: string;
   access_token: string;
   category?: string;
+  tasks?: string[];
   picture?: {
     data: {
       url: string;

@@ -1,5 +1,11 @@
+import { createElement } from 'react';
+import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
-const m = vi.hoisted(() => ({ redirect: vi.fn() }));
-vi.mock('next/navigation', () => ({ redirect: m.redirect }));
+vi.mock('@/components/VeoPageConnections', () => ({ default: () => createElement('p', null, 'Pages & connections') }));
 import Page from './page';
-it('retires Facebook connection setup and returns to the workspace', () => { Page(); expect(m.redirect).toHaveBeenCalledWith('/dashboard/workspace'); });
+it('opens Page management on the original connection URL', async () => {
+    let view!: ReturnType<typeof create>;
+    await act(async () => { view = create(createElement(Page)); });
+    expect(JSON.stringify(view.toJSON())).toContain('Pages & connections');
+    await act(async () => view.unmount());
+});

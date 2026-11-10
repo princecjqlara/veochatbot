@@ -67,7 +67,8 @@ export default function TemplatesPage() {
                 const pgs: Page[] = data.pages || [];
                 setPages(pgs);
                 if (pgs.length > 0) {
-                    setSelectedPageId(pgs[0].id);
+                    const requested = new URLSearchParams(window.location?.search || '').get('pageId');
+                    setSelectedPageId(pgs.some(page => page.id === requested) ? requested! : pgs[0].id);
                 }
             } catch (err) {
                 console.error('Failed to fetch pages:', err);

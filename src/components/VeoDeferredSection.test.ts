@@ -10,7 +10,7 @@ it('loads a report on first open and retains its data and edits while collapsed'
         useEffect(() => { load(); }, []);
         return createElement('input', { value, onChange: (event: any) => setValue(event.target.value) });
     }
-    let view: ReturnType<typeof create>;
+    let view!: ReturnType<typeof create>;
     await act(async () => { view = create(createElement(VeoDeferredSection, { title: 'Report' }, createElement(Report))); });
     try {
         expect(load).not.toHaveBeenCalled();
