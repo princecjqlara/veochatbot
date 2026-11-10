@@ -1,7 +1,11 @@
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const m = vi.hoisted(() => ({ params: new URLSearchParams(), replace: vi.fn(), fetch: vi.fn() }));
+const m = vi.hoisted(() => ({ params: new URLSearchParams(), replace: vi.fn(), fetch: vi.fn(), imports: [] as Promise<any>[] }));
+vi.mock('next/dynamic', () => ({ default: (loader: () => Promise<any>) => {
+    let Component: any; const pending = loader().then(mod => { Component = mod.default; });m.imports.push(pending);
+    return (props: any) => { if (!Component) throw pending;return createElement(Component, props); };
+} }));
 vi.mock('next/navigation', () => ({ useSearchParams: () => m.params, useRouter: () => ({ replace: m.replace }) }));
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }: any) => createElement('a', { href, ...props }, children) }));
 import Page from './page';
@@ -10,7 +14,7 @@ function dashboard(role = 'member') {
     return { scope: { user_id: 'worker', role, launch_at: '2026-11-05T00:00:00Z' }, accounts: [{ id: 'worker', name: 'Worker', role: 'member' }],
         orders: [], teams: [], tomorrow: [], salary: [], submissions: [], sync: [], order_page: { total: 0 } };
 }
-beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); vi.stubGlobal('fetch', m.fetch); });
+beforeEach(async () => { await Promise.all(m.imports);vi.clearAllMocks(); vi.useFakeTimers(); vi.stubGlobal('fetch', m.fetch); });
 afterEach(async () => { if (view) await act(async () => view.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function render(role = 'member', params = 'view=dashboard') {
     m.params = new URLSearchParams(params);
@@ -19,6 +23,7 @@ async function render(role = 'member', params = 'view=dashboard') {
         if (query.pathname === '/api/pages') return new Response(JSON.stringify({ pages: [{ id: 'page-1', name: 'VEO One' }, { id: 'page-2', name: 'VEO Two' }] }));
         if (query.pathname === '/api/workspace/operations') return new Response(JSON.stringify({ summary: {}, orders: [], finance: { days: [] }, employees: [], page_rankings: [], order_page: { total: 0 }, client_assignments: [] }));
         if (query.pathname === '/api/workspace/budget') return new Response(JSON.stringify({ plans: [], saved: [], defaults: {} }));
+        if (query.pathname === '/api/workspace/jaucian') return new Response(JSON.stringify({ workspace: { teams: [], accounts: [] }, jaucian: { groups: [], checked_at: '2026-11-09T00:00:00Z', veo_connection: { ok: true } } }));
         if (query.pathname === '/api/workspace/telegram-groups') return new Response(JSON.stringify({ scope: dashboard(role).scope, groups: [], teams: [], accounts: [], memberships: [], can_manage: role !== 'member' }));
         if (query.pathname === '/api/workspace/new-clients') return new Response(JSON.stringify(query.searchParams.has('context') ? { scope: dashboard(role).scope } : { items: [], roster: [], readiness: { ready: false }, total: 0 }));
         if (query.pathname === '/api/workspace/contacts') {
@@ -81,5 +86,23 @@ describe('workspace contacts, unified deals and Owner separation', () => {
         expect(JSON.stringify(view.toJSON())).toContain('Fetch teams and Pages from Jaucian');
         expect(m.fetch.mock.calls.some(([u]) => u === '/api/workspace/telegram-groups')).toBe(true);
         expect(m.fetch.mock.calls.some(([u]) => u.startsWith('/api/workspace?') || u.startsWith('/api/workspace/profile'))).toBe(false);
+    });
+    it('loads detailed team reports only after the owner opens them', async () => {
+        await render('owner', '');
+        expect(m.fetch.mock.calls.some(([url]) => url.startsWith('/api/workspace/operations') || url.startsWith('/api/workspace/budget'))).toBe(false);
+        const button = view.root.findAllByType('button').find(b => b.findAllByType('span').some(s => s.children.includes('Detailed team results')))!;
+        expect(button.props['aria-expanded']).toBe(false);
+        await act(async () => button.props.onClick());
+        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+        expect(m.fetch.mock.calls.some(([url]) => url.startsWith('/api/workspace/operations'))).toBe(true);
+        expect(button.props['aria-expanded']).toBe(true);
+    });
+    it('does not display the previous area as a completed report while the next area is loading', async () => {
+        await render('owner', '');m.params = new URLSearchParams('view=accounts');
+        await act(async () => { view.update(createElement(Page)); });
+        expect(view.root.findByProps({ role: 'status' }).children).toContain('Loading…');
+        expect(JSON.stringify(view.toJSON())).not.toContain('Create account');
+        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+        expect(JSON.stringify(view.toJSON())).toContain('Create account');
     });
 });

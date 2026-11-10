@@ -5,6 +5,7 @@ import { createWorkspaceAccount, workspaceAction, workspaceScope, uuid, philippi
 import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
 import { jaucianRead, verifyWorkerMapping } from '@/lib/veo-jaucian';
 import { readVeoRpc } from '@/lib/veo-report-read';
+import { loadVeoAccountDirectory } from '@/lib/veo-account-directory';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -55,6 +56,7 @@ export async function GET(request: NextRequest) {
         if ((page && !uuid(page)) || !Number.isSafeInteger(offset) || offset < 0 || offset > 10000000 || search.length > 200 ||
             !['dashboard', 'clients', 'closed', 'done', 'salary', 'accounts', 'sync'].includes(view)) throw new Error('Invalid order filters');
         const includeOrders = ['closed', 'done'].includes(view);
+        if (view === 'accounts') return NextResponse.json({ scope, accounts: await loadVeoAccountDirectory(db, scope), tomorrow: [], orders: [], salary: [], submissions: [], sync: [], teams: [], capacity: null }, { headers: { 'Cache-Control': 'no-store' } });
         const includeCapacity = view === 'capacity' || view === 'dashboard';
         const [dashboard, orders, capacity] = await Promise.all([
             readVeoRpc(db, 'veo_dashboard', { p_actor: scope.user_id, p_day: day }),

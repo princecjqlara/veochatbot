@@ -1,13 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ rpc: vi.fn(), verifyMapping: vi.fn(), jaucianRead: vi.fn() }));
+const m = vi.hoisted(() => ({ rpc: vi.fn(), verifyMapping: vi.fn(), jaucianRead: vi.fn(), directory: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: async () => ({ user: { id: 'owner' } }) }));
 vi.mock('@/lib/veo-jaucian', () => ({ verifyWorkerMapping: m.verifyMapping, jaucianRead: m.jaucianRead }));
+vi.mock('@/lib/veo-account-directory', () => ({ loadVeoAccountDirectory: m.directory }));
 import { GET, POST } from './route';
 import { philippineDate } from '@/lib/veo-workspace';
 afterEach(() => { vi.clearAllMocks(); });
 describe('workspace work-date boundaries', () => {
+    it('returns the complete directory without calculating finances, orders or capacity for Accounts', async () => {
+        m.rpc.mockResolvedValue({ data: { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } });
+        m.directory.mockResolvedValue(Array.from({ length: 601 }, (_, i) => ({ id: String(i) })));
+        const response = await GET(new NextRequest('https://veo.test/api/workspace?view=accounts'));
+        expect(response.status).toBe(200);expect((await response.json()).accounts).toHaveLength(601);
+        expect(m.rpc.mock.calls.every(([name]) => name === 'veo_scope')).toBe(true);
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+    });
     it('requires Facebook sourced order selection and rejects manually supplied order totals',async()=>{
         m.rpc.mockResolvedValue({data:{user_id:'owner',role:'owner',launch_at:'launched'}});
         const request=(body:any)=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify(body)});

@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
     getSessionFromRequest: vi.fn(),
-    getSupabaseAdmin: vi.fn()
+    getSupabaseAdmin: vi.fn(), workspaceEnabled: false, workspaceScope: vi.fn()
 }));
 
 vi.mock('@/lib/get-session', () => ({
@@ -14,8 +14,10 @@ vi.mock('@/lib/get-session', () => ({
 vi.mock('@/lib/supabase', () => ({
     getSupabaseAdmin: mocks.getSupabaseAdmin
 }));
+vi.mock('@/lib/veo-workspace', () => ({ workspaceEnabled: () => mocks.workspaceEnabled, workspaceScope: mocks.workspaceScope }));
 
 import { GET } from './route';
+import { pageConnectionCache } from '@/lib/page-connection-cache';
 
 function createRequest(): NextRequest {
     return new Request('http://localhost:3000/api/pages') as unknown as NextRequest;
@@ -51,7 +53,8 @@ function createSupabaseMock() {
         ],
         error: null
     };
-    const eq = vi.fn().mockReturnValue({ abortSignal: () => Promise.resolve(response) });
+    const query = { order: () => query, abortSignal: () => query, range: async () => response };
+    const eq = vi.fn().mockReturnValue(query);
     const select = vi.fn().mockReturnValue({ eq });
     const from = vi.fn().mockReturnValue({ select });
 
@@ -61,6 +64,8 @@ function createSupabaseMock() {
 describe('GET /api/pages', () => {
     afterEach(() => { vi.unstubAllEnvs(); });
     beforeEach(() => {
+        pageConnectionCache.clear();
+        mocks.workspaceEnabled = false;
         vi.clearAllMocks();
         vi.unstubAllGlobals();
         vi.stubGlobal('fetch', vi.fn(async (url: URL) => {
@@ -79,6 +84,19 @@ describe('GET /api/pages', () => {
                 }
             );
         }));
+    });
+
+    it('reuses external health while checking current Page permissions on every request', async () => {
+        mocks.workspaceEnabled = true;
+        mocks.getSessionFromRequest.mockResolvedValue({ user: { id: 'user_1' } });
+        mocks.getSupabaseAdmin.mockReturnValue(createSupabaseMock());
+        mocks.workspaceScope.mockResolvedValueOnce({ page_ids: ['old_page', 'fresh_page'] }).mockResolvedValueOnce({ page_ids: ['fresh_page'] });
+        expect((await (await GET(createRequest())).json()).pages).toHaveLength(2);
+        const probes = vi.mocked(fetch).mock.calls.length;
+        const second = await (await GET(createRequest())).json();
+        expect(second.pages.map((p: any) => p.id)).toEqual(['fresh_page']);
+        expect(vi.mocked(fetch).mock.calls).toHaveLength(probes);
+        expect(mocks.workspaceScope).toHaveBeenCalledTimes(2);
     });
 
     it('shows a saved Page as setup incomplete when this app is not subscribed', async () => {

@@ -3,6 +3,7 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, philippineDate } from '@/lib/veo-workspace';
 import { readVeoRpc } from '@/lib/veo-report-read';
+import { loadVeoAccountDirectory } from '@/lib/veo-account-directory';
 
 export const dynamic = 'force-dynamic';
 const reply = (data: any, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -26,14 +27,7 @@ export async function GET(request: NextRequest) {
         }
         const accounts = q.get('accounts') === '1';
         if (accounts) {
-            const ids = view === 'profile' ? [scope.user_id] : [...new Set([scope.user_id, ...scope.worker_ids])];
-            const rows = await db.from('veo_accounts').select('user_id,role,parent_id,active,telegram_username,telegram_profile_completed_at').in('user_id', ids).limit(500);
-            if (rows.error) return reply({ error: 'Workspace staff list unavailable' }, 503);
-            const users = rows.data?.length ? await db.from('users').select('id,name,email').in('id', rows.data.map((r: any) => r.user_id)).limit(500) : { data: [], error: null };
-            if (users.error) return reply({ error: 'Workspace staff list unavailable' }, 503);
-            const pages = rows.data?.length ? await db.from('user_pages').select('user_id,page_id').in('user_id', rows.data.map((r: any) => r.user_id)).in('page_id', scope.page_ids).limit(2000) : { data: [], error: null };
-            if (pages.error) return reply({ error: 'Workspace Page access list unavailable' }, 503);
-            data.accounts = (rows.data || []).map((a: any) => ({ ...a, id: a.user_id, ...(users.data || []).find((u: any) => u.id === a.user_id), page_ids: (pages.data || []).filter((p: any) => p.user_id === a.user_id).map((p: any) => p.page_id) }));
+            data.accounts = await loadVeoAccountDirectory(db, scope, view === 'profile');
         }
         return reply(data);
     } catch { return reply({ error: 'Workspace context unavailable' }, 503); }
