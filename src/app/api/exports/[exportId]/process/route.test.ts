@@ -60,7 +60,7 @@ describe('POST /api/exports/[exportId]/process', () => {
         });
         expect(body.batchesProcessed).toBe(1);
         expect(body.result).toMatchObject({ processedItems: 25, messages: 100 });
-        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_1', 'page_1');
+        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_1', 'page_1', expect.any(Request));
     });
 
     it('does not process an export from a Page the user cannot access', async () => {

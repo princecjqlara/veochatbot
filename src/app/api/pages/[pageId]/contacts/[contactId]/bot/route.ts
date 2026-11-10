@@ -8,7 +8,7 @@ export async function PATCH(request:NextRequest,{params}:{params:Promise<{pageId
  if(!session?.user?.id)return NextResponse.json({error:'Unauthorized'},{status:401});
  if(request.headers.get('origin')!==request.nextUrl.origin)return NextResponse.json({error:'Same-origin request required'},{status:403});
  const {pageId,contactId}=await params;
- if(!await userHasPageAccess(session.user.id,pageId))return NextResponse.json({error:'Forbidden'},{status:403});
+ if(!await userHasPageAccess(session.user.id,pageId, request))return NextResponse.json({error:'Forbidden'},{status:403});
  let body;try{body=await request.json();}catch{return NextResponse.json({error:'Invalid JSON'},{status:400});}
  if(!body||typeof body!=='object'||typeof body.enabled!=='boolean')return NextResponse.json({error:'Choose bot on or off'},{status:400});
  const db=getSupabaseAdmin(),found=await db.from('contacts').select('id').eq('id',contactId).eq('page_id',pageId).maybeSingle();

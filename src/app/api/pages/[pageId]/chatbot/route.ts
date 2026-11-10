@@ -178,7 +178,7 @@ async function getAuthorizedPage(request: NextRequest, pageId: string) {
     const session = await getSessionFromRequest(request);
     const userId = session?.user?.id;
     if (!userId) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-    if (!await userHasPageAccess(userId, pageId)) {
+    if (!await userHasPageAccess(userId, pageId, request)) {
         return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
     }
     return { userId };
@@ -325,7 +325,7 @@ export async function PUT(
         const inaccessiblePageId = (await Promise.all(
             targetPageIds.map(async (targetPageId) => ({
                 targetPageId,
-                accessible: await userHasPageAccess(authorization.userId, targetPageId)
+                accessible: await userHasPageAccess(authorization.userId, targetPageId, request)
             }))
         )).find((result) => !result.accessible)?.targetPageId;
         if (inaccessiblePageId) {
@@ -359,7 +359,7 @@ export async function PUT(
         const requestedKnowledgePageId = typeof body.knowledge_source_page_id === 'string' && body.knowledge_source_page_id.trim()
             ? body.knowledge_source_page_id.trim()
             : pageId;
-        if (!await userHasPageAccess(authorization.userId, requestedKnowledgePageId)) {
+        if (!await userHasPageAccess(authorization.userId, requestedKnowledgePageId, request)) {
             return NextResponse.json(
                 { error: 'Forbidden', message: 'You do not have access to the selected knowledge library Page' },
                 { status: 403 }

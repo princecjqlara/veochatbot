@@ -14,7 +14,7 @@ export async function GET(
             return NextResponse.json({ message: 'Please sign in.' }, { status: 401 });
         }
         const { pageId } = await params;
-        if (!await userHasPageAccess(session.user.id, pageId)) {
+        if (!await userHasPageAccess(session.user.id, pageId, request)) {
             return NextResponse.json({ message: 'You do not have access to this page.' }, { status: 403 });
         }
 

@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const q = request.nextUrl.searchParams, pageId = q.get('pageId');
     if (!pageId) return NextResponse.json({ error: 'Choose a Page' }, { status: 400 });
-    if (!await userHasPageAccess(session.user.id, pageId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!await userHasPageAccess(session.user.id, pageId, request)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     let range;
     try { range = adQualityRange(q); } catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 400 }); }
     const adId = q.get('adId'), stage = q.get('stage');

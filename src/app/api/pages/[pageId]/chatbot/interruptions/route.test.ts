@@ -57,7 +57,7 @@ describe('chatbot interruption list', () => {
             collected_detail_count: 2, required_detail_count: 4,
             interrupted_at: '2026-09-28T08:00:00.000Z'
         }]);
-        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_1', 'page_1');
+        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_1', 'page_1', expect.any(Request));
     });
 
     it('rejects users without Page access', async () => {

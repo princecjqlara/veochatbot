@@ -132,7 +132,7 @@ describe('chatbot Page-member access', () => {
 
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual(expect.objectContaining({ config: savedConfig }));
-        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
+        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1', expect.any(Request));
     });
 
     it('returns persisted sales settings when the database honors the selected columns', async () => {
@@ -182,7 +182,7 @@ describe('chatbot Page-member access', () => {
             expect.objectContaining({ page_id: 'page_1', instructions: savedConfig.instructions }),
             { onConflict: 'page_id' }
         );
-        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
+        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1', expect.any(Request));
     });
 
     it('saves pricing OFF independently of the original flow', async () => {

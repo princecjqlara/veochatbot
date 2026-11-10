@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { WorkspaceContact } from '@/components/VeoWorkspaceContacts';
 import VeoDeferredSection from '@/components/VeoDeferredSection';
+import { createSearchSchedule } from '@/lib/search-schedule';
 const PanelLoading = () => <p role="status" className="p-4 text-sm text-slate-500">Loading…</p>;
 const VeoWorkspaceContacts = dynamic(() => import('@/components/VeoWorkspaceContacts'), { loading: PanelLoading });
 const VeoTeamsDashboard = dynamic(() => import('@/components/VeoTeamsDashboard'), { loading: PanelLoading });
@@ -45,6 +46,7 @@ function Workspace() {
     const [role, setRole] = useState('member'), [parent, setParent] = useState(''), [assigned, setAssigned] = useState<string[]>([]);
     const [offset, setOffset] = useState(0), pendingRequests = useRef(new Map<string, string>());
     const refreshGeneration = useRef(0);
+    const searchSchedule = useRef(createSearchSchedule(query));
     async function refresh(signal?: AbortSignal) {
         const generation = ++refreshGeneration.current;
         const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
@@ -73,7 +75,8 @@ function Workspace() {
     }, []);
     useEffect(() => {
         const controller = new AbortController();
-        const timer = setTimeout(() => { refresh(controller.signal).catch(e => { if (!controller.signal.aborted) setMessage(e.message); }); }, 250);
+        const delay = searchSchedule.current(query);
+        const timer = setTimeout(() => { refresh(controller.signal).catch(e => { if (!controller.signal.aborted) setMessage(e.message); }); }, delay);
         return () => { controller.abort(); refreshGeneration.current++; clearTimeout(timer); };
     }, [day, view, dealStatus, page, query, offset]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {

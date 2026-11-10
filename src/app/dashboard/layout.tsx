@@ -39,6 +39,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </div>
             </div>
         </aside>
-        <main id="main-content" className="min-w-0 flex-1 p-3 sm:p-5 lg:p-6">{session.user.role && <VeoTelegramReminder username={session.user.telegramUsername} />}{children}</main>
+        <main key={session.user.id} id="main-content" className="min-w-0 flex-1 p-3 sm:p-5 lg:p-6">{session.user.role && <VeoTelegramReminder username={session.user.telegramUsername} />}{children}</main>
     </div>;
 }

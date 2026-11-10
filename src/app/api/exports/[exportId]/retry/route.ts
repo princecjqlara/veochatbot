@@ -22,7 +22,7 @@ export async function POST(
         .eq('id', exportId)
         .maybeSingle();
     if (lookupError) return NextResponse.json({ message: lookupError.message }, { status: 500 });
-    if (!job || !await userHasPageAccess(userId, job.page_id)) {
+    if (!job || !await userHasPageAccess(userId, job.page_id, request)) {
         return NextResponse.json({ message: 'Export not found.' }, { status: 404 });
     }
     if (job.status !== 'failed') {

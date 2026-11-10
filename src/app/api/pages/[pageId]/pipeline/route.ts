@@ -21,7 +21,7 @@ async function authorize(request: NextRequest, pageId: string) {
     if (!session?.user?.id) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!await userHasPageAccess(session.user.id, pageId)) {
+    if (!await userHasPageAccess(session.user.id, pageId, request)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     return null;

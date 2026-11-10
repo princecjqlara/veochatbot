@@ -10,6 +10,17 @@ const item = { id: 'client', page_id: 'page', name: 'New client', page_name: 'VE
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(async () => { if (view) await act(async () => view.unmount());vi.useRealTimers();vi.unstubAllGlobals(); });
 async function tick() { await act(async () => { await vi.advanceTimersByTimeAsync(300); }); }
+it('starts initial and Page filter reads immediately while debouncing only typing', async () => {
+    const fetcher = vi.fn(async () => Response.json({ items: [], roster: [], readiness: { ready: false }, total: 0 }));vi.stubGlobal('fetch', fetcher);
+    await act(async () => { view = create(createElement(Clients, { scope, pages: [{ id: 'page', name: 'Page' }] })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });expect(fetcher).toHaveBeenCalledOnce();
+    await act(async () => view.root.findByType('select').props.onChange({ target: { value: 'page' } }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });expect(fetcher).toHaveBeenCalledTimes(2);
+    const search = view.root.findByProps({ placeholder: 'Client name, ID or Page' });
+    for (const value of ['a', 'ab']) await act(async () => search.props.onChange({ target: { value } }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(249); });expect(fetcher).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });expect(fetcher).toHaveBeenCalledTimes(3);
+});
 it('requires Ready before enabling Accept, then makes Busy explicit after acceptance', async () => {
     let ready = false;
     const fetcher = vi.fn(async (_url: string, options?: any) => {

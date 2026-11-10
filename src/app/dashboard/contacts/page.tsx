@@ -32,6 +32,8 @@ import {
     summarizeSendErrors
 } from '@/lib/send-errors';
 import { createRequestGate } from '@/lib/request-gate';
+import { createSearchSchedule } from '@/lib/search-schedule';
+import { loadTagOptions } from '@/lib/load-tag-options';
 import { getSupabaseClient } from '@/lib/supabase';
 import { UTILITY_TEMPLATES, getBaseTemplateName, getMediaTemplateName } from '@/lib/facebook-templates';
 import type { TemplateMediaType } from '@/lib/facebook-templates';
@@ -308,6 +310,7 @@ export default function ContactsPage() {
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [showExtraColumns, setShowExtraColumns] = useState(false);
     const [tags, setTags] = useState<TagType[]>([]);
+    const [tagsError, setTagsError] = useState(''), [contactsError, setContactsError] = useState(''), [tagVersion, setTagVersion] = useState(0);
     const [loading, setLoading] = useState(true);
     const [syncing, setSyncing] = useState(false);
     const [exportingConversations, setExportingConversations] = useState(false);
@@ -400,6 +403,9 @@ export default function ContactsPage() {
     const realtimeSubscribeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const webhookRefreshAttemptedRef = useRef<Set<string>>(new Set());
     const contactsRequestGateRef = useRef(createRequestGate());
+    const contactsAbortRef = useRef<AbortController | null>(null);
+    const latestContactsFetch = useRef<() => Promise<void>>(async () => {});
+    const searchSchedule = useRef(createSearchSchedule(''));
     const syncingRef = useRef(false);
     const activeDatePreset =
         DATE_PRESETS.find((preset) => {
@@ -428,11 +434,11 @@ export default function ContactsPage() {
     }, []);
 
     useEffect(() => {
-        if (selectedPageId) {
-            fetchContacts();
-            fetchTags();
-        }
-    }, [selectedPageId, page, pageSize, search, selectedTagFilters, excludedTagFilters, dateFrom, dateTo, dateFilterMode, botFilter]);
+        if (!selectedPageId) return;
+        const controller = new AbortController();setTags([]);setTagsError('');
+        void loadTagOptions(selectedPageId, controller.signal).then(tags => { if (!controller.signal.aborted) setTags(tags); }).catch(error => { if (!controller.signal.aborted) setTagsError(error.message); });
+        return () => controller.abort();
+    }, [selectedPageId, tagVersion]);
 
     useEffect(() => {
         if (!selectedPageId) return;
@@ -563,12 +569,16 @@ export default function ContactsPage() {
     const fetchContacts = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
         if (!selectedPageId) return;
         if (silent && syncingRef.current) return;
+        if (silent && (document.hidden || contactsAbortRef.current)) return;
+        contactsAbortRef.current?.abort();
+        const controller = new AbortController();contactsAbortRef.current = controller;
 
         const requestToken = contactsRequestGateRef.current.next();
 
         if (!silent) {
             setLoading(true);
         }
+        setContactsError('');
         try {
             const params = new URLSearchParams({
                 page: page.toString(),
@@ -584,14 +594,14 @@ export default function ContactsPage() {
                 ...((dateFrom || dateTo) && { dateFilterMode })
             });
 
-            const res = await fetch(`/api/pages/${selectedPageId}/contacts?${params}`);
+            const res = await fetch(`/api/pages/${selectedPageId}/contacts?${params}`, { signal: controller.signal, cache: 'no-store' });
             const data = await res.json() as Omit<PaginatedResponse<Contact>, 'total'> & { total?: number | null };
 
             if (!res.ok) {
                 throw new Error((data as { message?: string }).message || `Failed to fetch contacts (${res.status})`);
             }
 
-            if (!contactsRequestGateRef.current.isLatest(requestToken)) {
+            if (controller.signal.aborted || !contactsRequestGateRef.current.isLatest(requestToken)) {
                 return;
             }
 
@@ -600,16 +610,26 @@ export default function ContactsPage() {
                 setTotal(data.total);
             }
         } catch (error) {
-            if (!contactsRequestGateRef.current.isLatest(requestToken)) {
+            if (controller.signal.aborted || !contactsRequestGateRef.current.isLatest(requestToken)) {
                 return;
             }
             console.error('Error fetching contacts:', error);
+            setContactsError(error instanceof Error ? error.message : 'Contacts are unavailable. Refresh to retry.');
         } finally {
-            if (!silent) {
-                setLoading(false);
+            if (contactsAbortRef.current === controller) {
+                contactsAbortRef.current = null;
+                if (!silent && !controller.signal.aborted) setLoading(false);
             }
         }
     }, [selectedPageId, page, pageSize, search, selectedTagFilters, excludedTagFilters, dateFrom, dateTo, dateFilterMode, botFilter]);
+    latestContactsFetch.current = () => fetchContacts({ silent: true });
+    useEffect(() => {
+        if (!selectedPageId) return;
+        contactsRequestGateRef.current.next();contactsAbortRef.current?.abort();contactsAbortRef.current = null;
+        setLoading(true);
+        const timer = setTimeout(() => void fetchContacts(), searchSchedule.current(search));
+        return () => { clearTimeout(timer);contactsRequestGateRef.current.next();contactsAbortRef.current?.abort();contactsAbortRef.current = null; };
+    }, [fetchContacts, search, selectedPageId]);
 
     useEffect(() => {
         if (!selectedPageId) return;
@@ -627,9 +647,9 @@ export default function ContactsPage() {
                 return;
             }
 
-            void fetchContacts({ silent: true });
+            void latestContactsFetch.current();
             realtimeFallbackIntervalRef.current = setInterval(() => {
-                void fetchContacts({ silent: true });
+                void latestContactsFetch.current();
             }, 30000);
         };
 
@@ -661,7 +681,7 @@ export default function ContactsPage() {
                     }
 
                     realtimeRefreshTimerRef.current = setTimeout(() => {
-                        void fetchContacts({ silent: true });
+                        void latestContactsFetch.current();
                         realtimeRefreshTimerRef.current = null;
                     }, 250);
                 }
@@ -686,7 +706,10 @@ export default function ContactsPage() {
                 }
             });
 
+        const onVisible = () => { if (!document.hidden) void latestContactsFetch.current(); };
+        document.addEventListener('visibilitychange', onVisible);
         return () => {
+            document.removeEventListener('visibilitychange', onVisible);
             if (realtimeRefreshTimerRef.current) {
                 clearTimeout(realtimeRefreshTimerRef.current);
                 realtimeRefreshTimerRef.current = null;
@@ -701,19 +724,7 @@ export default function ContactsPage() {
 
             void supabase.removeChannel(channel);
         };
-    }, [selectedPageId, fetchContacts]);
-
-    const fetchTags = async () => {
-        if (!selectedPageId) return;
-
-        try {
-            const res = await fetch(`/api/tags?scope=all&pageId=${selectedPageId}&pageSize=100`);
-            const data = await res.json();
-            setTags(data.items || []);
-        } catch (error) {
-            console.error('Error fetching tags:', error);
-        }
-    };
+    }, [selectedPageId]);
 
     const fetchAllContactIds = async (): Promise<string[]> => {
         if (!selectedPageId) return [];
@@ -2174,6 +2185,8 @@ export default function ContactsPage() {
             </div>
 
             {/* Filters & Actions Bar */}
+            {contactsError && <p role="alert" className="mb-3 border border-red-200 bg-red-50 p-3 text-sm">{contactsError}</p>}
+            {tagsError && <p role="alert" className="mb-3 border border-amber-200 bg-amber-50 p-3 text-sm">{tagsError} <button type="button" className="underline" onClick={() => setTagVersion(v => v + 1)}>Refresh tags</button></p>}
             <div className="wireframe-card mb-6 p-4">
                 <div className="flex flex-wrap items-center gap-4">
                     {/* Search */}

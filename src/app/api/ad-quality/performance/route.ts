@@ -11,7 +11,7 @@ export async function GET(request:NextRequest){
  const session=await getSessionFromRequest(request);if(!session?.user?.id)return NextResponse.json({error:'Unauthorized'},{status:401});
  let range;try{range=adQualityRange(request.nextUrl.searchParams);}catch(e){return NextResponse.json({error:(e as Error).message},{status:400});}
  try{
-  const memberships=await getUserPageIds(session.user.id),selected=request.nextUrl.searchParams.get('pageId');
+  const memberships=await getUserPageIds(session.user.id, undefined, request),selected=request.nextUrl.searchParams.get('pageId');
   if(selected&&!memberships.includes(selected))return NextResponse.json({error:'Forbidden'},{status:403});
   const ids=selected?[selected]:memberships;if(ids.length>50)return NextResponse.json({error:'Select a Page for this report'},{status:400});
   if(!ids.length)return NextResponse.json({range,pages:[],ads:[],daily:[],unique_contacts:0});

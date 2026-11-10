@@ -7,7 +7,7 @@ import{refreshContactProjection}from'@/lib/contact-projection-refresh';
 export const dynamic='force-dynamic';export const maxDuration=120;
 async function authorize(request:NextRequest,params:Promise<{pageId:string;contactId:string}>){
  const session=await getSessionFromRequest(request);if(!session?.user?.id)return{error:NextResponse.json({error:'Unauthorized'},{status:401})};
- const scope=await params;if(!await userHasPageAccess(session.user.id,scope.pageId))return{error:NextResponse.json({error:'Forbidden'},{status:403})};return scope;
+ const scope=await params;if(!await userHasPageAccess(session.user.id,scope.pageId, request))return{error:NextResponse.json({error:'Forbidden'},{status:403})};return scope;
 }
 export async function GET(request:NextRequest,{params}:{params:Promise<{pageId:string;contactId:string}>}){
  const auth=await authorize(request,params);if('error'in auth)return auth.error;

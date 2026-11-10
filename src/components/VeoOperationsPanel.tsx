@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createSearchSchedule } from '@/lib/search-schedule';
 import Link from 'next/link';
 import VeoEmployeeProfile from './VeoEmployeeProfile';
 import VeoStaffWarnings from './VeoStaffWarnings';
@@ -17,10 +18,12 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
     const [status, setStatus] = useState(['closed', 'done'].includes(mode) ? mode : 'all'), [search, setSearch] = useState(initialSearch), [offset, setOffset] = useState(0);
     const [data, setData] = useState<any>(null), [employees, setEmployees] = useState<any[]>([]), [error, setError] = useState(''), [loading, setLoading] = useState(true), [version, setVersion] = useState(0);
     const [selected, setSelected] = useState<any>(null), [workStatus, setWorkStatus] = useState('working'), [ranking, setRanking] = useState('deals');
+    const searchSchedule = useRef(createSearchSchedule(initialSearch));
     useEffect(() => { if (['closed', 'done'].includes(mode)) { setStatus(mode); setOffset(0); } }, [mode]);
     useEffect(() => { if (mode === 'dashboard' && workDate) { setFrom(workDate); setTo(workDate); setOffset(0); } }, [workDate, mode]);
     useEffect(() => {
         const controller = new AbortController(); setLoading(true); setError('');
+        const delay = searchSchedule.current(search);
         const timer = setTimeout(async () => {
             try {
                 const q = new URLSearchParams({ from, to, status, search, offset: String(offset), ...(page ? { page_id: page } : {}), ...(worker ? { worker_id: worker } : {}) });
@@ -29,7 +32,7 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
                 setData(b); if (!worker || !employees.length) setEmployees(b.employees || []);
             } catch (e: any) { if (e.name !== 'AbortError') setError(e.message); }
             finally { if (!controller.signal.aborted) setLoading(false); }
-        }, 250);
+        }, delay);
         return () => { clearTimeout(timer); controller.abort(); };
     }, [from, to, page, worker, status, search, offset, version, scope.user_id, refreshToken]); // eslint-disable-line react-hooks/exhaustive-deps
     async function save(body: any) { const result = await submit(body); if (result) { setVersion(v => v + 1); setSelected(null); } return result; }

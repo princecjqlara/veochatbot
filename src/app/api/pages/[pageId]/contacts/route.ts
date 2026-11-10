@@ -6,6 +6,7 @@ import { PaginatedResponse, Contact } from '@/types';
 import { normalizeContactName } from '../../../../../lib/contact-names';
 import { contactControls } from '@/lib/contact-controls';
 import {leadQualityForStage} from '@/lib/lead-quality';
+import { fetchAllSupabaseRows } from '@/lib/supabase-pagination';
 
 type DateFilterMode = 'include' | 'exclude';
 type HumanAgentSort = 'expiring' | 'latest' | 'name_asc' | 'name_desc';
@@ -103,16 +104,17 @@ export async function GET(
             dateFilterMode
         });
 
-        const supabase = getSupabaseAdmin();
+        const supabase = getSupabaseAdmin(request.signal);
 
         // Verify user has access to page
-        const { data: userPage } = await supabase
+        const { data: userPage, error: accessError } = await supabase
             .from('user_pages')
             .select('page_id')
             .eq('user_id', session.user.id)
             .eq('page_id', pageId)
             .single();
 
+        if (accessError) throw Object.assign(Error('Contact permissions are temporarily unavailable'), { status: 503 });
         if (!userPage) {
             logWarn('User attempted contacts request for page without access', {
                 userId: session.user.id,
@@ -235,20 +237,22 @@ export async function GET(
 
         // Fetch tag relations only for the contacts on this page of results.
         const pageContactIds = (rawContacts || []).map((c) => c.id).filter((id): id is string => typeof id === 'string');
+        // Independent projections run alongside tag/attribution reads. Retain
+        // failures until awaited so a failed sibling cannot become partial data.
+        const controlsRead = searchParams.get('includeControls') === 'true' && pageContactIds.length
+            ? contactControls(supabase, pageId, pageContactIds).then(data => ({ data, error: null }), error => ({ data: null, error }))
+            : Promise.resolve({ data: new Map<string, any>(), error: null });
         const tagsByContact = new Map<string, { tag_id: string; created_by: string | null; tags: Record<string, unknown> }[]>();
 
         if (includeTags && pageContactIds.length > 0) {
-            const { data: tagRows, error: tagError } = await supabase
-                .from('contact_tags')
-                .select('contact_id, tag_id, created_by, tags(*)')
-                .in('contact_id', pageContactIds);
-
-            if (tagError) {
-                logWarn('Failed to fetch contact tags — returning contacts without tags', {
-                    pageId,
-                    message: tagError.message
-                });
-            } else {
+            const tagRows: any[] = [];
+            for (let start = 0; start < pageContactIds.length; start += 100) {
+                const rows = await fetchAllSupabaseRows<any>(supabase.from('contact_tags')
+                    .select('contact_id, tag_id, created_by, tags(*)').in('contact_id', pageContactIds.slice(start, start + 100))
+                    .order('contact_id').order('tag_id')).catch(error => { throw Object.assign(error, { status: 503 }); });
+                tagRows.push(...rows);
+            }
+            {
                 for (const row of tagRows || []) {
                     const list = tagsByContact.get(row.contact_id) || [];
                     const tagsField = (row as { tags?: unknown }).tags;
@@ -318,12 +322,9 @@ export async function GET(
             contact_tags: undefined
         })) || [];
 
-        if (searchParams.get('includeControls') === 'true' && transformedContacts.length) {
-            try {
-                const controls = await contactControls(supabase,pageId,transformedContacts.map(c=>c.id));
-                for (const contact of transformedContacts) Object.assign(contact,controls.get(contact.id)||{});
-            } catch { logWarn('Contact projections temporarily unavailable'); }
-        }
+        const controls = await controlsRead;
+        if (controls.error) throw Object.assign(Error('Complete contact projections are unavailable. Refresh to retry.'), { status: 503 });
+        for (const contact of transformedContacts) Object.assign(contact, controls.data?.get(contact.id) || {});
         logInfo('Returning contacts response', {
             returnedItems: transformedContacts.length,
             totalMatched: count || 0,
@@ -340,12 +341,13 @@ export async function GET(
             total: includeCount ? count || 0 : null
         } as PaginatedResponse<Contact>);
     } catch (error) {
+        if (request.signal.aborted) return new NextResponse(null, { status: 499 });
         logError('Error fetching contacts', {
             error: (error as Error).message
         });
         return NextResponse.json(
             { error: 'Failed to fetch contacts', message: (error as Error).message },
-            { status: 500 }
+            { status: (error as any).status || 500 }
         );
     }
 }

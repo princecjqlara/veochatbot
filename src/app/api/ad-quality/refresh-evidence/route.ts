@@ -11,7 +11,7 @@ export async function POST(request:NextRequest){
  const session=await getSessionFromRequest(request);if(!session?.user?.id)return NextResponse.json({error:'Unauthorized'},{status:401});
  if(request.headers.get('origin')!==request.nextUrl.origin)return NextResponse.json({error:'Same-origin request required'},{status:403});
  let range,body;try{range=adQualityRange(request.nextUrl.searchParams);body=await request.json();if(!body||!Array.isArray(body.skip)||body.skip.length>500||!body.skip.every(uuid))throw Error('Invalid evidence refresh batch');}catch(e){return NextResponse.json({error:(e as Error).message},{status:400});}
- const memberships=await getUserPageIds(session.user.id),selected=request.nextUrl.searchParams.get('pageId');if(selected&&!memberships.includes(selected))return NextResponse.json({error:'Forbidden'},{status:403});
+ const memberships=await getUserPageIds(session.user.id, undefined, request),selected=request.nextUrl.searchParams.get('pageId');if(selected&&!memberships.includes(selected))return NextResponse.json({error:'Forbidden'},{status:403});
  try{
   const db=getSupabaseAdmin(),pages=await db.from('pages').select('id,fb_page_id').in('id',selected?[selected]:memberships);if(pages.error)throw Error();
   const ids=(pages.data||[]).filter(p=>forecastPageName(p.fb_page_id)).map(p=>p.id);

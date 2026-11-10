@@ -15,7 +15,7 @@ export async function POST(request:NextRequest){
   const range=adQualityRange(new URLSearchParams({range:'custom',from:body.from||'',to:body.to||''}));from=phtDate(Date.parse(range.from!));to=phtDate(Date.parse(range.to)-1);
   if(Date.parse(to)-Date.parse(from)>30*86_400_000)throw Error('Import at most 31 daily reporting dates per batch');
  }catch(e){return NextResponse.json({error:(e as Error).message},{status:400});}
- const memberships=await getUserPageIds(session.user.id);if(body.pageId&&!memberships.includes(body.pageId))return NextResponse.json({error:'Forbidden'},{status:403});
+ const memberships=await getUserPageIds(session.user.id, undefined, request);if(body.pageId&&!memberships.includes(body.pageId))return NextResponse.json({error:'Forbidden'},{status:403});
  if(!session.accessToken)return NextResponse.json({error:'Connect Facebook ad details with ad-account read access, then import ads before refreshing spend.',requiresReconnect:true},{status:409});
  try{
   const db=getSupabaseAdmin(),ids=body.pageId?[body.pageId]:memberships;

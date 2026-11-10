@@ -6,6 +6,7 @@ vi.mock('next-auth', () => ({ getServerSession: m.legacy }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => ({ rpc: m.rpc }) }));
 import { getSessionFromRequest } from '../get-session';
 import { workspaceScope } from '../veo-workspace';
+import { userHasPageAccess, getUserPageIds } from '../page-access';
 import { middleware } from '@/middleware';
 import { GET as context } from '@/app/api/workspace/context/route';
 const scope = { user_id: 'member', role: 'member', launch_at: '2026-11-05T00:00:00Z', page_ids: ['page'], worker_ids: [] };
@@ -23,6 +24,17 @@ it('makes one authoritative scope read for authentication and route access in on
     await Promise.all([workspaceScope('member', request), workspaceScope('member', request)]);
     expect(m.rpc).toHaveBeenCalledOnce();
     expect(m.legacy).not.toHaveBeenCalled();
+});
+it('shares the authoritative authentication read with Page helpers but rechecks the next request', async () => {
+    const request = new NextRequest('https://veo.test/api/pages/page/chatbot');
+    m.rpc.mockResolvedValueOnce({ data: { ...scope, page_ids: ['page'] }, error: null });
+    await getSessionFromRequest(request);
+    expect(await userHasPageAccess('member', 'page', request)).toBe(true);
+    expect(await getUserPageIds('member', undefined, request)).toEqual(['page']);
+    expect(m.rpc).toHaveBeenCalledOnce();
+    m.rpc.mockResolvedValueOnce({ data: { ...scope, page_ids: [] }, error: null });
+    expect(await userHasPageAccess('member', 'page', new NextRequest(request.url))).toBe(false);
+    expect(m.rpc).toHaveBeenCalledTimes(2);
 });
 it('uses one scope RPC across the middleware and a complete workspace context response', async () => {
     const request = new NextRequest('https://veo.test/api/workspace/context?view=profile');

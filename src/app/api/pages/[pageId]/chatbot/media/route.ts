@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { userHasPageAccess } from '@/lib/page-access';
+import { fetchAllSupabaseRows } from '@/lib/supabase-pagination';
+export const dynamic = 'force-dynamic';
 import { ingestChatbotKnowledge } from '@/lib/chatbot-knowledge';
 import {
     analyzeChatbotMedia,
@@ -21,7 +23,7 @@ async function authorize(request: NextRequest, pageId: string) {
     const session = await getSessionFromRequest(request);
     const userId = session?.user?.id;
     if (!userId) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-    if (!await userHasPageAccess(userId, pageId)) {
+    if (!await userHasPageAccess(userId, pageId, request)) {
         return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
     }
     return { userId };
@@ -40,22 +42,24 @@ export async function GET(
         const authorization = await authorize(request, pageId);
         if (authorization.error) return authorization.error;
 
-        const { data, error } = await getSupabaseAdmin()
+        const data = await fetchAllSupabaseRows(getSupabaseAdmin(request.signal)
             .from('chatbot_media_assets')
             .select(selectMediaFields())
             .eq('page_id', pageId)
-            .order('created_at', { ascending: false });
-        if (error) throw error;
+            .order('created_at', { ascending: false }).order('id'));
 
-        const assets = await Promise.all(((data || []) as unknown as ChatbotMediaAsset[]).map(async (asset) => {
-            try {
-                return { ...asset, preview_url: await createChatbotMediaSignedUrl(asset) };
-            } catch {
-                return { ...asset, preview_url: null };
+        const rows = data as unknown as ChatbotMediaAsset[], assets: Array<ChatbotMediaAsset & { preview_url: string | null }> = [];
+        let cursor = 0;
+        await Promise.all(Array.from({ length: Math.min(8, rows.length) }, async () => {
+            while (cursor < rows.length) {
+                request.signal.throwIfAborted();const index = cursor++, asset = rows[index];
+                try { assets[index] = { ...asset, preview_url: await createChatbotMediaSignedUrl(asset) }; }
+                catch { assets[index] = { ...asset, preview_url: null }; }
             }
         }));
-        return NextResponse.json({ assets });
+        return NextResponse.json({ assets }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
+        if (request.signal.aborted) return new NextResponse(null, { status: 499 });
         console.error('[CHATBOT_MEDIA_GET]', error);
         return NextResponse.json(
             { error: 'Failed to load chatbot media', message: (error as Error).message },

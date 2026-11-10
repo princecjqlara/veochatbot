@@ -439,6 +439,9 @@ export default function ChatbotPage() {
     const [syncingDriveFolderId, setSyncingDriveFolderId] = useState('');
     const [deletingDriveFolderId, setDeletingDriveFolderId] = useState('');
     const knowledgeLibraryPageId = config?.knowledge_source_page_id || selectedPageId;
+    const currentPage = useRef(selectedPageId), currentLibrary = useRef(knowledgeLibraryPageId), configPage = useRef(''), requestedLibrary = useRef('');
+    currentPage.current = selectedPageId;currentLibrary.current = knowledgeLibraryPageId;
+    const [libraryLoading, setLibraryLoading] = useState(false), [libraryError, setLibraryError] = useState(''), [libraryVersion, setLibraryVersion] = useState(0);
 
     useEffect(() => {
         const input = folderMediaInputRef.current;
@@ -448,22 +451,25 @@ export default function ChatbotPage() {
     }, []);
 
     useEffect(() => {
-        if (!session) return;
-        fetch('/api/pages')
+        if (!session?.user.id) return;
+        const controller = new AbortController();
+        fetch('/api/pages', { signal: controller.signal })
             .then(async (response) => {
                 const body = await readJsonResponse(response);
                 if (!response.ok) throw new Error(body.message || body.error || 'Failed to load pages');
                 return body;
             })
             .then((body) => {
+                if (controller.signal.aborted) return;
                 const nextPages = body.pages || [];
                 setPages(nextPages);
-                setSelectedPageId((current) => current || nextPages[0]?.id || '');
+                setSelectedPageId((current) => nextPages.some((page: PageSummary) => page.id === current) ? current : nextPages[0]?.id || '');
             })
-            .catch((loadError) => setError(loadError.message));
-    }, [session]);
+            .catch((loadError) => { if (!controller.signal.aborted) setError(loadError.message); });
+        return () => controller.abort();
+    }, [session?.user.id]);
 
-    const loadConfig = useCallback(async () => {
+    const loadConfig = useCallback(async (signal?: AbortSignal) => {
         if (!selectedPageId) return;
         setLoading(true);
         setError('');
@@ -475,29 +481,33 @@ export default function ChatbotPage() {
         setTestFollowUpCount(0);
         setTestMessage('');
         try {
-            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot');
+            const response = await fetch('/api/pages/' + selectedPageId + '/chatbot', { signal });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load chatbot settings');
+            if (signal?.aborted || currentPage.current !== selectedPageId) return;
+            configPage.current = selectedPageId;
             setConfig(body.config);
             setTrialContactId(body.config?.trial_contact_id || '');
             setProviderConfigured(Boolean(body.provider?.configured));
         } catch (loadError) {
-            setError((loadError as Error).message);
+            if (!signal?.aborted && currentPage.current === selectedPageId) setError((loadError as Error).message);
         } finally {
-            setLoading(false);
+            if (!signal?.aborted && currentPage.current === selectedPageId) setLoading(false);
         }
     }, [selectedPageId]);
 
     useEffect(() => {
-        loadConfig();
+        const controller = new AbortController();void loadConfig(controller.signal);
+        return () => controller.abort();
     }, [loadConfig]);
 
-    const loadLiveTrialStatus = useCallback(async () => {
+    const loadLiveTrialStatus = useCallback(async (signal?: AbortSignal) => {
         if (!selectedPageId) return;
         try {
-            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/trial`);
+            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/trial`, { signal });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load live trial status');
+            if (signal?.aborted || currentPage.current !== selectedPageId) return;
             const nextStatus = body.trial as LiveTrialStatus;
             setLiveTrialStatus(nextStatus);
             if (nextStatus?.contact?.id) {
@@ -507,7 +517,7 @@ export default function ChatbotPage() {
                     : [nextStatus.contact as LiveTrialContact, ...current]);
             }
         } catch (loadError) {
-            setError((loadError as Error).message);
+            if (!signal?.aborted && currentPage.current === selectedPageId) setError((loadError as Error).message);
         }
     }, [selectedPageId]);
 
@@ -515,8 +525,10 @@ export default function ChatbotPage() {
         setTrialContacts([]);
         setTrialContactSearch('');
         setLiveTrialStatus(null);
-        void loadLiveTrialStatus();
-    }, [loadLiveTrialStatus]);
+        if (activeSection !== 'test') return;
+        const controller = new AbortController();void loadLiveTrialStatus(controller.signal);
+        return () => controller.abort();
+    }, [loadLiveTrialStatus, activeSection]);
 
     useEffect(() => {
         if (!selectedPageId || activeSection !== 'test') return;
@@ -542,48 +554,51 @@ export default function ChatbotPage() {
         return () => window.clearTimeout(timeoutId);
     }, [activeSection, selectedPageId, trialContactId, trialContactSearch]);
 
-    const loadAnalytics = useCallback(async () => {
+    const loadAnalytics = useCallback(async (signal?: AbortSignal) => {
         if (!selectedPageId) return;
         setAnalyticsLoading(true);
         setAnalyticsError('');
         try {
-            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/analytics?days=${analyticsDays}`);
+            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/analytics?days=${analyticsDays}`, { signal });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load chatbot analytics');
+            if (signal?.aborted || currentPage.current !== selectedPageId) return;
             setAnalytics(body.analytics);
         } catch (loadError) {
-            setAnalyticsError((loadError as Error).message);
+            if (!signal?.aborted && currentPage.current === selectedPageId) setAnalyticsError((loadError as Error).message);
         } finally {
-            setAnalyticsLoading(false);
+            if (!signal?.aborted && currentPage.current === selectedPageId) setAnalyticsLoading(false);
         }
     }, [analyticsDays, selectedPageId]);
 
-    const loadInterruptions = useCallback(async () => {
+    const loadInterruptions = useCallback(async (signal?: AbortSignal) => {
         if (!selectedPageId) return;
         setInterruptionsLoading(true);
         setInterruptionsError('');
         try {
-            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/interruptions`);
+            const response = await fetch(`/api/pages/${selectedPageId}/chatbot/interruptions`, { signal });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load bot interruptions');
+            if (signal?.aborted || currentPage.current !== selectedPageId) return;
             setInterruptions(Array.isArray(body.interruptions) ? body.interruptions : []);
         } catch (loadError) {
-            setInterruptions([]);
-            setInterruptionsError((loadError as Error).message);
+            if (!signal?.aborted && currentPage.current === selectedPageId) { setInterruptions([]);setInterruptionsError((loadError as Error).message); }
         } finally {
-            setInterruptionsLoading(false);
+            if (!signal?.aborted && currentPage.current === selectedPageId) setInterruptionsLoading(false);
         }
     }, [selectedPageId]);
 
     useEffect(() => {
         setAnalytics(null);
-        void loadAnalytics();
-    }, [loadAnalytics]);
+        if (activeSection !== 'overview') return;
+        const controller = new AbortController();void loadAnalytics(controller.signal);return () => controller.abort();
+    }, [loadAnalytics, activeSection]);
 
     useEffect(() => {
         setInterruptions([]);
-        void loadInterruptions();
-    }, [loadInterruptions]);
+        if (activeSection !== 'overview') return;
+        const controller = new AbortController();void loadInterruptions(controller.signal);return () => controller.abort();
+    }, [loadInterruptions, activeSection]);
 
     useEffect(() => {
         if (testConversation.length > 0 || testing) {
@@ -591,45 +606,53 @@ export default function ChatbotPage() {
         }
     }, [testConversation, testing]);
 
-    const loadKnowledge = useCallback(async () => {
-        if (!selectedPageId) return;
+    const loadKnowledge = useCallback(async (signal?: AbortSignal) => {
+        if (!knowledgeLibraryPageId) return false;
         try {
-            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/knowledge');
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/knowledge', { signal });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load chatbot knowledge');
-            setKnowledgeDocuments(body.documents || []);
+            if (!Array.isArray(body.documents)) throw Error('Complete chatbot knowledge is unavailable');
+            if (signal?.aborted || currentLibrary.current !== knowledgeLibraryPageId) return false;
+            setKnowledgeDocuments(body.documents);return true;
         } catch (loadError) {
-            setError((loadError as Error).message);
+            if (!signal?.aborted && currentLibrary.current === knowledgeLibraryPageId) setError((loadError as Error).message);return false;
         }
-    }, [knowledgeLibraryPageId, selectedPageId]);
+    }, [knowledgeLibraryPageId]);
 
-    const loadMedia = useCallback(async () => {
-        if (!selectedPageId) return;
+    const loadMedia = useCallback(async (signal?: AbortSignal) => {
+        if (!knowledgeLibraryPageId) return false;
         try {
-            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/media');
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/media', { signal });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load chatbot media');
-            setMediaAssets(body.assets || []);
+            if (!Array.isArray(body.assets)) throw Error('Complete chatbot media is unavailable');
+            if (signal?.aborted || currentLibrary.current !== knowledgeLibraryPageId) return false;
+            setMediaAssets(body.assets);return true;
         } catch (loadError) {
-            setError((loadError as Error).message);
+            if (!signal?.aborted && currentLibrary.current === knowledgeLibraryPageId) setError((loadError as Error).message);return false;
         }
-    }, [knowledgeLibraryPageId, selectedPageId]);
+    }, [knowledgeLibraryPageId]);
 
-    const loadDriveFolders = useCallback(async () => {
-        if (!selectedPageId) return;
+    const loadDriveFolders = useCallback(async (signal?: AbortSignal) => {
+        if (!knowledgeLibraryPageId) return false;
         try {
-            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/folders');
+            const response = await fetch('/api/pages/' + knowledgeLibraryPageId + '/chatbot/folders', { signal });
             const body = await readJsonResponse(response);
             if (!response.ok) throw new Error(body.message || body.error || 'Failed to load Drive folders');
-            setDriveFolders(body.folders || []);
-            setDriveFiles(body.files || []);
+            if (!Array.isArray(body.folders) || !Array.isArray(body.files)) throw Error('Complete Drive sources are unavailable');
+            if (signal?.aborted || currentLibrary.current !== knowledgeLibraryPageId) return false;
+            setDriveFolders(body.folders);
+            setDriveFiles(body.files);
             setDriveSyncStatus(body.drive_sync || null);
+            return true;
         } catch (loadError) {
-            setError((loadError as Error).message);
+            if (!signal?.aborted && currentLibrary.current === knowledgeLibraryPageId) setError((loadError as Error).message);return false;
         }
-    }, [knowledgeLibraryPageId, selectedPageId]);
+    }, [knowledgeLibraryPageId]);
 
     useEffect(() => {
+        requestedLibrary.current = '';setLibraryError('');setLibraryLoading(false);
         setKnowledgeDocuments([]);
         setKnowledgeTitle('');
         setKnowledgeContent('');
@@ -644,10 +667,18 @@ export default function ChatbotPage() {
         setDriveFolderUrl('');
         setDriveFolderUsage('');
         setDriveFolderButtonText('View media samples');
-        loadKnowledge();
-        loadMedia();
-        loadDriveFolders();
-    }, [loadDriveFolders, loadKnowledge, loadMedia]);
+    }, [knowledgeLibraryPageId]);
+    useEffect(() => {
+        if (activeSection !== 'knowledge' || loading || configPage.current !== selectedPageId || !knowledgeLibraryPageId || requestedLibrary.current === knowledgeLibraryPageId) return;
+        const controller = new AbortController();let finished = false;
+        requestedLibrary.current = knowledgeLibraryPageId;setLibraryLoading(true);setLibraryError('');
+        void Promise.all([loadKnowledge(controller.signal), loadMedia(controller.signal), loadDriveFolders(controller.signal)]).then(results => {
+            if (controller.signal.aborted || currentLibrary.current !== knowledgeLibraryPageId) return;
+            finished = true;setLibraryLoading(false);
+            if (!results.every(Boolean)) setLibraryError('The complete library could not be loaded. Retry to refresh all sources.');
+        });
+        return () => { controller.abort();if (!finished && requestedLibrary.current === knowledgeLibraryPageId) requestedLibrary.current = ''; };
+    }, [activeSection, loading, selectedPageId, knowledgeLibraryPageId, loadKnowledge, loadMedia, loadDriveFolders, libraryVersion]);
 
     const updateConfig = (changes: Partial<ChatbotConfig>) => {
         setConfig((current) => current ? { ...current, ...changes } : current);
@@ -1340,7 +1371,7 @@ export default function ChatbotPage() {
                 </div>
             )}
 
-            {loading || !config ? (
+            {loading || !config || configPage.current !== selectedPageId ? (
                 <div className="border-2 border-black p-8 text-center font-mono text-sm text-gray-500">
                     {selectedPageId ? 'Loading chatbot settings...' : 'Connect a Facebook Page to configure the chatbot.'}
                 </div>
@@ -2057,7 +2088,11 @@ export default function ChatbotPage() {
                         </p>
                     </section>
 
-                    <section id="knowledge" className={`scroll-mt-20 border-2 border-black p-5 md:p-6 mb-4 bg-white ${activeSection !== 'knowledge' ? 'hidden' : ''}`}>
+                    {activeSection === 'knowledge' && <>
+                    {(libraryLoading || requestedLibrary.current !== knowledgeLibraryPageId) && <p role="status" className="border p-5">Loading complete knowledge, media and Drive sources…</p>}
+                    {libraryError && <p role="alert" className="border border-red-200 bg-red-50 p-5">{libraryError} <button type="button" className="underline" onClick={() => { requestedLibrary.current = '';setLibraryVersion(v => v + 1); }}>Retry library</button></p>}
+                    {!libraryLoading && !libraryError && requestedLibrary.current === knowledgeLibraryPageId && <>
+                    <section id="knowledge" className="scroll-mt-20 border-2 border-black p-5 md:p-6 mb-4 bg-white">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
                             <div className="flex items-start gap-3">
                                 <div className="w-9 h-9 border border-black flex items-center justify-center flex-shrink-0">
@@ -2510,6 +2545,8 @@ export default function ChatbotPage() {
                         </div>
                     </section>
 
+                    </>}
+                    </>}
                     <section id="test-chatbot" className={`scroll-mt-20 border-2 border-black p-5 md:p-6 bg-[#f8f8f8] ${activeSection !== 'test' ? 'hidden' : ''}`}>
                         <div className="flex items-start gap-3 mb-4">
                             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center border border-black bg-white">

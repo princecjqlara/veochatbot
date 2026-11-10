@@ -1,4 +1,5 @@
 'use client';
+import { loadTagOptions } from '@/lib/load-tag-options';
 
 import { useSession } from 'next-auth/react';
 
@@ -395,9 +396,7 @@ export default function CampaignsPage() {
     const fetchTags = async () => {
         if (!selectedPageId) return;
         try {
-            const res = await fetch(`/api/tags?pageId=${selectedPageId}`);
-            const data = await res.json();
-            setTags(data.items || data.tags || []);
+            setTags(await loadTagOptions(selectedPageId));
         } catch (error) {
             console.error('Error fetching tags:', error);
         }

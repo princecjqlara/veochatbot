@@ -70,7 +70,7 @@ describe('POST /api/exports/[exportId]/retry', () => {
         const response = await POST(request(), context());
 
         expect(response.status).toBe(200);
-        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_2', 'page_1');
+        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_2', 'page_1', expect.any(Request));
         expect(update.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'queued' }));
         expect(mocks.processConversationExportQueue).toHaveBeenCalledWith({
             jobId: 'job_1', maxBatches: 1, maxDurationMs: 240_000

@@ -40,7 +40,7 @@ describe('chatbot analytics', () => {
         expect(response.status).toBe(200);
         expect(body.days).toBe(30);
         expect(body.analytics.contacts.total).toBe(12);
-        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
+        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1', expect.any(Request));
         expect(mocks.rpc).toHaveBeenCalledWith('get_chatbot_contact_metrics', expect.objectContaining({
             p_page_id: 'page_1',
             p_from: expect.any(String),

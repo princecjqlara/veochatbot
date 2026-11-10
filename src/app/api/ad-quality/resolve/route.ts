@@ -9,7 +9,7 @@ export async function POST(request:NextRequest){
  if(request.headers.get('origin')!==request.nextUrl.origin)return NextResponse.json({error:'Same-origin request required'},{status:403});
  let body;try{body=await request.json();}catch{return NextResponse.json({error:'Invalid JSON'},{status:400});}
  if(!body||typeof body.pageId!=='string'||!Array.isArray(body.adIds)||body.adIds.length>20||!body.adIds.every((x:unknown)=>typeof x==='string'&&/^\d{1,100}$/.test(x)))return NextResponse.json({error:'Choose at most 20 recorded ad IDs'},{status:400});
- if(!await userHasPageAccess(session.user.id,body.pageId))return NextResponse.json({error:'Forbidden'},{status:403});
+ if(!await userHasPageAccess(session.user.id,body.pageId, request))return NextResponse.json({error:'Forbidden'},{status:403});
  const db=getSupabaseAdmin(),[pageResult,known]=await Promise.all([db.from('pages').select('fb_page_id,access_token').eq('id',body.pageId).maybeSingle(),db.from('ad_source_catalog').select('ad_id,post_id').eq('page_id',body.pageId).in('ad_id',body.adIds)]);
  if(pageResult.error||known.error)return NextResponse.json({error:'Could not load recorded ads'},{status:503});
  const page=pageResult.data;if(!page)return NextResponse.json({error:'Page not found'},{status:404});

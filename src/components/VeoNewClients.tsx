@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { startAdaptivePolling } from '@/lib/adaptive-polling';
+import { createSearchSchedule } from '@/lib/search-schedule';
 const field = 'block w-full rounded border border-slate-300 bg-white p-2 text-sm';
 const button = 'rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-40';
 const stamp = (v: string | null) => v ? new Date(v).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) + ' PHT' : 'Not set';
@@ -11,18 +12,20 @@ export default function VeoNewClients({ scope, pages, initialContactId = '', onO
     const [targets, setTargets] = useState<Record<string, string>>({}), requests = useRef(new Map<string, string>());
     const [sourceContact, setSourceContact] = useState(''), [sourceData, setSourceData] = useState<any>(null), [sourceBusy, setSourceBusy] = useState(false);
     const hasData = Boolean(data);
+    const searchSchedule = useRef(createSearchSchedule(initialContactId));
     useEffect(() => {
         if (loading || busy) return;
         return startAdaptivePolling(async () => setVersion(v => v + 1), { intervalMs: hasData ? 30000 : 60000 });
     }, [loading, busy, hasData]);
     useEffect(() => {
         const c = new AbortController();setLoading(true);
+        const delay = searchSchedule.current(search);
         const timer = setTimeout(async () => {
             try {
                 const r = await fetch('/api/workspace/new-clients?' + new URLSearchParams({ view, search, offset: String(offset), ...(page ? { page_id: page } : {}) }), { cache: 'no-store', signal: c.signal });
                 const b = await r.json();if (!r.ok) throw Error(b.error);if (!Array.isArray(b.items) || !Array.isArray(b.roster) || typeof b.readiness?.ready !== 'boolean') throw Error('Client assignments are unavailable. Refresh to retry.');if (!c.signal.aborted) setData(b);
             } catch (e: any) { if (!c.signal.aborted) { setData(null);setMessage(e.message); } } finally { if (!c.signal.aborted) setLoading(false); }
-        }, 250);
+        }, delay);
         return () => { clearTimeout(timer);c.abort(); };
     }, [view, search, page, offset, version]);
     async function save(body: any) {

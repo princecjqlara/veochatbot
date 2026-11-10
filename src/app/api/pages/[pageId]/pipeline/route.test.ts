@@ -47,7 +47,7 @@ describe('pipeline Page-member access', () => {
 
         expect(response.status).toBe(200);
         expect((await response.json()).lead_quality.status).toBe(stage==='not_qualified'?'poor':'good');
-        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1');
+        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('collaborator_1', 'page_1', expect.any(Request));
         expect(mocks.updateContactPipelineStage).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({

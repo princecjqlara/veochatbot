@@ -49,7 +49,7 @@ describe('GET /api/exports', () => {
         const body = await response.json();
 
         expect(response.status).toBe(200);
-        expect(mocks.getUserPageIds).toHaveBeenCalledWith('user_2');
+        expect(mocks.getUserPageIds).toHaveBeenCalledWith('user_2', undefined, expect.any(Request));
         expect(builder.in).toHaveBeenCalledWith('page_id', ['page_1', 'page_2']);
         expect(body.jobs).toEqual([{
             id: 'job_from_user_1',

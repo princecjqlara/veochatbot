@@ -81,7 +81,7 @@ describe('GET /api/exports/[exportId]/download', () => {
         expect(response.headers.get('content-disposition')).toBe('attachment; filename="my-page-conversations.csv"');
         expect(await response.text()).toBe('pageId,pageName\n"page_1","My Page"\n"page_1","My Page"');
         expect(download).toHaveBeenCalledTimes(2);
-        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_2', 'page_1');
+        expect(mocks.userHasPageAccess).toHaveBeenCalledWith('user_2', 'page_1', expect.any(Request));
     });
 
     it('does not expose an unfinished export', async () => {

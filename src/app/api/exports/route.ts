@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
         const userId = session?.user?.id;
         if (!userId) return NextResponse.json({ message: 'Please sign in.' }, { status: 401 });
 
-        const pageIds = await getUserPageIds(userId);
+        const pageIds = await getUserPageIds(userId, undefined, request);
         if (pageIds.length === 0) return NextResponse.json({ jobs: [] });
 
         let query = getSupabaseAdmin()

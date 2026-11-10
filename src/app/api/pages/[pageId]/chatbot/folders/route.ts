@@ -12,6 +12,8 @@ import {
     type ChatbotDriveFolder
 } from '@/lib/chatbot-drive-folders';
 import { getGoogleDriveSyncStatus } from '@/lib/google-drive';
+import { fetchAllSupabaseRows } from '@/lib/supabase-pagination';
+export const dynamic = 'force-dynamic';
 
 export const maxDuration = 300;
 
@@ -19,7 +21,7 @@ async function authorize(request: NextRequest, pageId: string) {
     const session = await getSessionFromRequest(request);
     const userId = session?.user?.id;
     if (!userId) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-    if (!await userHasPageAccess(userId, pageId)) {
+    if (!await userHasPageAccess(userId, pageId, request)) {
         return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
     }
     return { userId };
@@ -34,25 +36,24 @@ export async function GET(
         const authorization = await authorize(request, pageId);
         if (authorization.error) return authorization.error;
 
-        const supabase = getSupabaseAdmin();
-        const [{ data, error }, { data: files, error: filesError }] = await Promise.all([
-            supabase.from('chatbot_drive_folders')
+        const supabase = getSupabaseAdmin(request.signal);
+        const [data, files] = await Promise.all([
+            fetchAllSupabaseRows(supabase.from('chatbot_drive_folders')
                 .select(CHATBOT_DRIVE_FOLDER_FIELDS)
                 .eq('page_id', pageId)
-                .order('created_at', { ascending: false }),
-            supabase.from('chatbot_drive_files')
+                .order('created_at', { ascending: false }).order('id')),
+            fetchAllSupabaseRows(supabase.from('chatbot_drive_files')
                 .select(CHATBOT_DRIVE_FILE_FIELDS)
                 .eq('page_id', pageId)
-                .order('name', { ascending: true })
+                .order('name', { ascending: true }).order('id'))
         ]);
-        if (error) throw error;
-        if (filesError) throw filesError;
         return NextResponse.json({
             folders: (data || []) as unknown as ChatbotDriveFolder[],
             files: (files || []) as unknown as ChatbotDriveFile[],
             drive_sync: getGoogleDriveSyncStatus()
-        });
+        }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
+        if (request.signal.aborted) return new NextResponse(null, { status: 499 });
         console.error('[CHATBOT_DRIVE_FOLDERS_GET]', error);
         return NextResponse.json(
             { error: 'Failed to load Drive folders', message: (error as Error).message },

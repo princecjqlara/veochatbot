@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { userHasPageAccess } from '@/lib/page-access';
+import { fetchAllSupabaseRows } from '@/lib/supabase-pagination';
+export const dynamic = 'force-dynamic';
 import {
     ingestChatbotKnowledge,
     MAX_KNOWLEDGE_CHARACTERS
@@ -11,7 +13,7 @@ async function authorize(request: NextRequest, pageId: string) {
     const session = await getSessionFromRequest(request);
     const userId = session?.user?.id;
     if (!userId) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-    if (!await userHasPageAccess(userId, pageId)) {
+    if (!await userHasPageAccess(userId, pageId, request)) {
         return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
     }
     return { userId };
@@ -26,15 +28,15 @@ export async function GET(
         const authorization = await authorize(request, pageId);
         if (authorization.error) return authorization.error;
 
-        const { data, error } = await getSupabaseAdmin()
+        const data = await fetchAllSupabaseRows(getSupabaseAdmin(request.signal)
             .from('chatbot_knowledge_documents')
             .select('id, page_id, title, source_type, original_filename, char_count, chunk_count, status, error_message, created_at, updated_at')
             .eq('page_id', pageId)
-            .order('created_at', { ascending: false });
-        if (error) throw error;
+            .order('created_at', { ascending: false }).order('id'));
 
-        return NextResponse.json({ documents: data || [] });
+        return NextResponse.json({ documents: data }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
+        if (request.signal.aborted) return new NextResponse(null, { status: 499 });
         console.error('[CHATBOT_KNOWLEDGE_GET]', error);
         return NextResponse.json(
             { error: 'Failed to load chatbot knowledge', message: (error as Error).message },

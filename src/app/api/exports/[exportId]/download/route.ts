@@ -27,7 +27,7 @@ export async function GET(
         .maybeSingle();
 
     if (error) return NextResponse.json({ message: error.message }, { status: 500 });
-    if (!job || !await userHasPageAccess(userId, job.page_id)) {
+    if (!job || !await userHasPageAccess(userId, job.page_id, request)) {
         return NextResponse.json({ message: 'Export not found.' }, { status: 404 });
     }
     if (job.status !== 'completed') {

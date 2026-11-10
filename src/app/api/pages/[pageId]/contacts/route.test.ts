@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
     getServerSession: vi.fn(),
-    getSupabaseAdmin: vi.fn()
+    getSupabaseAdmin: vi.fn(), controls: vi.fn()
 }));
 
 vi.mock('next-auth', () => ({
@@ -17,6 +17,7 @@ vi.mock('@/lib/auth', () => ({
 vi.mock('@/lib/supabase', () => ({
     getSupabaseAdmin: mocks.getSupabaseAdmin
 }));
+vi.mock('@/lib/contact-controls', () => ({ contactControls: mocks.controls }));
 
 import { GET } from './route';
 
@@ -32,6 +33,7 @@ function createSupabaseMock(options?: {
     includeContactIds?: string[];
     excludeContactIds?: string[];
     contactsData?: Array<Record<string, unknown>>;
+    tagError?: string;
 }) {
     const userPageSingle = vi.fn().mockResolvedValue({ data: { page_id: 'page_1' }, error: null });
     const userPageEqPage = vi.fn().mockReturnValue({ single: userPageSingle });
@@ -123,10 +125,9 @@ function createSupabaseMock(options?: {
             }))
             : []
     );
-    const contactTagRowsIn = vi.fn().mockResolvedValue({
-        data: contactTagRows,
-        error: null
-    });
+    const contactTagRowsQuery: any = { order: () => contactTagRowsQuery,
+        range: vi.fn(async (from: number, to: number) => ({ data: contactTagRows.slice(from, to + 1), error: options?.tagError ? { message: options.tagError } : null })) };
+    const contactTagRowsIn = vi.fn().mockReturnValue(contactTagRowsQuery);
     const contactTagsSelect = vi.fn((columns: string) => {
         if (columns.includes('tag_id')) {
             return { in: contactTagRowsIn };
@@ -173,6 +174,7 @@ function createSupabaseMock(options?: {
         contactsOrder: contactsBuilder.order,
         contactTagsIn,
         contactTagRowsIn,
+        contactTagRowsQuery,
         contactTagsEq
     };
 }
@@ -180,6 +182,20 @@ function createSupabaseMock(options?: {
 describe('GET /api/pages/[pageId]/contacts', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.controls.mockReset().mockResolvedValue(new Map([['contact_1', { bot_control: { enabled: true } }]]));
+    });
+
+    it('returns all requested tags beyond a PostgREST page and never silently omits a failed source', async () => {
+        mocks.getServerSession.mockResolvedValue({ user: { id: 'user_1' } });
+        const tags = Array.from({ length: 1101 }, (_, i) => ({ tag_id: 'tag-' + i, tags: { id: 'tag-' + i, name: 'Tag ' + i } }));
+        const db = createSupabaseMock({ contactsData: [{ id: 'contact_1', page_id: 'page_1', contact_tags: tags }] });mocks.getSupabaseAdmin.mockReturnValue(db);
+        const request = () => GET(createRequest('http://localhost:3000/api/pages/page_1/contacts?includeControls=true'), { params: Promise.resolve({ pageId: 'page_1' }) });
+        const response = await request();expect(response.status).toBe(200);expect((await response.json()).items[0].tags).toHaveLength(1101);
+        expect(db.contactTagRowsQuery.range).toHaveBeenCalledTimes(2);
+        mocks.controls.mockRejectedValueOnce(Error('controls unavailable'));
+        expect((await request()).status).toBe(503);
+        mocks.getSupabaseAdmin.mockReturnValue(createSupabaseMock({ tagError: 'tags unavailable' }));
+        const failed = await request();expect(failed.status).toBe(503);expect((await failed.json()).items).toBeUndefined();
     });
 
     it('includes who added each tag in contact results', async () => {

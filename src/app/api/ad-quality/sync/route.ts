@@ -9,7 +9,7 @@ export async function POST(request:NextRequest){
  if(request.headers.get('origin')!==request.nextUrl.origin)return NextResponse.json({error:'Same-origin request required'},{status:403});
  let body;try{body=await request.json();}catch{return NextResponse.json({error:'Invalid JSON'},{status:400});}
  if(!body||!/^act_\d{1,100}$/.test(body.accountId||'')||body.after!=null&&(typeof body.after!=='string'||body.after.length>4096))return NextResponse.json({error:'Choose a Facebook ad account'},{status:400});
- const ids=await getUserPageIds(session.user.id);if(body.pageId&&!ids.includes(body.pageId))return NextResponse.json({error:'Forbidden'},{status:403});
+ const ids=await getUserPageIds(session.user.id, undefined, request);if(body.pageId&&!ids.includes(body.pageId))return NextResponse.json({error:'Forbidden'},{status:403});
  if(!session.accessToken)return NextResponse.json({error:'Connect Facebook ad-account read access first',requiresReconnect:true},{status:409});
  const db=getSupabaseAdmin(),pages=await db.from('pages').select('id,fb_page_id').in('id',body.pageId?[body.pageId]:ids);if(pages.error)return NextResponse.json({error:'Could not load your Pages'},{status:503});
  const allowed=new Map((pages.data||[]).map(p=>[p.fb_page_id,p.id]));

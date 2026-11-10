@@ -1,8 +1,8 @@
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceEnabled, workspaceScope } from './veo-workspace';
 
-export async function getUserPageIds(userId: string, signal?: AbortSignal): Promise<string[]> {
-    if (workspaceEnabled()) return (await workspaceScope(userId))?.page_ids || [];
+export async function getUserPageIds(userId: string, signal?: AbortSignal, request?: object): Promise<string[]> {
+    if (workspaceEnabled()) return (await workspaceScope(userId, request))?.page_ids || [];
     const query = getSupabaseAdmin()
         .from('user_pages')
         .select('page_id')
@@ -12,8 +12,8 @@ export async function getUserPageIds(userId: string, signal?: AbortSignal): Prom
     return [...new Set((data || []).map((membership) => membership.page_id))];
 }
 
-export async function userHasPageAccess(userId: string, pageId: string): Promise<boolean> {
-    if (workspaceEnabled()) return Boolean((await workspaceScope(userId))?.page_ids.includes(pageId));
+export async function userHasPageAccess(userId: string, pageId: string, request?: object): Promise<boolean> {
+    if (workspaceEnabled()) return Boolean((await workspaceScope(userId, request))?.page_ids.includes(pageId));
     const { data, error } = await getSupabaseAdmin()
         .from('user_pages')
         .select('page_id')

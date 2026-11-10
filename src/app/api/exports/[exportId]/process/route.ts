@@ -24,7 +24,7 @@ export async function POST(
         .maybeSingle();
 
     if (lookupError) return NextResponse.json({ message: lookupError.message }, { status: 500 });
-    if (!accessibleJob || !await userHasPageAccess(userId, accessibleJob.page_id)) {
+    if (!accessibleJob || !await userHasPageAccess(userId, accessibleJob.page_id, request)) {
         return NextResponse.json({ message: 'Export not found.' }, { status: 404 });
     }
     if (accessibleJob.status !== 'queued' && accessibleJob.status !== 'running') {

@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     try { range = adQualityRange(request.nextUrl.searchParams); }
     catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 400 }); }
     try {
-        const memberships = await getUserPageIds(session.user.id), requested = request.nextUrl.searchParams.get('pageId');
+        const memberships = await getUserPageIds(session.user.id, undefined, request), requested = request.nextUrl.searchParams.get('pageId');
         if (requested && !memberships.includes(requested)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         const ids = requested ? [requested] : memberships;
         if (!ids.length) return NextResponse.json({ range, pages: [], generated_at: range.generated_at }, { headers: { 'Cache-Control': 'no-store' } });

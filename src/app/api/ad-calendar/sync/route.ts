@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
   from = phtDate(Date.parse(range.from!)); to = phtDate(Date.parse(range.to) - 1);
   if (Date.parse(to) - Date.parse(from) > 6 * 86400000) throw Error('Refresh at most seven reporting dates per batch');
  } catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
- const memberships = await getUserPageIds(session.user.id);
+ const memberships = await getUserPageIds(session.user.id, undefined, request);
  if (body.pageId && !memberships.includes(body.pageId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
  if (!session.accessToken) return NextResponse.json({ error: 'Connect Facebook ad-account read access before importing actual spend.', requiresReconnect: true }, { status: 409 });
  try {

@@ -14,7 +14,7 @@ async function access(request: NextRequest, context: Context) {
     const { pageId } = await context.params;
     const session = await getSessionFromRequest(request);
     if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    if (!await userHasPageAccess(session.user.id, pageId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!await userHasPageAccess(session.user.id, pageId, request)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     return pageId;
 }
 
