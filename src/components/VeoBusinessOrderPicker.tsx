@@ -1,25 +1,50 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { startAdaptivePolling } from '@/lib/adaptive-polling';
 const money = (n: number, currency: string) => new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(n / 100);
 export default function VeoBusinessOrderPicker({ contactId, seller, closedDealId, dealMode, onSaved }: {
     contactId: string; seller: string; closedDealId: string; dealMode: 'new' | 'existing'; onSaved: (id: string) => void;
 }) {
     const [data, setData] = useState<any>(null), [selected, setSelected] = useState(''), [busy, setBusy] = useState(false), [message, setMessage] = useState('');
+    const [waiting, setWaiting] = useState(false);
+    const generation = useRef(0), mounted = useRef(true);
+    const currentContact = useRef(contactId); currentContact.current = contactId;
     const active = useRef('');active.current = `${contactId}:${seller}:${closedDealId}:${dealMode}`;
+    const receive = useCallback((body: any) => {
+        if (!Array.isArray(body.items)) throw Error('The complete Facebook order list is unavailable. Retry Fetch Facebook orders.');
+        setData(body); setSelected(current => body.items.some((item: any) => item.id === current) ? current : '');
+        const job = body.source?.sync;
+        const pending = ['pending', 'processing', 'failed'].includes(job?.status) || body.queued === true && job?.status !== 'idle';
+        setWaiting(pending);
+        setMessage(pending ? job?.last_error ? `${job.last_error}. Facebook refresh will retry automatically.` : 'Facebook refresh queued or running. Saved orders are shown below; this list updates automatically when the check finishes.'
+            : body.items.length ? body.source?.evidence?.coverage || body.scan?.coverage || 'Saved Facebook orders loaded. Choose the matching invoice.'
+                : 'No accessible order notice with an invoice ID and total was returned. Create the order in Business Suite, then fetch again. Meta may not expose every order.');
+    }, []);
     useEffect(() => {
-        setData(null);setSelected('');setMessage('');const c = new AbortController();
+        mounted.current = true; const issue = ++generation.current;
+        setData(null);setSelected('');setMessage('');setWaiting(false);const c = new AbortController();
         void fetch('/api/workspace/business-orders?' + new URLSearchParams({ contact_id: contactId }), { cache: 'no-store', signal: c.signal }).then(async r => {
-            const b = await r.json();if (!r.ok) throw Error(b.error);if (!c.signal.aborted) setData(b);
-        }).catch(e => { if (!c.signal.aborted) setMessage(e.message); });
-        return () => c.abort();
-    }, [contactId]);
+            const b = await r.json();if (!r.ok) throw Error(b.error);if (!c.signal.aborted && issue === generation.current) receive(b);
+        }).catch(e => { if (!c.signal.aborted && issue === generation.current) setMessage(e.message); });
+        return () => { c.abort(); mounted.current = false; generation.current++; };
+    }, [contactId, receive]);
+    useEffect(() => {
+        if (!waiting || busy) return;
+        return startAdaptivePolling(async signal => {
+            const issue = ++generation.current;
+            try {
+                const r = await fetch('/api/workspace/business-orders?' + new URLSearchParams({ contact_id: contactId }), { cache: 'no-store', signal });
+                const body = await r.json(); if (!r.ok) throw Error(body.error || 'Could not check Facebook refresh progress.');
+                if (!signal.aborted && issue === generation.current) receive(body);
+            } catch (e: any) { if (!signal.aborted && issue === generation.current) setMessage(`${e.message || 'Progress is unavailable.'} Refresh status will be checked again.`); throw e; }
+        }, { intervalMs: 5000 });
+    }, [waiting, busy, contactId, receive]);
     async function refresh() {
-        const key = active.current;setBusy(true);setMessage('');
+        const requested = contactId, issue = ++generation.current;setBusy(true);setMessage('');
         try {
             const r = await fetch('/api/workspace/business-orders?' + new URLSearchParams({ contact_id: contactId }), { method: 'POST' }), b = await r.json();
-            if (!r.ok) throw Error(b.error);if (active.current !== key) return;setData(b);
-            setMessage(b.items.length ? b.scan.coverage : 'No accessible order notice with an invoice ID and total was returned. Create the order in Business Suite, then fetch again. Meta may not expose every order.');
-        } catch (e: any) { if (active.current === key) setMessage(e.message); }finally { setBusy(false); }
+            if (!r.ok) throw Error(b.error);if (!mounted.current || currentContact.current !== requested || issue !== generation.current) return;receive(b);
+        } catch (e: any) { if (mounted.current && currentContact.current === requested && issue === generation.current) setMessage(e.message); }finally { if (mounted.current) setBusy(false); }
     }
     async function link() {
         const key = active.current;setBusy(true);setMessage('');
