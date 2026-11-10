@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
         if (!session?.user?.id) return NextResponse.json({ error: 'Sign in required' }, { status: 401 });
         const scope = await workspaceScope(session.user.id, request);
         if (!scope?.launch_at || !['owner', 'team_leader'].includes(scope.role)) return NextResponse.json({ error: 'Calendar requires Owner or Team Leader access' }, { status: 403 });
+        if (!scope.page_ids.length) return NextResponse.json({ error: 'No Pages are assigned to this account' }, { status: 403 });
         const q = request.nextUrl.searchParams, month = q.get('month') || philippineDate().slice(0, 7), page = q.get('page_id') || null;
         let range: ReturnType<typeof calendarRange>;
         try { range = calendarRange(month); }
@@ -35,13 +36,13 @@ export async function GET(request: NextRequest) {
           }
         const from = range.days[0] > launchDay ? range.days[0] : launchDay;
         const to = range.days.at(-1)! < range.today ? range.days.at(-1)! : range.today;
-        const [input, finance] = await Promise.all([loadVeoCalendarInputs(db, scope.user_id, page ? [page] : scope.page_ids, range.days[0], range.days.at(-1)!, null),
+        const [input, finance] = await Promise.all([loadVeoCalendarInputs(db, scope.user_id, page ? [page] : scope.page_ids, range.days[0], range.days.at(-1)!, null, { allPages: !page }),
             from > to ? Promise.resolve({ data: { days: [] }, error: null }) : db.rpc('veo_finance_days', { p_actor: scope.user_id, p_from: from, p_to: to, p_page: page })]);
         if (finance.error) throw Object.assign(new Error('Calendar salary could not be completed. Retry shortly.'), { status: finance.error.code === '42501' ? 403 : 503 });
         return { input, finance: { salary_days: finance.data?.days || [] } };
         }, refresh);
         const details = await detailCache(scopeKey + ':' + monthly.input.as_of + ':' + day,
-            () => loadVeoCalendarDetails(db, scope.user_id, page ? [page] : scope.page_ids, day), refresh);
+            () => loadVeoCalendarDetails(db, scope.user_id, page ? [page] : scope.page_ids, day, { allPages: !page }), refresh);
         return NextResponse.json(buildVeoCalendar({ ...monthly.input, ...details }, monthly.finance, month, day, page), { headers: { 'Cache-Control': 'no-store' } });
     } catch (e: any) { return NextResponse.json({ error: e.message || 'Calendar unavailable' }, { status: e.status || 503, headers: { 'Cache-Control': 'no-store' } }); }
 }

@@ -18,8 +18,8 @@ it.each(['member', 'manager'])('denies %s calendar analytics before reading data
 it('restores pre-launch historical reporting across all assigned Pages', async () => {
     const r = await GET(new NextRequest('https://veo.test/api/workspace/calendar?month=2020-01&day=2020-01-05'));
     expect(r.status).toBe(200); expect(r.headers.get('cache-control')).toBe('no-store');
-    expect(m.load).toHaveBeenCalledWith(m, 'owner', [page], '2020-01-01', '2020-01-31', null);
-    expect(m.details).toHaveBeenCalledWith(m, 'owner', [page], '2020-01-05');
+    expect(m.load).toHaveBeenCalledWith(m, 'owner', [page], '2020-01-01', '2020-01-31', null, { allPages: true });
+    expect(m.details).toHaveBeenCalledWith(m, 'owner', [page], '2020-01-05', { allPages: true });
     expect(m.rpc).not.toHaveBeenCalled();
 });
 it('includes current branch membership and Page grants in report cache keys', async () => {
@@ -45,4 +45,11 @@ it('prepares current planning once and reads authoritative salary days without r
     await GET(new NextRequest('https://veo.test/api/workspace/calendar?month=2026-11&day=2026-11-06'));
     expect(m.rpc.mock.calls.map(c => c[0])).toEqual(['veo_calendar_prepare', 'veo_finance_days']);
     expect(m.rpc).toHaveBeenCalledWith('veo_finance_days', expect.objectContaining({ p_actor: 'owner', p_from: '2026-11-05', p_page: null }));
+});
+it('keeps a chosen Page explicit and rejects accounts without assigned Pages before reading reports', async () => {
+    await GET(new NextRequest('https://veo.test/api/workspace/calendar?page_id=' + page));
+    expect(m.load).toHaveBeenCalledWith(m, 'owner', [page], '2026-11-01', '2026-11-30', null, { allPages: false });
+    m.load.mockClear(); m.scope.mockResolvedValue({ user_id: 'owner', role: 'owner', launch_at: '2026-11-05', page_ids: [] });
+    expect((await GET(new NextRequest('https://veo.test/api/workspace/calendar'))).status).toBe(403);
+    expect(m.load).not.toHaveBeenCalled();
 });
