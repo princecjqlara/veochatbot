@@ -316,12 +316,12 @@ export default function TagsPage() {
     };
 
     return (
-        <div className="p-6 md:p-8 max-w-[1400px] mx-auto fade-in">
+        <div className="dashboard-page fade-in">
             {/* Header */}
-            <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
+            <div className="flex flex-col items-start justify-between gap-4 md:flex-row md:items-end">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight mb-2">Tags</h1>
-                    <p className="font-mono text-sm text-gray-500">
+                    <p className="max-w-2xl text-sm leading-6 text-slate-500">
                         Organize contacts and review their stage history
                     </p>
                 </div>

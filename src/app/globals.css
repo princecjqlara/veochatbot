@@ -3,19 +3,19 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #000000;
+  --background: #f6f8fc;
+  --foreground: #172033;
 
-  --muted: #f4f4f5;
-  --muted-foreground: #71717a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
 
   --card: #ffffff;
-  --card-foreground: #000000;
+  --card-foreground: #172033;
 
   --popover: #ffffff;
-  --popover-foreground: #000000;
+  --popover-foreground: #172033;
 
-  --primary: #000000;
+  --primary: #3346b0;
   --primary-foreground: #ffffff;
 
   --secondary: #f4f4f5;
@@ -27,11 +27,11 @@
   --destructive: #ef4444;
   --destructive-foreground: #fafafa;
 
-  --border: #000000;
-  --input: #000000;
-  --ring: #000000;
+  --border: #dde4ee;
+  --input: #cbd5e1;
+  --ring: #6366f1;
 
-  --radius: 0px;
+  --radius: 12px;
 }
 
 /* Reset basics */
@@ -43,6 +43,7 @@ body {
   background-color: var(--background);
   color: var(--foreground);
   font-feature-settings: "rlig" 1, "calt" 1;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Typography Overrides */
@@ -54,7 +55,7 @@ h5,
 h6 {
   letter-spacing: -0.02em;
   font-weight: 700;
-  text-transform: uppercase;
+  text-wrap: balance;
 }
 
 /* Wireframe Components */
@@ -62,7 +63,7 @@ h6 {
 
   /* Wireframe Card */
   .wireframe-card {
-    @apply border border-black bg-white p-6 relative;
+    @apply relative rounded-xl border bg-white p-4 shadow-sm sm:p-6;
   }
 
   /* Diagonal Split Background (Concept from inspo) */
@@ -80,43 +81,44 @@ h6 {
 
   /* Sharp Button */
   .btn-wireframe {
-    @apply inline-flex items-center justify-center border border-black bg-white text-black px-6 py-3 text-sm font-bold uppercase transition-colors hover:bg-black hover:text-white disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50;
   }
 
   .btn-wireframe-dark {
-    @apply inline-flex items-center justify-center border border-black bg-black text-white px-6 py-3 text-sm font-bold uppercase transition-colors hover:bg-white hover:text-black disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-900 bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:pointer-events-none disabled:opacity-50;
   }
 
   /* Wireframe Input */
   .input-wireframe {
-    @apply flex h-10 w-full border border-black bg-transparent px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-black disabled:cursor-not-allowed disabled:opacity-50;
+    @apply flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-50;
   }
 
   /* Label */
   .label-wireframe {
-    @apply text-xs font-bold uppercase tracking-wider mb-1 block;
+    @apply mb-1.5 block text-xs font-semibold tracking-wide text-slate-600;
   }
 
   /* Wireframe Modal */
   .modal-backdrop {
-    @apply fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4;
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-6;
   }
 
   .modal {
-    @apply bg-white border-2 border-black p-0 w-full max-h-[90vh] overflow-y-auto;
+    @apply w-full overflow-y-auto rounded-2xl border bg-white p-0 shadow-xl;
+    max-height: 90dvh;
   }
 
   /* Wireframe Table */
   .table-wireframe {
-    @apply w-full border-collapse border border-black text-sm;
+    @apply w-full border-collapse text-sm;
   }
 
   .table-wireframe th {
-    @apply border-b border-black bg-gray-100 p-4 text-left font-bold uppercase tracking-wider;
+    @apply border-b bg-slate-50 px-4 py-3 text-left text-xs font-semibold tracking-wide text-slate-500;
   }
 
   .table-wireframe td {
-    @apply border-b border-black p-4;
+    @apply border-b px-4 py-3.5 align-top;
   }
 
   .table-wireframe tr:last-child td {
@@ -125,13 +127,60 @@ h6 {
 
   /* Badge */
   .badge-wireframe {
-    @apply inline-flex items-center rounded-none border border-black px-2.5 py-0.5 text-xs font-bold uppercase transition-colors focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2;
+    @apply inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2;
   }
 
   /* Ghost Button (for pagination/modals) */
   .btn-ghost-wireframe {
-    @apply inline-flex items-center justify-center p-2 text-black hover:bg-gray-100 transition-colors disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-lg p-2 text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50;
   }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply border-indigo-700 bg-indigo-700 text-white hover:bg-indigo-800;
+  }
+
+  .dashboard-page {
+    @apply mx-auto min-w-0 w-full max-w-[1440px] space-y-6;
+  }
+}
+
+/* Shared by every dashboard tool, including the older wireframe screens. */
+.dashboard-content { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.dashboard-content .border-black { border-color: var(--border); }
+.dashboard-content .border-2.border-black { border-width: 1px; }
+.dashboard-content .border-b-2.border-black { border-bottom-width: 1px; }
+.dashboard-page h1 { font-size: clamp(1.5rem, 2.5vw, 1.875rem); line-height: 1.25; font-weight: 750; text-transform: none; letter-spacing: -0.035em; }
+.dashboard-page h2, .dashboard-page h3 { text-transform: none; }
+.dashboard-page :where(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='hidden']), select, textarea) { border-radius: 0.5rem; max-width: 100%; }
+.dashboard-page :where(input[type='checkbox'], input[type='radio']) { accent-color: var(--primary); }
+.dashboard-page :where(button, a, input, select, textarea, summary):focus-visible,
+.dashboard-sidebar :where(button, a, input, summary):focus-visible,
+.skip-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.dashboard-page :where(button:not(:disabled), summary, select:not(:disabled)) { cursor: pointer; }
+.dashboard-page :where(button:disabled, select:disabled) { cursor: not-allowed; }
+.dashboard-page :where(.overflow-x-auto) { overscroll-behavior-x: contain; }
+.dashboard-page .table-wireframe tbody tr:hover { background-color: #f8fafc; }
+.dashboard-page .table-wireframe thead th { white-space: nowrap; }
+.dashboard-page table { background-color: var(--card); }
+.dashboard-page :where(.wireframe-card, section.border.bg-white, form.border.bg-white) { border-radius: 0.875rem; }
+.dashboard-sidebar summary { list-style: none; }
+.dashboard-sidebar summary::-webkit-details-marker { display: none; }
+.dashboard-sidebar details[open] > summary .nav-chevron { transform: rotate(90deg); }
+.dashboard-sidebar { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+.skip-link { position: fixed; top: 0.75rem; left: 1rem; z-index: 100; transform: translateY(-180%); border-radius: 0.5rem; background: #172033; padding: 0.75rem 1rem; color: white; }
+.skip-link:focus { transform: translateY(0); }
+.toast { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 100; display: flex; align-items: center; gap: 1rem; width: min(28rem, calc(100vw - 3rem)); border: 1px solid; border-radius: 0.875rem; padding: 1rem; box-shadow: 0 8px 30px #17203320; font-size: 0.875rem; }
+.toast-success { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.toast-error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.toast-info { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; }
+
+@media (max-width: 639px) {
+  .dashboard-page input, .dashboard-page select, .dashboard-page textarea { font-size: 16px; }
+  .dashboard-page .table-wireframe th, .dashboard-page .table-wireframe td { padding: 0.75rem; }
 }
 
 /* Layout Utilities */
@@ -154,4 +203,8 @@ h6 {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

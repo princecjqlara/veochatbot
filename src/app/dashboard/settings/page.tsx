@@ -107,10 +107,10 @@ export default function SettingsPage() {
     };
 
     return (
-        <div className="p-6 md:p-8 max-w-[1000px] mx-auto fade-in">
+        <div className="dashboard-page fade-in">
             <div className="mb-8">
                 <h1 className="text-3xl font-black uppercase mb-2">Settings</h1>
-                <p className="font-mono text-sm text-gray-500 uppercase tracking-wide">
+                <p className="max-w-2xl text-sm leading-6 text-slate-500">
                     Manage profile and connections
                 </p>
             </div>

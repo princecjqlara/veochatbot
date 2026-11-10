@@ -98,11 +98,56 @@ describe('workspace contacts, unified deals and Owner separation', () => {
         expect(button.props['aria-expanded']).toBe(true);
     });
     it('does not display the previous area as a completed report while the next area is loading', async () => {
-        await render('owner', '');m.params = new URLSearchParams('view=accounts');
+        await render('owner', '');
+        const normal = m.fetch.getMockImplementation()!;
+        let finish!: (response: Response) => void;
+        m.fetch.mockImplementation((url: string) => url.startsWith('/api/workspace?') && url.includes('view=accounts') ? new Promise<Response>(resolve => { finish = resolve; }) : normal(url));
+        m.params = new URLSearchParams('view=accounts');
         await act(async () => { view.update(createElement(Page)); });
         expect(view.root.findByProps({ role: 'status' }).children).toContain('Loading…');
         expect(JSON.stringify(view.toJSON())).not.toContain('Create account');
-        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+        await act(async () => { finish(Response.json(dashboard('owner'))); });
         expect(JSON.stringify(view.toJSON())).toContain('Create account');
+    });
+
+    it('searches clients without repeating the dashboard finance and capacity reads', async () => {
+        await render();
+        const dashboardReads = () => m.fetch.mock.calls.filter(([url]) => url.startsWith('/api/workspace?'));
+        const before = dashboardReads().length;
+        const search = view.root.findAllByType('input').find(input => input.props.placeholder?.startsWith('Search client'))!;
+        for (const value of ['s', 'se', 'searchable']) await act(async () => search.props.onChange({ target: { value } }));
+        await act(async () => { await vi.advanceTimersByTimeAsync(249); });
+        expect(m.fetch.mock.calls.filter(([url]) => url.startsWith('/api/workspace/contacts?') && url.includes('search=searchable'))).toHaveLength(0);
+        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+        expect(m.fetch.mock.calls.filter(([url]) => url.startsWith('/api/workspace/contacts?') && url.includes('search=searchable'))).toHaveLength(1);
+        expect(dashboardReads()).toHaveLength(before);
+        expect(JSON.stringify(view.toJSON())).toContain('Searchable Client');
+    });
+
+    it('offers a retry after an unavailable workspace without presenting it as an empty successful report', async () => {
+        m.params = new URLSearchParams('view=accounts');
+        m.fetch.mockImplementation(async (url: string) => url === '/api/pages' ? Response.json({ pages: [] }) : Response.json({ error: 'Source unavailable' }, { status: 503 }));
+        await act(async () => { view = create(createElement(Page)); });
+        expect(view.root.findByProps({ role: 'alert' }).children).toContain('Source unavailable');
+        expect(JSON.stringify(view.toJSON())).not.toContain('Create account');
+        m.fetch.mockImplementation(async () => Response.json(dashboard('manager')));
+        await act(async () => view.root.findAllByType('button').find(button => button.children.includes('Try again'))!.props.onClick());
+        expect(JSON.stringify(view.toJSON())).toContain('Create account');
+    });
+
+    it('ignores a late client search response after the user has changed the search', async () => {
+        await render();
+        const normal = m.fetch.getMockImplementation()!;
+        let finish!: (response: Response) => void, signal: AbortSignal | undefined;
+        m.fetch.mockImplementation((url: string, options: any) => url.startsWith('/api/workspace/contacts?') && url.includes('search=old') ? (signal = options.signal, new Promise<Response>(resolve => { finish = resolve; })) : normal(url));
+        const search = view.root.findAllByType('input').find(input => input.props.placeholder?.startsWith('Search client'))!;
+        await act(async () => search.props.onChange({ target: { value: 'old' } }));
+        await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+        await act(async () => search.props.onChange({ target: { value: 'searchable' } }));
+        expect(signal?.aborted).toBe(true);
+        await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+        await act(async () => { finish(Response.json({ items: [{ id: 'stale', name: 'Obsolete search result' }], total: 1 })); });
+        expect(JSON.stringify(view.toJSON())).toContain('Searchable Client');
+        expect(JSON.stringify(view.toJSON())).not.toContain('Obsolete search result');
     });
 });

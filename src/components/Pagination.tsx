@@ -53,18 +53,19 @@ export default function Pagination({
     if (total === 0) return null;
 
     return (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-4">
-            <div className="flex items-center gap-4">
-                <span className="text-xs font-mono text-gray-500 uppercase">
+        <nav aria-label="Pagination" className="flex flex-col items-start justify-between gap-4 border-t border-slate-200 py-4 sm:flex-row sm:items-center">
+            <div className="flex flex-wrap items-center gap-4">
+                <span aria-live="polite" className="text-xs text-slate-500">
                     Showing <span className="text-black font-bold">{from}</span> - <span className="text-black font-bold">{to}</span> of{' '}
                     <span className="text-black font-bold">{total}</span>
                 </span>
 
                 {onPageSizeChange && (
                     <select
+                        aria-label="Rows per page"
                         value={pageSize}
                         onChange={(e) => onPageSizeChange(Number(e.target.value))}
-                        className="h-8 border border-black bg-white text-xs font-bold px-2 focus:outline-none"
+                        className="h-9 rounded-lg border bg-white px-2 text-xs font-medium"
                     >
                         <option value={10}>10 / PAGE</option>
                         <option value={25}>25 / PAGE</option>
@@ -74,11 +75,13 @@ export default function Pagination({
                 )}
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex max-w-full flex-wrap items-center gap-1">
                 <button
+                    type="button"
+                    aria-label="Previous page"
                     onClick={() => onPageChange(page - 1)}
-                    disabled={page === 1}
-                    className="btn-ghost-wireframe h-8 w-8 p-0 border border-black disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black hover:text-white"
+                    disabled={page <= 1}
+                    className="btn-ghost-wireframe h-9 w-9 border p-0 disabled:cursor-not-allowed disabled:opacity-30"
                 >
                     <ChevronLeft className="w-4 h-4" />
                 </button>
@@ -86,11 +89,14 @@ export default function Pagination({
                 {getVisiblePages().map((p, i) =>
                     typeof p === 'number' ? (
                         <button
+                            type="button"
+                            aria-label={`Page ${p}`}
+                            aria-current={p === page ? 'page' : undefined}
                             key={i}
                             onClick={() => onPageChange(p)}
-                            className={`h-8 w-8 text-xs font-bold border border-black transition-all ${p === page
-                                    ? 'bg-black text-white'
-                                    : 'bg-white text-black hover:bg-gray-100'
+                            className={`h-9 min-w-9 rounded-lg border px-2 text-xs font-semibold transition-colors ${p === page
+                                    ? 'border-indigo-600 bg-indigo-600 text-white'
+                                    : 'bg-white text-slate-600 hover:bg-slate-100'
                                 }`}
                         >
                             {p}
@@ -103,13 +109,15 @@ export default function Pagination({
                 )}
 
                 <button
+                    type="button"
+                    aria-label="Next page"
                     onClick={() => onPageChange(page + 1)}
-                    disabled={page === totalPages}
-                    className="btn-ghost-wireframe h-8 w-8 p-0 border border-black disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black hover:text-white"
+                    disabled={page >= totalPages}
+                    className="btn-ghost-wireframe h-9 w-9 border p-0 disabled:cursor-not-allowed disabled:opacity-30"
                 >
                     <ChevronRight className="w-4 h-4" />
                 </button>
             </div>
-        </div>
+        </nav>
     );
 }

@@ -100,7 +100,7 @@ function ContactProfile() {
     const difference = actualDay && priorTiming?.median_date_pht ? Math.round((Date.parse(actualDay) - Date.parse(priorTiming.median_date_pht)) / 86400000) : null;
     const timeline = (profile.timeline || []).filter((event: any) => timelineType === 'all' || (timelineType === 'payment' ? ['payment', 'chat_payment'].includes(event.type) : event.type === timelineType));
 
-    return <div className="mx-auto max-w-6xl space-y-6 p-5 text-slate-800 md:p-8">
+    return <div className="dashboard-page">
         <Link className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900" href={`/dashboard/contacts?pageId=${pageId}`}><ArrowLeft className="h-4 w-4" /> Contacts</Link>
         <header className="flex flex-wrap items-start justify-between gap-4">
             <div><p className="mb-1 text-xs font-medium uppercase tracking-widest text-slate-500">{page.name}</p><h1 className="text-3xl font-bold tracking-tight">{contact.name || 'Messenger contact'}</h1>

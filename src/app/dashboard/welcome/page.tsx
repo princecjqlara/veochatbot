@@ -130,16 +130,16 @@ export default function WelcomePage() {
     const selectedPageName = pages.find(p => p.id === selectedPageId)?.name || 'Page';
 
     return (
-        <div className="max-w-3xl mx-auto">
+        <div className="dashboard-page">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700">
                         <Hand className="w-5 h-5" />
                     </div>
                     <div>
                         <h1 className="text-xl font-bold text-black">Welcome Message</h1>
-                        <p className="text-xs text-gray-500 font-mono">Auto-greet new contacts when they first message your page</p>
+                        <p className="mt-1 text-sm leading-6 text-slate-500">Auto-greet new contacts when they first message your page</p>
                     </div>
                 </div>
                 <button

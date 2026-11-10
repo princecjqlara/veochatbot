@@ -477,7 +477,7 @@ export default function SevenDayContactsPage() {
     }
 
     return (
-        <div className="max-w-7xl mx-auto space-y-5 text-black">
+        <div className="dashboard-page">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2"><Clock3 className="w-6 h-6" />7-Day Window Contacts</h1>

@@ -7,8 +7,8 @@ import { ToastProvider } from '@/components/Toast';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'VeoBot - Facebook Page Management',
-  description: 'Manage your Facebook Page contacts, tags, and messaging in one place',
+  title: 'VEO Workspace',
+  description: 'Your VEO clients, sales, teams, and reports in one workspace.',
 };
 
 export default function RootLayout({

@@ -84,7 +84,7 @@ export default function AdQualityPage() {
     const totals = (report?.pages || []).reduce((s, p) => ({ inquiries: s.inquiries + Number(p.inquiries), attributed: s.attributed + Number(p.attributed), nq: s.nq + Number(p.not_qualified), pending: s.pending + Number(p.pending), legacy: s.legacy + Number(p.legacy_dates), missing: s.missing + Number(p.without_inquiry_timestamp) }), { inquiries: 0, attributed: 0, nq: 0, pending: 0, legacy: 0, missing: 0 });
     const allRows=visibleAdRows(report?.pages||[]),trackedCount=allRows.filter(x=>x.ad.ad_id).length;
     const rows=sortAdRows(allRows.filter(x=>(visibility==='all'||(visibility==='tracked'?!!x.ad.ad_id:!x.ad.ad_id))&&[x.page.name,x.ad.ad_name,x.ad.ad_title,x.ad.ad_id,x.ad.campaign_name].join(' ').toLowerCase().includes(search.toLowerCase())),sort);
-    return <div className="p-4 md:p-8 space-y-5 max-w-full min-w-0">
+    return <div className="dashboard-page">
         <div className="flex items-center gap-3"><BarChart3 className="w-7 h-7" /><div><h1 className="text-2xl font-bold">Ads Performance & Lead Quality</h1><p className="text-sm text-gray-600">Which ads bring inquiries that are marked not qualified?</p></div></div>
         <div className="border border-black p-4 flex flex-wrap gap-3 items-end">
             <label className="text-sm">Page<select aria-label="Page" disabled={syncing} className="block border border-black p-2 max-w-full" value={pageId} onChange={e => setPageId(e.target.value)}><option value="all">All my Pages</option>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>

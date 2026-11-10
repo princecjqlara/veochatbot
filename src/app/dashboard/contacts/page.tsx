@@ -2131,12 +2131,12 @@ export default function ContactsPage() {
     const failedErrorSummary = summarizeSendErrors(failedContactErrors);
 
     return (
-        <div className="p-6 md:p-8 max-w-[1400px] mx-auto fade-in">
+        <div className="dashboard-page fade-in">
             {/* Header */}
-            <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
+            <div className="flex flex-col items-start justify-between gap-4 md:flex-row md:items-end">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight mb-2">Contacts</h1>
-                    <p className="font-mono text-sm text-gray-500 uppercase tracking-wide">
+                    <p className="max-w-2xl text-sm leading-6 text-slate-500">
                         Open a contact for their conversation, answers, payments and timeline
                     </p>
                 </div>
@@ -2497,7 +2497,11 @@ export default function ContactsPage() {
                                                 <img
                                                     src={contact.profile_pic}
                                                     alt={contact.name || 'Contact'}
-                                                    className="w-10 h-10 border border-black grayscale"
+                                                    loading="lazy"
+                                                    decoding="async"
+                                                    width={40}
+                                                    height={40}
+                                                    className="h-10 w-10 rounded-full border border-slate-200 object-cover"
                                                 />
                                             ) : (
                                                 <div className="w-10 h-10 border border-black bg-gray-100 flex items-center justify-center">

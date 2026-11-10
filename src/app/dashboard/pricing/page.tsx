@@ -139,7 +139,7 @@ export default function PricingPage() {
     const catalogDurations = [...new Set((report?.packages || []).flatMap(pkg => pkg.options?.map(option => option.duration_seconds) || []))].sort((a, b) => a - b);
     const priceLabel = (pkg: PricingExperimentDraft['packages'][number]) => pkg.options?.length ? `${pkg.options.length} duration options` : money(pkg.price);
 
-    return <div className="p-4 md:p-8 space-y-6 max-w-[1600px] mx-auto">
+    return <div className="dashboard-page">
         <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
                 <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 className="w-6 h-6" />Pricing packages</h1>

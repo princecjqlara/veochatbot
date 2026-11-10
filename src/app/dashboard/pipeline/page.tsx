@@ -230,7 +230,7 @@ export default function PipelinePage() {
     }
 
     return (
-        <div className="space-y-6">
+        <div className="dashboard-page">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                     <div className="flex items-center gap-3">
@@ -384,7 +384,7 @@ export default function PipelinePage() {
                                         <td className="p-3">
                                             <div className="flex items-center gap-3">
                                                 {contact.profile_pic ? (
-                                                    <img src={contact.profile_pic} alt="" className="h-10 w-10 border border-black object-cover" />
+                                                    <img src={contact.profile_pic} alt="" loading="lazy" decoding="async" width={40} height={40} className="h-10 w-10 rounded-full border border-slate-200 object-cover" />
                                                 ) : (
                                                     <div className="flex h-10 w-10 items-center justify-center border border-black bg-gray-100"><Users className="h-4 w-4" /></div>
                                                 )}

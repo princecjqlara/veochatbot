@@ -350,7 +350,7 @@ function MessengerCarouselPreview({ mediaItems }: { mediaItems: TestMedia[] }) {
                     <article key={mediaItem.id} className="min-w-[188px] max-w-[188px] snap-start overflow-hidden rounded-xl border border-gray-300 bg-white shadow-sm">
                         {(mediaItem.media_type === 'image' || mediaItem.source === 'google_drive') && mediaItem.preview_url ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={mediaItem.preview_url} alt={mediaItem.title} className="h-32 w-full border-b border-gray-200 object-cover" />
+                            <img src={mediaItem.preview_url} alt={mediaItem.title} loading="lazy" decoding="async" className="h-32 w-full border-b border-gray-200 object-cover" />
                         ) : mediaItem.media_type === 'video' && mediaItem.preview_url ? (
                             <video src={mediaItem.preview_url} controls preload="metadata" playsInline className="h-32 w-full border-b border-gray-200 bg-black object-cover" />
                         ) : (
@@ -1288,10 +1288,10 @@ export default function ChatbotPage() {
         : 1;
 
     return (
-        <div className="max-w-6xl mx-auto pb-20">
+        <div className="dashboard-page pb-20">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between mb-6">
                 <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 border-2 border-black bg-white flex items-center justify-center shadow-[3px_3px_0_#000]">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700">
                         <Bot className="w-6 h-6" />
                     </div>
                     <div>
@@ -2505,7 +2505,7 @@ export default function ChatbotPage() {
                                             <div className="h-40 bg-gray-100 flex items-center justify-center overflow-hidden">
                                                 {asset.preview_url && asset.media_type === 'image' ? (
                                                     // eslint-disable-next-line @next/next/no-img-element
-                                                    <img src={asset.preview_url} alt={asset.title} className="w-full h-full object-contain" />
+                                                    <img src={asset.preview_url} alt={asset.title} loading="lazy" decoding="async" className="w-full h-full object-contain" />
                                                 ) : asset.preview_url && asset.media_type === 'video' ? (
                                                     <video src={asset.preview_url} controls preload="metadata" className="w-full h-full object-contain" />
                                                 ) : asset.media_type === 'video' ? (

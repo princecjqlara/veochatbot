@@ -47,3 +47,21 @@ it.each(['owner', 'team_leader'])('keeps %s Contacts and tag management availabl
         expect(links).toContain('/dashboard/contacts'); expect(links).toContain('/dashboard/tags'); expect(links).toContain('/dashboard/workspace');
     } finally { await act(async () => view.unmount()); }
 });
+
+it('finds permitted tools across collapsed groups and restores all destinations after clearing search', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ linked: true })));
+    m.session.mockReturnValue({ status: 'authenticated', data: { user: { id: 'worker', role: 'member', telegramProfileConfirmed: true, telegramUsername: 'worker' } } });
+    let view: any; await act(async () => { view = create(createElement(Layout, null, 'Workspace')); });
+    try {
+        const destinations = () => view.root.findAllByType('a').filter((a: any) => a.props.href.startsWith('/dashboard')).map((a: any) => a.props.href);
+        const before = destinations();
+        await act(async () => view.root.findByProps({ 'aria-label': 'Find a page' }).props.onChange({ target: { value: 'receipts' } }));
+        expect(destinations()).toEqual(['/dashboard/workspace', '/dashboard/workspace?view=receipts']);
+        expect(view.root.findAllByType('details').every((d: any) => d.props.open)).toBe(true);
+        await act(async () => view.root.findByProps({ 'aria-label': 'Find a page' }).props.onChange({ target: { value: 'ads performance' } }));
+        expect(destinations()).not.toContain('/dashboard/ad-quality');
+        await act(async () => view.root.findByProps({ 'aria-label': 'Clear page search' }).props.onClick());
+        expect(destinations()).toEqual(before);
+        expect(view.root.findByProps({ href: '#main-content' })).toBeTruthy();
+    } finally { await act(async () => view.unmount()); }
+});

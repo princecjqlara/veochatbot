@@ -276,12 +276,12 @@ export default function TemplatesPage() {
     };
 
     return (
-        <div className="p-6 md:p-8 max-w-[1400px] mx-auto fade-in">
+        <div className="dashboard-page fade-in">
             {/* Header */}
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
                 <div>
                     <h1 className="text-3xl font-black uppercase mb-2">Templates</h1>
-                    <p className="font-mono text-sm text-gray-500 uppercase tracking-wide">
+                    <p className="max-w-2xl text-sm leading-6 text-slate-500">
                         Facebook message template status & management
                     </p>
                 </div>

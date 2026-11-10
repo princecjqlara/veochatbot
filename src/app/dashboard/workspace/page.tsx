@@ -5,8 +5,9 @@ import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { WorkspaceContact } from '@/components/VeoWorkspaceContacts';
 import VeoDeferredSection from '@/components/VeoDeferredSection';
+import VeoPageState from '@/components/VeoPageState';
 import { createSearchSchedule } from '@/lib/search-schedule';
-const PanelLoading = () => <p role="status" className="p-4 text-sm text-slate-500">Loading…</p>;
+const PanelLoading = () => <VeoPageState title="Opening section" />;
 const VeoWorkspaceContacts = dynamic(() => import('@/components/VeoWorkspaceContacts'), { loading: PanelLoading });
 const VeoTeamsDashboard = dynamic(() => import('@/components/VeoTeamsDashboard'), { loading: PanelLoading });
 const VeoCapacitySummary = dynamic(() => import('@/components/VeoCapacitySummary'), { loading: PanelLoading });
@@ -40,6 +41,7 @@ function Workspace() {
     const dealStatus = requestedView === 'done' || params.get('status') === 'done' ? 'done' : 'closed';
     const [data, setData] = useState<any>(null), [pages, setPages] = useState<any[]>([]), [page, setPage] = useState(params.get('page_id') || '');
     const [loadedArea, setLoadedArea] = useState('');
+    const [loadError, setLoadError] = useState(''), [retry, setRetry] = useState(0);
     const [day, setDay] = useState(today()), [query, setQuery] = useState(params.get('search') || ''), [contacts, setContacts] = useState<WorkspaceContact[]>([]);
     const [contactOffset, setContactOffset] = useState(0), [contactTotal, setContactTotal] = useState(0), [contactsLoading, setContactsLoading] = useState(true), [picked, setPicked] = useState<WorkspaceContact | null>(null);
     const [contact, setContact] = useState(params.get('contact_id') || ''), [order, setOrder] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
@@ -47,7 +49,7 @@ function Workspace() {
     const [role, setRole] = useState('member'), [parent, setParent] = useState(''), [assigned, setAssigned] = useState<string[]>([]);
     const [offset, setOffset] = useState(0), pendingRequests = useRef(new Map<string, string>());
     const refreshGeneration = useRef(0);
-    const searchSchedule = useRef(createSearchSchedule(query));
+    const contactSearchSchedule = useRef(createSearchSchedule(query));
     async function refresh(signal?: AbortSignal) {
         const generation = ++refreshGeneration.current;
         const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
@@ -76,10 +78,12 @@ function Workspace() {
     }, []);
     useEffect(() => {
         const controller = new AbortController();
-        const delay = searchSchedule.current(query);
-        const timer = setTimeout(() => { refresh(controller.signal).catch(e => { if (!controller.signal.aborted) setMessage(e.message); }); }, delay);
-        return () => { controller.abort(); refreshGeneration.current++; clearTimeout(timer); };
-    }, [day, view, dealStatus, page, query, offset]); // eslint-disable-line react-hooks/exhaustive-deps
+        setLoadError('');
+        void refresh(controller.signal).catch(e => { if (!controller.signal.aborted) setLoadError(e.message || 'The workspace could not be loaded.'); });
+        return () => { controller.abort(); refreshGeneration.current++; };
+        // Area context does not use client search, page or pagination filters.
+        // Those controls refresh their own complete lists instead of reloading team finances.
+    }, [day, view, dealStatus, retry]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         const id = params.get('contact_id'); if (!id || ['new_clients', 'telegram'].includes(view)) return;
         const controller = new AbortController();
@@ -95,9 +99,10 @@ function Workspace() {
                 const filters = new URLSearchParams({ search: query, offset: String(contactOffset), ...(page ? { page_id: page } : {}) });
                 const r = await fetch(`/api/workspace/contacts?${filters}`, { signal: controller.signal });
                 const b = await r.json(); if (!r.ok) throw new Error(b.error);
+                if (controller.signal.aborted) return;
                 setContacts(b.items || []); setContactTotal(b.total || 0); setContactsLoading(false);
-            } catch (e: any) { if (e.name !== 'AbortError') { setContacts([]); setContactTotal(0); setContactsLoading(false); setMessage(e.message); } }
-        }, 250);
+            } catch (e: any) { if (!controller.signal.aborted) { setContacts([]); setContactTotal(0); setContactsLoading(false); setMessage(e.message); } }
+        }, contactSearchSchedule.current(query));
         return () => { clearTimeout(timer); controller.abort(); };
     }, [page, query, contactOffset, view, data?.scope.role]);
     async function submit(body: any) {
@@ -111,7 +116,7 @@ function Workspace() {
             setMessage('Saved.'); await refresh(); return b.saved;
         } catch (e: any) { setMessage(e.message); return null; } finally { setBusy(false); }
     }
-    if (!data || loadedArea !== view) return <div className="p-8 text-slate-900"><h1 className="text-2xl font-bold">VEO workspace</h1><p className="mt-4" role="status">{message || 'Loading…'}</p></div>;
+    if (!data || loadedArea !== view) return <VeoPageState title="VEO workspace" error={loadError} onRetry={() => setRetry(value => value + 1)} />;
     const workers = data.accounts.filter((a: any) => a.active !== false && ['member', 'manager'].includes(a.role));
     const isOwner = data.scope.role === 'owner', executive = ['owner', 'team_leader'].includes(data.scope.role);
     const activeView = !executive && ['calendar', 'budget'].includes(view) ? 'dashboard' : isOwner && !['accounts', 'sync', 'profile', 'capacity', 'performance', 'rankings', 'salary', 'calendar', 'budget', 'receipts', 'warnings', 'new_clients', 'telegram'].includes(view) ? 'dashboard' : view;
@@ -128,13 +133,14 @@ function Workspace() {
         { name: 'More', views: navViews.filter(v => ['sync', 'profile'].includes(v)) }
     ].filter(group => group.views.length);
     const formData = (e: React.FormEvent<HTMLFormElement>) => { e.preventDefault(); return Object.fromEntries(new FormData(e.currentTarget)); };
-    return <div className="mx-auto max-w-7xl p-2 md:p-4 text-slate-900 space-y-6">
+    return <div className="dashboard-page">
         <header><p className="text-xs uppercase tracking-widest">CJ Lara / VEO / {label(data.scope.role)}</p><h1 className="text-3xl font-bold mt-2">{executive && activeView === 'dashboard' ? 'Teams dashboard' : activeView === 'clients' ? 'Clients' : activeView === 'deals' ? 'Deals' : activeView === 'profile' ? 'My profile' : label(activeView)}</h1><p className="mt-2 text-sm text-slate-600">Launch: {new Date(data.scope.launch_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })} PHT. All work dates use Philippine time.</p></header>
         <details key={'area:' + activeView} className="rounded-xl border border-slate-200 bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Switch workspace area</summary><nav aria-label="Workspace areas" className="grid gap-4 border-t border-slate-100 p-4 sm:grid-cols-2 lg:grid-cols-5">{viewGroups.map(group => <div key={group.name}><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{group.name}</p>{group.views.map(v => <Link prefetch={false} aria-current={activeView === v ? 'page' : undefined} className={`block rounded px-3 py-2 text-sm ${activeView === v ? 'bg-slate-900 text-white' : 'hover:bg-slate-100'}`} key={v} href={`/dashboard/workspace?view=${v}`}>{executive && v === 'dashboard' ? 'Teams dashboard' : v === 'capacity' ? 'Capacity & Quotas' : v === 'accounts' ? 'Accounts & Teams' : v === 'profile' ? 'My profile' : label(v)}</Link>)}</div>)}</nav></details>
         {!executive && ['dashboard'].includes(activeView) && <div className="grid gap-3 md:grid-cols-3"><label>Page<select className={field} value={page} onChange={e => { setPage(e.target.value); setOffset(0); setContactOffset(0); setContact(''); setPicked(null); setOrder(''); }}><option value="">All assigned pages</option>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Client search<input className={field} value={query} maxLength={200} onChange={e => { setQuery(e.target.value); setOffset(0); setContactOffset(0); setOrder(''); }} placeholder={activeView === 'deals' ? 'Search client, seller or order' : 'Search client name, ID or saved details'} /></label><label>Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => { setDay(e.target.value); setOffset(0); }} /></label></div>}
         {(activeView === 'capacity' || (executive && activeView === 'dashboard')) && <label className="block max-w-xs">Philippine work date<input type="date" className={field} value={day} max={today()} onChange={e => setDay(e.target.value)} /></label>}
         {!executive && activeView === 'deals' && <label className="block max-w-xs font-semibold">Deal type<select className={field} value={dealStatus} onChange={e => { setOffset(0); setOrder(''); router.replace(`/dashboard/workspace?view=deals&status=${e.target.value}`); }}><option value="closed">Closed Deals</option><option value="done">Done Deals</option></select></label>}
         {message && <p role="status" className="rounded border bg-amber-50 p-3">{message}</p>}
+        {loadError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>{loadError} These are the last loaded results.</p><button type="button" className="btn" onClick={() => setRetry(value => value + 1)}>Try again</button></div>}
         {isOwner && ['dashboard', 'sync'].includes(activeView) && <VeoStorageHealth compact={activeView === 'dashboard'} />}
         {activeView === 'new_clients' && <VeoNewClients scope={data.scope} pages={pages} initialContactId={params.get('contact_id') || ''} onOpenClient={setDrawerContact} />}
         {activeView === 'telegram' && <VeoTelegramGroups />}

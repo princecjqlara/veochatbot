@@ -23,12 +23,13 @@ export default function SalesFormPage() {
         };
         void load();
     }, []);
-    return <main className="min-h-screen bg-gray-50 px-5 py-10" style={{ maxWidth: 720, margin: 'auto' }}>
+    return <main className="mx-auto min-h-screen max-w-3xl px-4 py-8 sm:px-8 sm:py-12">
         <meta name="referrer" content="no-referrer" />
-        <h1 className="text-2xl font-bold mb-3">Your commercial video details</h1>
+        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-indigo-700">VEO · Video brief</p>
+        <h1 className="mb-3 text-3xl font-bold tracking-tight">Your commercial video details</h1>
         <p role="status" className="mb-6 text-gray-700">{message}</p>
         {Object.entries(suggestions).map(([label, value]) => <p key={label} className="mb-3 text-sm text-gray-600">Suggested {label}: {value}. Please confirm this in chat if it fits your business.</p>)}
-        {!!fields.length && <form onSubmit={async eventObject => {
+        {!!fields.length && <form className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8" aria-busy={busy} onSubmit={async eventObject => {
             eventObject.preventDefault(); setBusy(true);
             event.current ||= crypto.randomUUID();
             try {

@@ -10,8 +10,9 @@ interface ToastProps {
 
 export default function Toast({ type, message, onClose }: ToastProps) {
     return (
-        <div className={`toast toast-${type}`} onClick={onClose}>
-            <span>{message}</span>
+        <div className={`toast toast-${type}`} role={type === 'error' ? 'alert' : 'status'}>
+            <span className="min-w-0 flex-1 break-words">{message}</span>
+            <button type="button" aria-label="Dismiss notification" onClick={onClose} className="shrink-0 rounded px-2 py-1 text-lg hover:bg-black/5">×</button>
         </div>
     );
 }

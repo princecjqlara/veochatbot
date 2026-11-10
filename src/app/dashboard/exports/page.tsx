@@ -139,8 +139,8 @@ export default function ExportsPage() {
     };
 
     return (
-        <div className="space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b-2 border-black pb-4">
+        <div className="dashboard-page">
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
                 <div>
                     <div className="flex items-center gap-3">
                         <FileSpreadsheet className="w-7 h-7" />

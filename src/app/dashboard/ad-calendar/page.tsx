@@ -226,7 +226,7 @@ function LegacyAdCalendar() {
   if (!data || data.range.month !== month || futureMonth || syncing || !connection?.accounts?.length || adId === 'unknown' || data.summary.spend.complete || autoImports.current.has(attempt)) return;
   autoImports.current.add(attempt); void syncRef.current();
  }, [data, connection, futureMonth, syncing, scope, today, month, adId]);
- return <div className="min-w-0 space-y-6 p-4 text-slate-800 md:p-8">
+ return <div className="dashboard-page">
   <header><h1 className="text-2xl font-bold">Ad calendar and profit</h1><p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">Each day groups the leads who first inquired that day. Later conversions and payments keep updating that original cohort. Dates use Philippine Time.</p></header>
   <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 p-4">
    <label className="text-xs font-medium">Inquiry month<input aria-label="Calendar month" type="month" min="2000-01" max="2099-12" disabled={syncing} value={month} onChange={e => changeMonth(e.target.value)} className={`${fieldStyle} mt-1 block`} /></label>

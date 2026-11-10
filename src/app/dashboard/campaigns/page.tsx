@@ -1183,12 +1183,12 @@ export default function CampaignsPage() {
     const hasCampaignMediaForMessages = Boolean(campaignMediaUrl.trim()) || messagePartMediaUrls.some((url) => url.trim());
 
     return (
-        <div className="p-6 md:p-8 max-w-[1400px] mx-auto fade-in">
+        <div className="dashboard-page fade-in">
             {/* Header */}
-            <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
+            <div className="flex flex-col items-start justify-between gap-4 md:flex-row md:items-end">
                 <div>
                     <h1 className="text-3xl font-black uppercase mb-2">Campaigns</h1>
-                    <p className="font-mono text-sm text-gray-500 uppercase tracking-wide">
+                    <p className="max-w-2xl text-sm leading-6 text-slate-500">
                         Bulk messaging and promotion management
                     </p>
                 </div>
@@ -1297,7 +1297,7 @@ export default function CampaignsPage() {
                 <>
                     <div className="grid gap-4">
                         {campaigns.map((campaign) => (
-                            <div key={campaign.id} className="wireframe-card flex flex-col md:flex-row items-start justify-between gap-6 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-shadow">
+                            <div key={campaign.id} className="wireframe-card flex flex-col items-start justify-between gap-6 transition-shadow hover:shadow-md md:flex-row">
                                 <div className="flex-1 space-y-3">
                                     <div className="flex items-center gap-3 flex-wrap">
                                         <h3 className="text-xl font-black uppercase tracking-tight">{campaign.name}</h3>

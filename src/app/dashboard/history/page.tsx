@@ -256,14 +256,14 @@ export default function HistoryPage() {
     ];
 
     return (
-        <div className="space-y-5">
-            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 border-b-2 border-black pb-4">
+        <div className="dashboard-page">
+            <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
                 <div>
                     <div className="flex items-center gap-2 mb-1">
                         <HistoryIcon className="w-6 h-6" />
                         <h1 className="text-2xl md:text-3xl font-bold text-black">Bulk History</h1>
                     </div>
-                    <p className="font-mono text-xs text-gray-600">
+                    <p className="max-w-2xl text-sm leading-6 text-slate-500">
                         Shared audit trail for everyone with access to {selectedPage?.name || 'this page'}.
                     </p>
                 </div>
@@ -401,7 +401,7 @@ function ActivityRows({ item, expanded, onToggle, errors, errorTotal, errorsLoad
                 </td>
                 <td>
                     <div className="flex items-center gap-2">
-                        {item.actor?.image ? <img src={item.actor.image} alt="" className="w-7 h-7 object-cover border border-black" /> : <span className="w-7 h-7 border border-black flex items-center justify-center"><User className="w-4 h-4" /></span>}
+                        {item.actor?.image ? <img src={item.actor.image} alt="" loading="lazy" decoding="async" width={28} height={28} className="h-7 w-7 rounded-full border border-slate-200 object-cover" /> : <span className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-slate-50"><User className="h-4 w-4" /></span>}
                         <span><span className="block text-xs font-bold">{actorLabel}</span>{item.actor?.email && item.actor.name && <span className="block font-mono text-[10px] text-gray-500">{item.actor.email}</span>}</span>
                     </div>
                 </td>
