@@ -4,6 +4,7 @@ import { createSearchSchedule } from '@/lib/search-schedule';
 import Link from 'next/link';
 import VeoEmployeeProfile from './VeoEmployeeProfile';
 import VeoStaffWarnings from './VeoStaffWarnings';
+import VeoSalaryStatement from './VeoSalaryStatement';
 const field = 'w-full rounded border border-slate-300 bg-white px-3 py-2 text-slate-900';
 const button = 'rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40';
 const today = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
@@ -13,7 +14,7 @@ type Props = { scope: any; pages: any[]; submit: (body: any) => Promise<any>; bu
 export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 'performance', refreshToken, workDate, initialSearch = '' }: Props) {
     const launch = new Date(new Date(scope.launch_at).getTime() + 8 * 3600000).toISOString().slice(0, 10);
     const recentStart = new Date(Date.now() - 29 * 86400000 + 8 * 3600000).toISOString().slice(0, 10);
-    const [from, setFrom] = useState(['clients', 'performance', 'rankings'].includes(mode) ? launch > recentStart ? launch : recentStart : today()), [to, setTo] = useState(today());
+    const [from, setFrom] = useState(['clients', 'performance', 'rankings', 'salary'].includes(mode) ? launch > recentStart ? launch : recentStart : today()), [to, setTo] = useState(today());
     const [page, setPage] = useState(''), [worker, setWorker] = useState(mode === 'clients' || scope.role === 'member' ? scope.user_id : '');
     const [status, setStatus] = useState(['closed', 'done'].includes(mode) ? mode : 'all'), [search, setSearch] = useState(initialSearch), [offset, setOffset] = useState(0);
     const [data, setData] = useState<any>(null), [employees, setEmployees] = useState<any[]>([]), [error, setError] = useState(''), [loading, setLoading] = useState(true), [version, setVersion] = useState(0);
@@ -22,15 +23,16 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
     useEffect(() => { if (['closed', 'done'].includes(mode)) { setStatus(mode); setOffset(0); } }, [mode]);
     useEffect(() => { if (mode === 'dashboard' && workDate) { setFrom(workDate); setTo(workDate); setOffset(0); } }, [workDate, mode]);
     useEffect(() => {
-        const controller = new AbortController(); setLoading(true); setError('');
+        const controller = new AbortController(); setLoading(true); setError(''); if (mode === 'salary') setData(null);
         const delay = searchSchedule.current(search);
         const timer = setTimeout(async () => {
             try {
                 const q = new URLSearchParams({ from, to, status, search, offset: String(offset), ...(page ? { page_id: page } : {}), ...(worker ? { worker_id: worker } : {}) });
                 const r = await fetch('/api/workspace/operations?' + q, { signal: controller.signal, cache: 'no-store' });
                 const b = await r.json(); if (!r.ok) throw new Error(b.error); if (!b.summary || !Array.isArray(b.orders) || !Array.isArray(b.finance?.days)) throw new Error('Performance data is unavailable; refresh to retry');
+                if (controller.signal.aborted) return;
                 setData(b); if (!worker || !employees.length) setEmployees(b.employees || []);
-            } catch (e: any) { if (e.name !== 'AbortError') setError(e.message); }
+            } catch (e: any) { if (!controller.signal.aborted && e.name !== 'AbortError') setError(e.message); }
             finally { if (!controller.signal.aborted) setLoading(false); }
         }, delay);
         return () => { clearTimeout(timer); controller.abort(); };
@@ -42,15 +44,17 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
     return <section className="rounded border bg-white p-4 md:p-5 space-y-4" aria-label="Staff performance and client history">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold">{mode === 'salary' ? 'Salary by Philippine date' : mode === 'clients' ? 'Your clients and previous orders' : 'Employee performance, clients and salary'}</h2><p className="text-xs text-slate-500">Verified records since launch. Each worker needs both personal quotas for 40%; otherwise 35%. Managers can sell and earn their own commission.</p></div><button className="underline" type="button" onClick={() => setVersion(v => v + 1)}>Refresh</button></div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-sm">From (PHT)<input type="date" min={launch} max={to} className={field} value={from} onChange={e => { setFrom(e.target.value); setOffset(0); }} /></label>
-            <label className="text-sm">Through (PHT)<input type="date" min={from} max={today()} className={field} value={to} onChange={e => { setTo(e.target.value); setOffset(0); }} /></label>
+            <label className="text-sm">From (PHT)<input aria-label="Salary and performance from date" type="date" min={launch} max={to} className={field} value={from} onChange={e => { setFrom(e.target.value); setOffset(0); }} /></label>
+            <label className="text-sm">To (PHT)<input aria-label="Salary and performance to date" type="date" min={from} max={today()} className={field} value={to} onChange={e => { setTo(e.target.value); setOffset(0); }} /></label>
             <label className="text-sm">Page<select className={field} value={page} onChange={e => { setPage(e.target.value); setOffset(0); }}><option value="">All assigned Pages</option>{pages.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
             {supervisor && <label className="text-sm">Employee<select className={field} value={worker} onChange={e => { setWorker(e.target.value); setOffset(0); }}><option value="">All staff in your branch</option>{employees.map(e => <option key={e.id} value={e.id}>{e.name}{!e.active ? ' (former staff)' : ''}</option>)}</select></label>}
         </div>
+        {mode === 'salary' && <div className="flex flex-wrap gap-3 text-sm"><button type="button" className="underline" onClick={() => { const start = new Date(Date.now() - 6 * 86400000 + 8 * 3600000).toISOString().slice(0, 10); setFrom(start < launch ? launch : start); setTo(today()); setOffset(0); }}>Last 7 days</button><button type="button" className="underline" onClick={() => { const start = today().slice(0, 7) + '-01'; setFrom(start < launch ? launch : start); setTo(today()); setOffset(0); }}>This month</button><p className="text-xs text-slate-500">Dates include both endpoints. Choose up to 93 days per report.</p></div>}
         <div className="flex gap-3 text-sm"><button type="button" className="underline" onClick={() => { setFrom(today()); setTo(today()); setOffset(0); }}>Today</button><button type="button" className="underline" onClick={() => { setFrom(launch > new Date(Date.now() - 29 * 86400000 + 8 * 3600000).toISOString().slice(0, 10) ? launch : new Date(Date.now() - 29 * 86400000 + 8 * 3600000).toISOString().slice(0, 10)); setTo(today()); setOffset(0); }}>Recent history</button></div>
         {['performance', 'rankings', 'salary'].includes(mode) && (worker ? <><VeoEmployeeProfile worker={worker} from={from} to={to} page={page} refreshToken={refreshToken} version={version} />{supervisor && <button className="underline text-sm" onClick={() => { setWorker(''); setOffset(0); }}>Back to all employees</button>}</> : <p className="text-sm text-slate-600">Select an employee, or click their name in the ranking, to open their complete performance profile.</p>)}
         {loading && <p role="status" className="text-sm">Loading verified performance…</p>}{error && <p role="alert" className="text-red-700">{error}</p>}
         {data && <>
+            {mode === 'salary' && <VeoSalaryStatement days={data.finance.days} from={from} to={to} role={scope.role} onEmployee={id => { setWorker(id); setOffset(0); }} />}
             {['performance', 'rankings', 'salary'].includes(mode) && <VeoStaffWarnings workerId={worker || undefined} compact refreshToken={refreshToken} />}
             {supervisor && <details className="rounded border p-3"><summary className="font-semibold cursor-pointer">Employee Pages, Telegram status and participation</summary><p className="text-xs text-slate-500 my-2">Last Jaucian sync: {stamp(data.telegram_sync?.last_sync_at || null)}{data.telegram_sync?.last_error ? ` · ${data.telegram_sync.last_error}` : ''}. Reported Telegram Page access is shown for review; it never grants Page permissions by itself.</p><div className="space-y-3">{data.employees.map((e: any) => <div className="border-t py-3 text-sm" key={e.id}><p className="font-semibold">{e.name} · {e.role}{!e.active && ' · removed; history retained'}</p><p>Assigned Pages: {(e.page_ids || []).map((id: string) => pages.find(p => p.id === id)?.name || 'Unavailable Page').join(', ') || 'None currently assigned'}</p><p>Telegram membership: {e.telegram?.membership || 'Not verified / mapping needed'} · last checked {stamp(e.telegram?.observed_at || null)}</p>{e.telegram?.error && <p className="text-amber-800">{e.telegram.error}; access stays active until a confirmed departure.</p>}<p>Today: {e.active_today == null ? 'Unknown' : e.active_today ? 'Active' : 'Inactive'} · Tomorrow: {e.active_tomorrow == null ? 'Unknown' : e.active_tomorrow ? 'Active' : 'Inactive'}</p>{e.active && <div className="flex flex-wrap gap-3 mt-2"><button className="underline" disabled={busy} onClick={() => save({ action: 'attendance_today', user_id: e.id, active: true })}>Active today</button><button className="underline" disabled={busy} onClick={() => save({ action: 'attendance_today', user_id: e.id, active: false })}>Inactive today</button>{e.telegram?.reported_pages?.length > 0 && <button className="underline" disabled={busy} onClick={() => save({ action: 'assign_pages', user_id: e.id, page_ids: e.telegram.reported_pages })}>Apply reviewed Telegram Page declarations</button>}</div>}</div>)}</div></details>}
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">{[['Closed Deals', 'closed'], ['Done Deals', 'done'], ['Closed, awaiting balance', 'waiting_payment'], ['Staff work overdue', 'overdue'], ['Released clients', 'released_clients']].map(([title, key]) => <button key={key} className="rounded border p-3 text-left" onClick={() => { setStatus(key === 'waiting_payment' ? 'waiting' : key === 'released_clients' ? 'released' : key); setOffset(0); }}><span className="text-xs text-slate-600">{title}</span><strong className="block text-2xl">{data.summary[key]}</strong></button>)}</div>

@@ -1,0 +1,81 @@
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+let db: PGlite;
+beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
+      CREATE TABLE users(id uuid PRIMARY KEY,is_active boolean DEFAULT true);
+      CREATE TABLE veo_tenants(id uuid PRIMARY KEY,owner_id uuid,launch_at timestamptz);
+      CREATE TABLE veo_accounts(user_id uuid PRIMARY KEY REFERENCES users(id),tenant_id uuid,active boolean DEFAULT true,telegram_username text,telegram_profile_completed_at timestamptz);
+      CREATE TABLE veo_telegram_groups(tenant_id uuid,chat_id bigint,active boolean DEFAULT true,PRIMARY KEY(tenant_id,chat_id));
+      CREATE TABLE veo_worker_mappings(user_id uuid PRIMARY KEY,telegram_user_id bigint UNIQUE);
+      CREATE TABLE veo_telegram_memberships(user_id uuid,tenant_id uuid,chat_id bigint,telegram_user_id bigint,verified_at timestamptz,verified_by uuid,PRIMARY KEY(user_id,chat_id));
+      CREATE TABLE veo_telegram_group_states(user_id uuid,chat_id bigint,FOREIGN KEY(user_id,chat_id) REFERENCES veo_telegram_memberships ON DELETE CASCADE);
+      CREATE TABLE veo_telegram_auto_states(user_id uuid,chat_id bigint,telegram_user_id bigint);
+      CREATE TABLE user_pages(user_id uuid,page_id uuid,PRIMARY KEY(user_id,page_id));
+      CREATE TABLE veo_telegram_auto_grants(user_id uuid,page_id uuid);
+      CREATE TABLE veo_intake_readiness(user_id uuid,status text,expires_at timestamptz,updated_at timestamptz);
+      CREATE TABLE veo_telegram_link_codes(user_id uuid);
+      CREATE TABLE veo_telegram_sync_state(tenant_id uuid,next_sync_at timestamptz,cursor int,auto_cursor int);
+      CREATE TABLE veo_audit(tenant_id uuid,actor_id uuid,action text,entity_id uuid,before_value jsonb,after_value jsonb);
+      CREATE TABLE retained_history(user_id uuid,salary_minor bigint,attendance_date date,client text);`);
+    await db.exec(readFileSync('supabase/migrations/202611080014_veo_telegram_dm_pairing.sql', 'utf8'));
+    await db.exec(readFileSync('supabase/migrations/202611100002_veo_telegram_relink.sql', 'utf8'));
+}, 30000);
+afterAll(async () => { await db?.close(); });
+beforeEach(async () => {
+    await db.exec('TRUNCATE users,veo_tenants,veo_accounts,veo_telegram_groups,veo_worker_mappings,veo_telegram_memberships,veo_telegram_group_states,veo_telegram_auto_states,user_pages,veo_telegram_auto_grants,veo_intake_readiness,veo_telegram_link_codes,veo_telegram_sync_state,veo_audit,veo_telegram_pairing_codes,retained_history CASCADE');
+    await db.query('INSERT INTO users VALUES($1,true),($2,true),($3,true),($4,true)', [id(1), id(2), id(3), id(4)]);
+    await db.query('INSERT INTO veo_tenants VALUES($1,$2,now()),($3,$4,now())', [id(10), id(1), id(20), id(3)]);
+    await db.query("INSERT INTO veo_accounts(user_id,tenant_id,telegram_username) VALUES($1,$5,'old_name'),($2,$5,'old_name'),($3,$6,NULL),($4,$5,NULL)", [id(1), id(2), id(3), id(4), id(10), id(20)]);
+    await db.query('INSERT INTO veo_telegram_groups VALUES($1,-123,true),($1,-456,true),($2,-999,true)', [id(10), id(20)]);
+    await db.query('INSERT INTO veo_worker_mappings VALUES($1,42),($2,99)', [id(2), id(4)]);
+    await db.query('INSERT INTO veo_telegram_memberships VALUES($1,$2,-123,42,now(),$3),($1,$2,-456,42,now(),$3)', [id(2), id(10), id(1)]);
+    await db.query('INSERT INTO veo_telegram_group_states VALUES($1,-123),($1,-456)', [id(2)]);
+    await db.query('INSERT INTO veo_telegram_auto_states VALUES($1,-123,42)', [id(2)]);
+    await db.query('INSERT INTO user_pages VALUES($1,$2),($1,$3)', [id(2), id(30), id(31)]);
+    await db.query('INSERT INTO veo_telegram_auto_grants VALUES($1,$2)', [id(2), id(31)]);
+    await db.query("INSERT INTO veo_intake_readiness VALUES($1,'ready',now()+interval '1 day',now())", [id(2)]);
+    await db.query('INSERT INTO veo_telegram_link_codes VALUES($1)', [id(2)]);
+    await db.query("INSERT INTO retained_history VALUES($1,3500,'2026-11-05','Retained client')", [id(2)]);
+    await db.query("INSERT INTO veo_telegram_sync_state VALUES($1,now()+interval '1 hour',8,4)", [id(10)]);
+});
+const issue = async (telegram = 84, tenant = id(10), chat = -123) => db.query('SELECT veo_issue_telegram_pairing($1,$2,$3,$4,$5)', [tenant, 'a'.repeat(64), telegram, chat, 'New_Name']);
+const relink = async (actor = id(2), expected = 42) => db.query<any>('SELECT veo_relink_telegram_pairing($1,$2,$3) r', [actor, 'a'.repeat(64), expected]);
+const mapping = async () => (await db.query<any>('SELECT telegram_user_id FROM veo_worker_mappings WHERE user_id=$1', [id(2)])).rows[0].telegram_user_id;
+it('atomically changes verified identity, invalidates old proofs and automatic grants, and retains manual access and history', async () => {
+    await issue(); expect((await relink()).rows[0].r).toEqual({ linked: true, telegram_user_id: '84' });
+    expect(Number(await mapping())).toBe(84);
+    expect((await db.query('SELECT page_id FROM user_pages WHERE user_id=$1', [id(2)])).rows).toEqual([{ page_id: id(30) }]);
+    expect((await db.query('SELECT telegram_user_id,chat_id FROM veo_telegram_memberships WHERE user_id=$1', [id(2)])).rows).toEqual([{ telegram_user_id: 84, chat_id: -123 }]);
+    expect((await db.query('SELECT * FROM veo_telegram_group_states')).rows).toEqual([]);
+    expect((await db.query<any>('SELECT status FROM veo_intake_readiness')).rows[0].status).toBe('busy');
+    expect((await db.query<any>('SELECT salary_minor,client FROM retained_history')).rows[0]).toEqual({ salary_minor: 3500, client: 'Retained client' });
+    const audit = (await db.query<any>('SELECT * FROM veo_audit')).rows[0]; expect(audit.before_value.telegram_user_id).toBe(42); expect(audit.after_value.telegram_user_id).toBe(84); expect(JSON.stringify(audit)).not.toContain('a'.repeat(64));
+    await expect(relink()).rejects.toThrow('expired or invalid');
+});
+it('permits a fresh code for the same linked Telegram account without removing other memberships or grants', async () => {
+    await issue(42); await relink();
+    expect((await db.query('SELECT * FROM veo_telegram_memberships')).rows).toHaveLength(2);
+    expect((await db.query('SELECT * FROM user_pages')).rows).toHaveLength(2);
+    expect((await db.query<any>('SELECT status FROM veo_intake_readiness')).rows[0].status).toBe('ready');
+});
+it('refuses another user’s Telegram identity and rolls back without consuming the code or changing the current link', async () => {
+    await issue(99); await expect(relink()).rejects.toThrow('another user'); expect(Number(await mapping())).toBe(42);
+    expect((await db.query<any>('SELECT consumed_at FROM veo_telegram_pairing_codes')).rows[0].consumed_at).toBeNull();
+});
+it.each(['expired', 'foreign', 'inactive_user', 'inactive_account', 'inactive_group', 'stale_link'])('rejects %s proof while retaining the original link', async kind => {
+    await issue();
+    if (kind === 'expired') await db.exec("UPDATE veo_telegram_pairing_codes SET expires_at=now()-interval '1 second'");
+    if (kind === 'foreign') await db.query('UPDATE veo_telegram_pairing_codes SET tenant_id=$1,chat_id=-999', [id(20)]);
+    if (kind === 'inactive_user') await db.query('UPDATE users SET is_active=false WHERE id=$1', [id(2)]);
+    if (kind === 'inactive_account') await db.query('UPDATE veo_accounts SET active=false WHERE user_id=$1', [id(2)]);
+    if (kind === 'inactive_group') await db.exec('UPDATE veo_telegram_groups SET active=false WHERE chat_id=-123');
+    await expect(relink(id(2), kind === 'stale_link' ? 41 : 42)).rejects.toThrow(); expect(Number(await mapping())).toBe(42);
+});
+it('keeps ordinary linking unable to replace identities and keeps the relink function private', async () => {
+    await issue(); await expect(db.query('SELECT veo_confirm_telegram_pairing($1,$2)', [id(2), 'a'.repeat(64)])).rejects.toThrow('already linked');
+    const row = (await db.query<any>("SELECT has_function_privilege('anon','veo_relink_telegram_pairing(uuid,text,bigint)','EXECUTE') OR has_function_privilege('authenticated','veo_relink_telegram_pairing(uuid,text,bigint)','EXECUTE') public")).rows[0]; expect(row.public).toBe(false);
+});

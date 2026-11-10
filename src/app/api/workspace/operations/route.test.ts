@@ -2,13 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 const m = vi.hoisted(() => ({ session: vi.fn(), scope: vi.fn(), rpc: vi.fn() }));
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: m.session }));
-vi.mock('@/lib/veo-workspace', () => ({ workspaceScope: m.scope, philippineDate: () => '2026-11-06', uuid: (s: string) => /^[0-9a-f-]{36}$/.test(s) }));
+vi.mock('@/lib/veo-workspace', () => ({ workspaceScope: m.scope, philippineDate: (value?: Date) => value ? value.toISOString().slice(0, 10) : '2026-11-06', uuid: (s: string) => /^[0-9a-f-]{36}$/.test(s) }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
 import { GET } from './route';
 const page = '00000000-0000-4000-8000-000000000001', worker = '00000000-0000-4000-8000-000000000003';
 beforeEach(() => { m.session.mockResolvedValue({ user: { id: worker } }); m.scope.mockResolvedValue({ user_id: worker, role: 'member', launch_at: '2026-11-05', page_ids: [page] }); m.rpc.mockResolvedValue({ data: { verified: true } }); });
 afterEach(() => { vi.clearAllMocks(); });
 describe('role-protected performance and actual-salary calendar', () => {
+    it.each(['owner', 'team_leader', 'manager'])('reads inclusive salary dates with the authenticated %s scope', async role => {
+        m.scope.mockResolvedValue({ user_id: worker, role, launch_at: '2026-11-01', page_ids: [page] });
+        expect((await GET(new NextRequest(`https://veo.test/api/workspace/operations?from=2026-11-02&to=2026-11-05&worker_id=${page}`))).status).toBe(200);
+        expect(m.rpc).toHaveBeenCalledWith('veo_operations', expect.objectContaining({ p_actor: worker, p_from: '2026-11-02', p_to: '2026-11-05', p_worker: page }));
+    });
+    it.each(['from=2026-11-06&to=2026-11-05', 'from=2026-11-05&to=2026-11-07', 'from=2026-11-04&to=2026-11-06'])('rejects out-of-range dates %s before reading salary data', async query => {
+        expect((await GET(new NextRequest('https://veo.test/api/workspace/operations?' + query))).status).toBe(400); expect(m.rpc).not.toHaveBeenCalled();
+    });
     it.each(['member', 'manager'])('denies the calendar to %s on the server', async role => {
         m.scope.mockResolvedValue({ user_id: worker, role, launch_at: '2026-11-05', page_ids: [page] });
         expect((await GET(new NextRequest('https://veo.test/api/workspace/operations?view=calendar'))).status).toBe(403);

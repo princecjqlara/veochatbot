@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
             const from = q.get('from') || philippineDate(), to = q.get('to') || philippineDate(), offset = Number(q.get('offset') || 0);
             const worker = scope.role === 'member' ? q.get('status') === 'released' ? null : scope.user_id : q.get('worker_id') || null;
             if (!validDay(from) || !validDay(to) || (worker && !uuid(worker)) || !Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid date or employee filter');
+            if (from < philippineDate(new Date(scope.launch_at)) || to > philippineDate() || to < from || (Date.parse(to) - Date.parse(from)) / 86400000 > 92) return NextResponse.json({ error: 'Choose up to 93 Philippine dates from launch through today' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
             result = await readVeoRpc(getSupabaseAdmin(), 'veo_operations', { p_actor: scope.user_id, p_from: from, p_to: to, p_page: page, p_worker: worker,
                 p_status: q.get('status') || 'all', p_search: q.get('search') || '', p_offset: offset });
         }

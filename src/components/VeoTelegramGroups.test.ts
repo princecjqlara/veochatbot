@@ -1,4 +1,5 @@
 import { createElement } from 'react';
+vi.mock('next/link', () => ({ default: ({ children, ...props }: any) => createElement('a', props, children) }));
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import Groups from './VeoTelegramGroups';
