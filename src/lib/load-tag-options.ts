@@ -1,11 +1,12 @@
 import { requestDeadline } from './request-deadline';
 import type { Tag } from '@/types';
 /** Complete current options. Failed or changing pages never become a partial list. */
-export function loadTagOptions(pageId: string, parent?: AbortSignal) {
+export function loadTagOptions(pageId: string, parent?: AbortSignal, kind: 'all' | 'manual' = 'all') {
     return requestDeadline(async signal => {
         const tags: Tag[] = [], seen = new Set<string>();let expected: number | undefined;
         for (let page = 1; ; page++) {
             const q = new URLSearchParams({ scope: 'all', pageId, page: String(page), pageSize: '1000' });
+            if (kind !== 'all') q.set('kind', kind);
             const response = await fetch('/api/tags?' + q, { cache: 'no-store', signal });
             const body = await response.json();
             if (!response.ok || !Array.isArray(body.items) || !Number.isSafeInteger(body.total) || body.total < 0) throw Error('Complete tag options are unavailable. Refresh to retry.');

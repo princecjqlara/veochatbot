@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { loadTagOptions } from '@/lib/load-tag-options';
 import { CheckSquare, Clock3, RefreshCw, Search, Send, Paperclip, X } from 'lucide-react';
 import Pagination from '@/components/Pagination';
 import { getSupabaseClient } from '@/lib/supabase';
@@ -90,10 +92,14 @@ function TagFilter({
 }
 
 export default function SevenDayContactsPage() {
+    const { data: session } = useSession();
+    const canReviewDrafts = !session?.user.role || session.user.role === 'owner';
     const [pages, setPages] = useState<Page[]>([]);
     const [pageId, setPageId] = useState('');
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [tags, setTags] = useState<Tag[]>([]);
+    const [tagError, setTagError] = useState(''), [tagVersion, setTagVersion] = useState(0);
+    const [draftError, setDraftError] = useState('');
     const [includeTagIds, setIncludeTagIds] = useState<string[]>([]);
     const [excludeTagIds, setExcludeTagIds] = useState<string[]>([]);
     const [search, setSearch] = useState('');
@@ -119,14 +125,18 @@ export default function SevenDayContactsPage() {
     const selectAllRequestRef = useRef(0);
 
     useEffect(() => {
-        fetch('/api/pages')
-            .then((response) => response.json())
+        const controller = new AbortController();
+        fetch('/api/pages', { signal: controller.signal })
+            .then(async response => { const body = await response.json(); if (!response.ok) throw Error(body.message || body.error || 'Could not load connected Pages.'); return body; })
             .then((data) => {
+                if (controller.signal.aborted) return;
                 const availablePages: Page[] = data.pages || [];
                 setPages(availablePages);
-                if (availablePages.length > 0) setPageId(availablePages[0].id);
+                const requested = new URLSearchParams(window.location?.search || '').get('pageId');
+                if (availablePages.length > 0) setPageId(availablePages.some(page => page.id === requested) ? requested! : availablePages[0].id);
             })
-            .catch(() => setError('Could not load connected Pages.'));
+            .catch(() => { if (!controller.signal.aborted) setError('Could not load connected Pages.'); });
+        return () => controller.abort();
     }, []);
 
     useEffect(() => {
@@ -136,47 +146,50 @@ export default function SevenDayContactsPage() {
 
     useEffect(() => {
         const timer = setInterval(() => {
+            if (document.hidden) return;
             setNow(Date.now());
             setRefreshKey((value) => value + 1);
         }, 60_000);
-        const onFocus = () => setRefreshKey((value) => value + 1);
+        const onFocus = () => { if (!document.hidden) { setNow(Date.now()); setRefreshKey(value => value + 1); } };
         window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onFocus);
         return () => {
             clearInterval(timer);
             window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onFocus);
         };
     }, []);
 
     useEffect(() => {
         if (!pageId) return;
-        const controller = new AbortController();
-        fetch(`/api/tags?scope=all&pageId=${encodeURIComponent(pageId)}&page=1&pageSize=1000`, { signal: controller.signal })
-            .then((response) => response.json())
-            .then((data) => setTags(data.items || []))
-            .catch((fetchError) => { if (fetchError.name !== 'AbortError') setTags([]); });
+        const controller = new AbortController(); setTags([]); setTagError('');
+        loadTagOptions(pageId, controller.signal)
+            .then(items => { if (!controller.signal.aborted) setTags(items); })
+            .catch(error => { if (!controller.signal.aborted) setTagError(error.message); });
         return () => controller.abort();
-    }, [pageId]);
+    }, [pageId, tagVersion]);
 
     const refreshContacts = useCallback(() => setRefreshKey((value) => value + 1), []);
 
     useEffect(() => {
-        if (!pageId) {
+        if (!pageId || !canReviewDrafts) {
             setHumanAgentDrafts([]);
+            setDraftError('');
             return;
         }
-        const controller = new AbortController();
+        const controller = new AbortController(); setDraftError('');
         fetch(`/api/pages/${encodeURIComponent(pageId)}/chatbot/follow-ups`, { signal: controller.signal })
             .then(async (response) => {
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.message || 'Could not load chatbot follow-up drafts.');
                 return data.jobs || [];
             })
-            .then(setHumanAgentDrafts)
+            .then(jobs => { if (!controller.signal.aborted) setHumanAgentDrafts(jobs); })
             .catch((fetchError) => {
-                if (fetchError.name !== 'AbortError') setHumanAgentDrafts([]);
+                if (!controller.signal.aborted) { setHumanAgentDrafts([]); setDraftError(fetchError.message); }
             });
         return () => controller.abort();
-    }, [pageId, refreshKey]);
+    }, [pageId, refreshKey, canReviewDrafts]);
 
     const loadHumanAgentDraft = useCallback((draft: HumanAgentDraft) => {
         setSelectedContacts({ [draft.contact.id]: draft.contact });
@@ -301,6 +314,7 @@ export default function SevenDayContactsPage() {
                 return data as PaginatedResponse<Contact>;
             })
             .then((data) => {
+                if (controller.signal.aborted) return;
                 const refreshedContacts = data.items || [];
                 setContacts((current) => areContactListsEquivalent(current, refreshedContacts) ? current : refreshedContacts);
                 setTotal(data.total || 0);
@@ -544,6 +558,8 @@ export default function SevenDayContactsPage() {
             </div>
 
             {error && <p role="alert" className="border border-red-600 bg-red-50 text-red-800 p-3 text-sm">{error}</p>}
+            {tagError && <p role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{tagError} <button type="button" className="underline" onClick={() => setTagVersion(value => value + 1)}>Retry tag filters</button></p>}
+            {draftError && <p role="alert" className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{draftError} <button type="button" className="underline" onClick={refreshContacts}>Retry follow-up drafts</button></p>}
             {notice && <p role="status" className="border border-green-700 bg-green-50 text-green-800 p-3 text-sm">{notice}</p>}
 
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] gap-5 items-start">

@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
     Hand,
     Save,
@@ -43,6 +43,9 @@ export default function WelcomePage() {
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
     const [showPreview, setShowPreview] = useState(false);
+    const [error, setError] = useState(''), [retry, setRetry] = useState(0);
+    const generation = useRef(0), currentPage = useRef(selectedPageId);
+    currentPage.current = selectedPageId;
 
     // Editable fields
     const [enabled, setEnabled] = useState(false);
@@ -52,44 +55,52 @@ export default function WelcomePage() {
     // Fetch pages
     useEffect(() => {
         if (session) {
-            fetch('/api/pages')
-                .then(r => r.json())
+            const controller = new AbortController();
+            fetch('/api/pages', { signal: controller.signal })
+                .then(async response => { const body = await response.json(); if (!response.ok) throw Error(body.message || body.error || 'Pages are unavailable.'); return body; })
                 .then(d => {
+                    if (controller.signal.aborted) return;
                     setPages(d.pages || []);
                     if (d.pages?.length > 0 && !selectedPageId) {
-                        setSelectedPageId(d.pages[0].id);
+                        const requested = new URLSearchParams(window.location?.search || '').get('pageId');
+                        setSelectedPageId(d.pages.some((page: Page) => page.id === requested) ? requested! : d.pages[0].id);
                     }
                 })
-                .catch(console.error);
+                .catch(error => { if (!controller.signal.aborted) setError(error.message); });
+            return () => controller.abort();
         }
-    }, [session]);
+    }, [session?.user.id, retry]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Fetch welcome config when page changes
-    const fetchConfig = useCallback(async () => {
+    const fetchConfig = useCallback(async (signal?: AbortSignal) => {
         if (!selectedPageId) return;
-        setLoading(true);
+        const issue = ++generation.current; setLoading(true); setError(''); setConfig(null); setSaved(false);
         try {
-            const res = await fetch(`/api/pages/${selectedPageId}/welcome`);
+            const res = await fetch(`/api/pages/${selectedPageId}/welcome`, { signal, cache: 'no-store' });
             const data = await res.json();
             const cfg = data.config;
+            if (!res.ok || !cfg || typeof cfg.enabled !== 'boolean' || !Array.isArray(cfg.buttons)) throw Error(data.message || data.error || 'Welcome configuration is unavailable.');
+            if (issue !== generation.current || signal?.aborted) return;
             setConfig(cfg);
             setEnabled(cfg.enabled);
             setMessageText(cfg.message_text || '');
             setButtons(cfg.buttons || []);
-        } catch (err) {
-            console.error('Failed to load welcome config:', err);
+        } catch (err: any) {
+            if (issue === generation.current && !signal?.aborted) setError(err.message);
         } finally {
-            setLoading(false);
+            if (issue === generation.current && !signal?.aborted) setLoading(false);
         }
     }, [selectedPageId]);
 
     useEffect(() => {
-        fetchConfig();
-    }, [fetchConfig]);
+        const controller = new AbortController(); void fetchConfig(controller.signal);
+        return () => { controller.abort(); generation.current++; };
+    }, [fetchConfig, retry]);
 
     // Save config
     const handleSave = async () => {
-        if (!selectedPageId) return;
+        if (!selectedPageId || !config || loading || saving) return;
+        const target = selectedPageId; setError('');
         setSaving(true);
         setSaved(false);
         try {
@@ -102,12 +113,14 @@ export default function WelcomePage() {
                     buttons: buttons.filter(b => b.text.trim())
                 })
             });
-            if (res.ok) {
+            const body = await res.json();
+            if (!res.ok) throw Error(body.message || body.error || 'Welcome message could not be saved. Your draft is retained.');
+            if (currentPage.current === target) {
                 setSaved(true);
                 setTimeout(() => setSaved(false), 3000);
             }
-        } catch (err) {
-            console.error('Failed to save:', err);
+        } catch (err: any) {
+            if (currentPage.current === target) setError(err.message);
         } finally {
             setSaving(false);
         }
@@ -144,7 +157,7 @@ export default function WelcomePage() {
                 </div>
                 <button
                     onClick={handleSave}
-                    disabled={saving || !selectedPageId}
+                    disabled={saving || loading || !config || !selectedPageId}
                     className="btn-wireframe bg-black text-white hover:bg-gray-800 flex items-center gap-2 px-4 py-2.5"
                 >
                     <Save className="w-4 h-4" />
@@ -156,6 +169,8 @@ export default function WelcomePage() {
             <div className="border-2 border-black p-4 mb-4 bg-white">
                 <label className="font-mono text-xs font-bold uppercase text-gray-500 mb-2 block">Select Page</label>
                 <select
+                    aria-label="Welcome Page"
+                    disabled={saving}
                     value={selectedPageId}
                     onChange={(e) => setSelectedPageId(e.target.value)}
                     className="input-wireframe w-full text-sm"
@@ -166,12 +181,13 @@ export default function WelcomePage() {
                 </select>
             </div>
 
+            {error && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error} {!config && <button type="button" className="ml-2 underline" onClick={() => setRetry(value => value + 1)}>Retry welcome settings</button>}</p>}
             {loading ? (
                 <div className="border-2 border-black p-8 text-center">
                     <div className="spinner w-6 h-6 mx-auto mb-2"></div>
                     <p className="text-sm text-gray-500 font-mono">Loading config...</p>
                 </div>
-            ) : (
+            ) : !config ? <p className="rounded border bg-white p-5 text-sm text-slate-500">{pages.length ? 'Load the saved configuration before editing this Page.' : 'Choose a connected Page to configure its welcome message.'}</p> : (
                 <>
                     {/* Enable/Disable Toggle */}
                     <div className="border-2 border-black p-4 mb-4 bg-white">

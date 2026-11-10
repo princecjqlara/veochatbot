@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle,
     CheckCircle2,
@@ -133,6 +133,7 @@ function ActivityIcon({ kind }: { kind: HistoryItem['kind'] }) {
 }
 
 export default function HistoryPage() {
+    const generation = useRef(0), currentRequest = useRef<AbortController>();
     const [pages, setPages] = useState<Page[]>([]);
     const [selectedPageId, setSelectedPageId] = useState('');
     const [items, setItems] = useState<HistoryItem[]>([]);
@@ -164,7 +165,8 @@ export default function HistoryPage() {
                 if (!response.ok) throw new Error(data.message || 'Failed to load pages');
                 const nextPages = data.pages || [];
                 setPages(nextPages);
-                setSelectedPageId((current) => current || nextPages[0]?.id || '');
+                const requested = new URLSearchParams(window.location?.search || '').get('pageId');
+                setSelectedPageId(current => nextPages.some((page: Page) => page.id === current) ? current : nextPages.some((page: Page) => page.id === requested) ? requested! : nextPages[0]?.id || '');
             } catch (loadError) {
                 setError((loadError as Error).message);
                 setLoading(false);
@@ -182,6 +184,8 @@ export default function HistoryPage() {
     }, [searchInput]);
 
     const fetchHistory = useCallback(async () => {
+        const issue = ++generation.current;
+        currentRequest.current?.abort(); const controller = new AbortController(); currentRequest.current = controller;
         if (!selectedPageId) {
             setItems([]);
             setLoading(false);
@@ -197,23 +201,25 @@ export default function HistoryPage() {
             if (actorId) params.set('actorId', actorId);
             if (dateFrom) params.set('dateFrom', dateFrom);
             if (dateTo) params.set('dateTo', dateTo);
-            const response = await fetch(`/api/pages/${selectedPageId}/history?${params.toString()}`, { cache: 'no-store' });
+            const response = await fetch(`/api/pages/${selectedPageId}/history?${params.toString()}`, { cache: 'no-store', signal: controller.signal });
             const data: HistoryResponse = await response.json();
             if (!response.ok) throw new Error(data.message || 'Failed to load history');
+            if (issue !== generation.current || controller.signal.aborted) return;
             setItems(data.items || []);
             setTotal(data.total || 0);
             setTeam(data.team || []);
             setSummary(data.summary || { targets: 0, succeeded: 0, failed: 0, pending: 0 });
             setAuditEnabled(data.auditEnabled !== false);
         } catch (loadError) {
+            if (issue !== generation.current || controller.signal.aborted) return;
             setError((loadError as Error).message);
             setItems([]);
         } finally {
-            setLoading(false);
+            if (issue === generation.current && !controller.signal.aborted) setLoading(false);
         }
     }, [selectedPageId, page, pageSize, kind, statusFilter, actorId, dateFrom, dateTo, search]);
 
-    useEffect(() => { fetchHistory(); }, [fetchHistory]);
+    useEffect(() => { void fetchHistory(); return () => { currentRequest.current?.abort(); generation.current++; }; }, [fetchHistory]);
 
     const selectedPage = useMemo(() => pages.find((candidate) => candidate.id === selectedPageId), [pages, selectedPageId]);
 
