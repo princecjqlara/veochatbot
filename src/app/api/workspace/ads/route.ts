@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
         if (inventory.error) throw Error('Creative inventory status is unavailable');
         const pendingAuthorization = scope.role === 'owner' ? !!await readFacebookPageGrant(request, scope.user_id, db, scope.tenant_id) : false;
         return json({ status: !c ? 'connect_required' : expired ? 'reconnect_required' : 'connected', can_manage: scope.role === 'owner', configured: pageAuthorizationConfigured(),
-            pending_authorization: pendingAuthorization, automatic_sync: !!c && !expired, sync_interval_minutes: 60, initial_fetch_pending: !!c?.sync_checkpoint,
+            pending_authorization: pendingAuthorization, automatic_sync: !!c && !expired, sync_interval_minutes: 60, scheduler: 'cron-job.org', initial_fetch_pending: !!c?.sync_checkpoint,
             expires_at: c?.token_expires_at || null, last_synced_at: c?.last_synced_at || null, last_error: c?.last_error || null,
             refresh_running: !!c?.refresh_lease_until && Date.parse(c.refresh_lease_until) > Date.now(), verified_inventory_ads: inventory.count || 0,
             message: !c ? 'Page authorization is separate from advertising access. Connect Meta Ads to fetch budgets, creative metadata and spend.' : 'Fetch reads ad inventory, budgets and Insights; it does not change Meta ad budgets or send messages.' });

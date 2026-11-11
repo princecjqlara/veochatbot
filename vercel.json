@@ -14,10 +14,6 @@
     {
       "path": "/api/cron/chatbot",
       "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/cron/meta-ads-sync",
-      "schedule": "0 * * * *"
     }
   ],
   "functions": {
