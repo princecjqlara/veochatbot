@@ -19,10 +19,18 @@ it('shows current lead stage, saved deal price, actual payments and remaining ba
     expect(view.root.findByProps({ name: 'confirmed' }).props.required).toBe(true);
     expect(view.root.findAllByProps({ name: 'confirm_converted' })).toHaveLength(0);
 });
-it('allows the Closed Deal receipt workflow without displaying a create-order or verified-payment form', async () => {
+it('requires a created order for Closed Deal and keeps its payment form separate', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));
     await act(async () => { view = create(createElement(Details, { ...props, order: null, kind: 'closed' })); });
-    expect(text(view.toJSON())).toContain('No order is required for a Closed Deal'); expect(view.root.findAllByType('form')).toHaveLength(0);
+    expect(text(view.toJSON())).toContain('Create and link the order for this Closed Deal'); expect(view.root.findAllByType('form')).toHaveLength(0);
+    expect(text(view.toJSON())).toContain('Creating an order does not mark it paid');
+    await act(async () => { view.update(createElement(Details, { ...props, kind: 'closed' })); });
+    expect(text(view.toJSON())).toContain('Order created and linked');expect(view.root.findAllByType('form')).toHaveLength(0);
+});
+it('shows an already paid order without allowing a duplicate payment', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));
+    await act(async () => { view = create(createElement(Details, { ...props, order: { ...order, paid_minor:10000,done_at:'2026-11-10',settlement_tolerance_minor:200 } })); });
+    expect(text(view.toJSON())).toContain('Already marked as paid');expect(view.root.findAllByType('form')).toHaveLength(0);
 });
 it('shows both quota counts and both commission scenarios, keeping 35% when only one quota is reached', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));

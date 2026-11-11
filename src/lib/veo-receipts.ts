@@ -8,6 +8,7 @@ export const receiptHoldLabels: Record<string, string> = {
     eligible_lead_required: 'Set the contact lead stage to Qualified or Converted',
     converted_lead_required: 'Set the contact lead stage to Converted',
     create_and_link_order: 'Create an order and link it to this receipt',
+    closed_order_required: 'Create and link the Facebook order for this Closed Deal. Mark as paid is a separate Done Deal step',
     verify_full_payment: 'Verify the full payment and mark the order paid',
     seller_or_order_attribution_changed: 'Review the seller and order attribution',
     photo_expired_reupload: 'The temporary photo expired; upload it again',

@@ -1,39 +1,42 @@
-# Creating orders and recording payments
+# Creating orders and marking them paid
 
-Open **Receipts & payments** in the dashboard. Choose the client and seller,
-then **New fully paid deal** or **Turn this Closed Deal into Done Deal**.
-Create the matching invoice/order in Facebook Business Suite. Back in VEO,
-choose **Fetch Facebook orders**, select the correct invoice, and choose
-**Use this Facebook order**. Direct manual order creation in VEO remains
-disabled under the existing Business Suite order policy.
+**Create order: Closed Deal** and **Mark as paid: Done Deal** are separate
+actions in Receipts & payments and the contact shortcuts.
 
-Order fetching queues the existing background source worker. The picker now
-shows pending/running progress and checks the saved results automatically with
-read-only requests while the screen is open and visible. It accepts the actual
-`items` plus `source.sync` response, without requiring the old immediate `scan`
-object. Completed refreshes stop polling; temporary read failures retry with
-backoff while retaining saved choices. Switching clients aborts old progress
-reads and late responses cannot replace the current client's order list.
+For a Closed Deal, create the client's invoice/order in Facebook Business
+Suite, choose **Fetch Facebook orders** in VEO, select the matching invoice,
+and choose **Use this Facebook order**. Order creation/import records no
+payment and does not mark the order Done. The Closed Deal receipt requires
+that order, the saved Qualified/Converted stage evidence, the down payment,
+and the existing seller, Page and Telegram checks. Direct manual order
+creation in VEO remains disabled under the existing Business Suite policy.
 
-In **Record what the client sent**, enter the verified amount received this
-time, its transaction reference and Philippine payment time. Review the
-calculated received amount and remaining balance, confirm the payment evidence,
-and choose **Verify amount sent and mark Done**. Existing down payments can be
-reconciled against the appropriate Closed Deal without double-counting them.
-Done Deal status requires the existing stage, order and settlement checks.
-The application records VEO payments and commission eligibility; Facebook's
-own payment status is managed in Business Suite. A screenshot or a chat saying
-"paid" does not verify a payment.
+For a Done Deal, choose **Turn this Closed Deal into Done Deal** to retain
+the same order and its down payment. Enter only the amount actually received
+this time, its transaction reference and Philippine payment time. Review the
+calculated total and remaining balance, verify the payment evidence, then
+choose **Verify payment and mark as paid**. Existing down payments are
+reconciled once. An already paid order shows its status and does not display
+another payment form. A fully paid new sale can also link its order and then
+perform the separate payment step without an earlier Closed Deal receipt.
 
-This fix changes order-refresh feedback and progress reads only. Existing
-payment validation, permissions, invoice linking, settlement tolerance,
-receipt requirements, commission rules and retained history remain unchanged.
-It does not apply the unrelated local receipt-policy draft or create a
-production order, payment, receipt or Telegram message for verification.
+The database enforces the order requirement for new Closed Deal submissions,
+including direct receipt-save calls. Settlement permits a new order's own
+linked Closed Deal while continuing to reject unrelated earlier deals.
+Existing records are retained. The migration changes functions only and does
+not rewrite orders, payments, receipts, salary or launch cutoffs. Existing
+payment verification, settlement tolerance and commission rules still apply.
 
-Validation: 2,114 regression tests in 279 files, 23 focused order/payment checks,
-and the production build pass. A protected read-only production check confirms
-the current saved-order/source-job response contract, no-store caching,
-anonymous denial and rejection of cross-origin refresh requests. Browser visual
-review is unavailable in this environment; asynchronous component tests cover
-queued refresh, completion, retries, retained choices and client switching.
+The application records verified VEO payments and Done Deal eligibility;
+Facebook's own payment status is managed in Business Suite. A screenshot or
+a chat saying "paid" does not verify payment.
+
+Order fetching uses the background source worker. The picker shows queued
+progress and polls saved results while open and visible, retrying temporary
+read failures without dropping choices. Client changes cancel old reads.
+
+Validation covers the full schema and the actual create/link -> Closed Deal
+receipt -> verified payment -> Done Deal transition, payment retry
+idempotency, unrelated-deal rejection, private RPCs, submission guards and
+component behavior. No production sale or customer message is created by
+release verification. Browser visual review is unavailable in this session.

@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { startAdaptivePolling } from '@/lib/adaptive-polling';
 const money = (n: number, currency: string) => new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(n / 100);
-export default function VeoBusinessOrderPicker({ contactId, seller, closedDealId, dealMode, onSaved }: {
-    contactId: string; seller: string; closedDealId: string; dealMode: 'new' | 'existing'; onSaved: (id: string) => void;
+export default function VeoBusinessOrderPicker({ contactId, seller, closedDealId, dealMode, receiptKind = 'closed', onSaved }: {
+    contactId: string; seller: string; closedDealId: string; dealMode: 'new' | 'existing'; receiptKind?: 'closed' | 'done'; onSaved: (id: string) => void;
 }) {
     const [data, setData] = useState<any>(null), [selected, setSelected] = useState(''), [busy, setBusy] = useState(false), [message, setMessage] = useState('');
     const [waiting, setWaiting] = useState(false);
@@ -56,6 +56,7 @@ export default function VeoBusinessOrderPicker({ contactId, seller, closedDealId
     const order = data?.items?.find((o: any) => o.id === selected);
     return <section aria-label="Facebook Business Suite order" className="rounded border bg-slate-50 p-4 space-y-3">
         <h4 className="font-semibold">Create order in Facebook Business Suite</h4>
+        <p className="text-sm font-medium">{receiptKind === 'closed' ? 'Create / link order for Closed Deal' : 'Link the existing order before Mark as paid'}</p>
         <p className="text-sm">Create the client&apos;s order in Business Suite, then fetch it here. The invoice ID and total price come from the Page&apos;s Facebook order notice. This does not verify payment.</p>
         <div className="flex flex-wrap gap-4 text-sm">{data?.business_suite_url && <a className="underline" href={data.business_suite_url} target="_blank" rel="noreferrer">Open Facebook Business Suite</a>}<button type="button" disabled={busy} className="underline disabled:opacity-40" onClick={() => void refresh()}>Fetch Facebook orders</button></div>
         {message && <p role="status" className="text-sm rounded bg-amber-50 p-2">{message}</p>}

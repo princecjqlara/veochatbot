@@ -31,9 +31,9 @@ it('checks the picked client Closed Deals and lets staff choose the correct deal
     expect(view.root.findAllByType('button').filter(b=>text(b)==='Turn this Closed Deal into Done Deal')).toHaveLength(2);
     expect(view.root.findAllByProps({name:'amount'})).toHaveLength(0);
     await act(async()=>{view.root.findAllByType('button').filter(b=>text(b)==='Turn this Closed Deal into Done Deal')[0].props.onClick();});
-    expect(text(view.toJSON())).toContain('Turn Closed Deal into Done Deal');expect(text(view.toJSON())).toContain('How much the client sent (PHP)');
+    expect(text(view.toJSON())).toContain('Mark as paid — Done Deal');expect(text(view.toJSON())).toContain('How much the client sent (PHP)');
     expect(view.root.findByProps({name:'closed_deal_id'}).props.value).toBe('closed');expect(view.root.findByProps({name:'amount'}).props.value).toBe('');
-    await act(async()=>{view.root.findAllByType('button').find(b=>text(b)==='New Closed Deal / down payment')!.props.onClick();});
+    await act(async()=>{view.root.findAllByType('button').find(b=>text(b)==='Create order: Closed Deal')!.props.onClick();});
     expect(view.root.findByProps({name:'closed_amount'})).toBeTruthy();expect(view.root.findAllByProps({name:'amount'})).toHaveLength(0);
     expect(text(view.toJSON())).toContain('This is a new sale; earlier Closed Deals stay separate');
     await act(async()=>{view.root.findByProps({placeholder:'Search client name, ID or saved details'}).props.onChange({target:{value:'Another client'}});});
@@ -47,17 +47,19 @@ it('shows current warnings, overdue explanation and a link to the existing Teleg
 });
 it('disables Submit until the selected deal passes its Facebook check and invalidates it on deal changes', async () => {
     let allowed = false;
-    const fetcher = vi.fn(async (url: string, options?: any) => new Response(JSON.stringify(options?.method === 'POST' ? { allowed, blockers: allowed ? [] : ['facebook_stage_unavailable'], facebook: { stage: allowed ? 'qualified' : null, complete: true, checked_at: new Date().toISOString(), started_at: new Date().toISOString(), coverage: 'Available notices checked' } } : url.includes('contact_id=client') ? { contact: { id: 'client', name: 'Client', pipeline_stage: 'qualified' }, orders: [], payments: [], closed_deals: [] } : url.includes('commission=1') ? { target: 1, closed: 0, done: 0, rate: 35, totals: [] } : { items: [], total: 0 })));
+    const fetcher = vi.fn(async (url: string, options?: any) => new Response(JSON.stringify(options?.method === 'POST' ? { allowed, blockers: allowed ? [] : ['facebook_stage_unavailable'], facebook: { stage: allowed ? 'qualified' : null, complete: true, checked_at: new Date().toISOString(), started_at: new Date().toISOString(), coverage: 'Available notices checked' } } : url.includes('contact_id=client') ? { contact: { id: 'client', name: 'Client', pipeline_stage: 'qualified' }, orders: [{id:'order',seller_id:'worker',total_minor:10000,paid_minor:0,currency:'PHP'}], payments: [], closed_deals: [] } : url.includes('commission=1') ? { target: 1, closed: 0, done: 0, rate: 35, totals: [] } : { items: [], total: 0 })));
     vi.stubGlobal('fetch', fetcher);
     await act(async () => { view = create(createElement(Receipts, { scope: { user_id: 'worker', role: 'member', launch_at: '2026-11-05' }, accounts: [{ id: 'worker', role: 'member', name: 'Worker' }], initialContactId: 'client' })); });
     const submit = () => view.root.findAllByType('button').find(b => text(b) === 'Submit receipt evidence')!;
     const check = () => view.root.findAllByType('button').find(b => text(b).startsWith('Check saved requirements'))!;
     expect(submit().props.disabled).toBe(true);
+    expect(check().props.disabled).toBe(true);
+    await act(async()=>{view.root.findAllByType('label').find(label=>text(label).startsWith('Order / total price'))!.findByType('select').props.onChange({target:{value:'order'}});});
     await act(async () => { check().props.onClick(); });
     expect(submit().props.disabled).toBe(true); expect(text(view.toJSON())).toContain('Submission blocked');
     allowed = true; await act(async () => { check().props.onClick(); });
     expect(submit().props.disabled).toBe(false);
-    await act(async () => { view.root.findAllByType('button').find(b => text(b) === 'New fully paid deal')!.props.onClick(); });
+    await act(async () => { view.root.findAllByType('button').find(b => text(b) === 'Mark as paid: Done Deal')!.props.onClick(); });
     expect(submit().props.disabled).toBe(true);
     expect(fetcher.mock.calls.filter(([, o]) => o?.method === 'POST').every(([, o]) => JSON.parse(o.body).action === 'check')).toBe(true);
 });

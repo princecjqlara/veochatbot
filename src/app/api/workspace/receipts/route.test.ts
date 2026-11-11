@@ -55,6 +55,14 @@ it('rejects an ineligible multipart submit before reserving storage or saving a 
     expect(m.rpc).toHaveBeenCalledWith('veo_request_source_refresh', { p_actor: worker, p_contact: receipt });
     expect(m.from).not.toHaveBeenCalled(); expect(m.storage.from).not.toHaveBeenCalled(); expect(m.rpc.mock.calls.some(([name]) => name === 'veo_receipt_save')).toBe(false);
 });
+it('rejects a Closed Deal without its created order before uploading a photo', async () => {
+    const form = new FormData();
+    Object.entries({ contact_id: receipt, seller_id: worker, request_id: receipt, receipt_kind: 'closed', deal_mode: 'new' }).forEach(([key, value]) => form.set(key, value));
+    form.set('photo', new Blob([new Uint8Array([255, 216, 255, 217])], { type: 'image/jpeg' }), 'receipt.jpg');
+    const response = await POST(new NextRequest('https://veo.test/api/workspace/receipts', { method: 'POST', headers: { Origin: 'https://veo.test' }, body: form }));
+    expect(response.status).toBe(400);expect((await response.json()).error).toContain('Create and link the order');
+    expect(m.storage.from).not.toHaveBeenCalled();expect(m.from).not.toHaveBeenCalled();expect(m.rpc).not.toHaveBeenCalled();
+});
 it('rechecks saved evidence after authorizing a receipt and queues refresh separately', async () => {
     m.rpc.mockImplementation(async name => ({ data: name === 'veo_receipt_access' ? { contact_id: receipt, seller_id: worker, receipt_kind: 'done', order_id: worker } : { allowed: false, blockers: ['verify_full_payment'] } }));
     expect((await post({ action: 'recheck', receipt_id: receipt })).status).toBe(422);

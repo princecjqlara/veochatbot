@@ -99,6 +99,7 @@ export async function POST(request: NextRequest) {
         if (!uuid(contact) || !uuid(seller) || !uuid(requestId) || order && !uuid(order) || !file || typeof file === 'string' || !['closed', 'done'].includes(String(form.get('receipt_kind')))) throw Error('Choose a client, seller, receipt type and photo');
         if (typeof notes !== 'string' || notes.length > 2000) throw Error('Notes must be at most 2000 characters');
         const kind = String(form.get('receipt_kind')), closedId = form.get('closed_deal_id') || null;
+        if (kind === 'closed' && !order) throw Error('Create and link the order for the Closed Deal first. Mark as paid is a separate Done Deal action.');
         const dealMode = String(form.get('deal_mode') || '');if (!['new','existing'].includes(dealMode) || dealMode === 'new' && closedId) throw Error('Choose New deal or Complete existing Closed Deal');
         if (closedId && !uuid(closedId)) throw Error('Choose a Closed Deal for this client');
         const closedAmount = kind === 'closed' ? parseMoneyMinor(form.get('closed_amount')) : null;
