@@ -15,8 +15,11 @@ the old worker for non-workspace mode. The recovery scanner:
   Claims enroll enabled workspace Pages, including Pages added after release.
   A Page's auto-tag setting controls its recovery scan.
 - Reads a small updated-conversation batch, matches one Page-scoped participant
-  to an existing contact, and accepts exact Page-authored notices since launch.
-  It imports no transcripts, creates no contacts and invokes no delivery worker.
+  to a contact, and accepts exact Page-authored notices since launch. A missing
+  numeric participant identity is seeded using the existing Owner-scoped sync;
+  existing contacts remain unchanged and identity insertion suppresses history
+  jobs and automation. Stage text never supplies the identity. The scanner
+  imports no transcripts and invokes no delivery worker.
   Customer-written copies, pre-launch notices, invoice text and missing dates
   cannot silently establish a new verified stage.
 - Resumes Page cursors with a five-minute overlap. A resumed older scan also
@@ -27,8 +30,8 @@ the old worker for non-workspace mode. The recovery scanner:
   manual/default tags. Qualified/Converted tags do not prove payment.
 - Keeps cursor/watermark progress on failure, uses token-bound leases, backs off
   failed Pages, and reports partial failure rather than returning success.
-  Missing contacts remain visible for identity sync while known contacts in the
-  same batch are still processed. A failure on one Page does not stop others.
+  Failed identity sync remains visible while known contacts in the same batch
+  are still processed. A failure on one Page does not stop others.
 
 The private state table and RPCs are service-role-only. Owner/Team Leader status
 reads use current tenant/Page permissions and exclude tokens, cursor contents

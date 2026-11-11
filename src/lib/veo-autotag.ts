@@ -1,11 +1,12 @@
 import { getSupabaseAdmin } from './supabase';
 import { syncMessengerStageHistory } from './messenger-stage-sync';
+import { normalizeContactName } from './contact-names';
 
 type PageScan = { page_id: string; fb_page_id: string; access_token: string; launch_at: string; owner_id: string; lease_token: string; checked_at: string; cursor: string | null };
 const failure = (code: string) => Object.assign(new Error('Auto-tag recovery is temporarily unavailable'), { scanCode: code });
 
-/** Stage-only recovery on existing workspace contacts. No transcript import, bot
- * delivery, customer creation, payment inference or legacy worker invocation. */
+/** Recover Page stage evidence, seeding only missing Page-provided identities.
+ * No transcript import, delivery, payment inference or legacy worker invocation. */
 export async function scanVeoAutoTags(page: PageScan, db = getSupabaseAdmin()) {
     const deadline = Date.now() + 70000, cutoff = Math.max(Date.parse(page.launch_at), Date.parse(page.checked_at));
     const counts = { conversations: 0, stage_events: 0, repaired_tags: 0 };
@@ -25,7 +26,7 @@ export async function scanVeoAutoTags(page: PageScan, db = getSupabaseAdmin()) {
             if (!Array.isArray(body.data)) throw failure('META_RESPONSE_INCOMPLETE');
             return body;
         }
-        const params = { fields: 'id,participants,updated_time', limit: '5', since: String(Math.floor(cutoff / 1000)) };
+        const params = { fields: 'id,participants{id,name},updated_time', limit: '5', since: String(Math.floor(cutoff / 1000)) };
         const batch = await graph(page.fb_page_id + '/conversations', { ...params, ...(page.cursor ? { after: page.cursor } : {}) });
         if (batch.paging?.next) {
             const cursor = batch.paging.cursors?.after;
@@ -42,11 +43,22 @@ export async function scanVeoAutoTags(page: PageScan, db = getSupabaseAdmin()) {
             if (updated < cutoff) continue;
             const participants = (conversation.participants?.data || []).filter((p: any) => p.id !== page.fb_page_id);
             if (participants.length !== 1 || typeof participants[0].id !== 'string') throw failure('META_CONTACT_AMBIGUOUS');
-            const contact = await db.from('contacts').select('id').eq('page_id', page.page_id).eq('psid', participants[0].id).maybeSingle();
+            const lookup = () => db.from('contacts').select('id').eq('page_id', page.page_id).eq('psid', participants[0].id).maybeSingle();
+            let contact = await lookup();
             if (contact.error) throw failure('CONTACT_LOOKUP_UNAVAILABLE');
-            // Leave a retry visible until the normal Page identity/event sync
-            // supplies this contact; never invent a client from stage text.
-            if (!contact.data) { unmatched++; continue; }
+            if (!contact.data) {
+                // The existing Owner-scoped identity sync preserves existing
+                // contacts and suppresses historical jobs/automation on insert.
+                // Only a real participant in an updated launch-period thread
+                // can supply an identity; stage text never supplies a client.
+                if (!/^\d{1,40}$/.test(participants[0].id)) { unmatched++; continue; }
+                const identity = await db.rpc('veo_seed_contact_identities', { p_actor: page.owner_id, p_page: page.page_id,
+                    p_contacts: [{ psid: participants[0].id, name: typeof participants[0].name === 'string' ? normalizeContactName(participants[0].name)?.slice(0, 200) || null : null }] });
+                if (identity.error) { unmatched++; continue; }
+                contact = await lookup();
+                if (contact.error) throw failure('CONTACT_LOOKUP_UNAVAILABLE');
+                if (!contact.data) { unmatched++; continue; }
+            }
             const history = await graph(encodeURIComponent(conversation.id) + '/messages', { fields: 'id,message,from,created_time', limit: '100' });
             if (history.data.some((m: any) => m.from?.id === page.fb_page_id && /^Lead stage set to /i.test(m.message?.trim() || '') && (!m.id || !Number.isFinite(Date.parse(m.created_time))))) throw failure('META_STAGE_EVIDENCE_INCOMPLETE');
             const messages = history.data.filter((m: any) => Date.parse(m.created_time) >= Date.parse(page.launch_at) && Date.parse(m.created_time) <= Date.now());

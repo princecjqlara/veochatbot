@@ -11,13 +11,14 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals();vi.unstubAllEnvs(); });
 const finish = () => mock.rpc.mock.calls.filter(([name]) => name === 'veo_finish_autotag_page').at(-1)?.[1];
-it('saves only Page-authored launch-period stages without importing transcripts, creating contacts or inferring payment', async () => {
+it('saves only Page-authored launch-period stages without importing transcripts or inferring payment', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(Response.json({ data: [conversation()] })).mockResolvedValueOnce(Response.json({ data: [stage(), stage('Converted', 'customer'), stage('Converted', '111', '2026-11-01T00:00:00Z'), { ...stage(), id: 'invoice', message: 'You created an order for PHP100. View: fb-pma://payments/orderdetails/?invoice_id=123' }] }));
     vi.stubGlobal('fetch', fetch);
     expect(await scanVeoAutoTags(page)).toMatchObject({ complete: true, stage_events: 1, repaired_tags: 1 });
     expect(mock.rpc.mock.calls.filter(([name]) => name === 'apply_messenger_lead_stage')).toHaveLength(1);
     expect(mock.rpc).toHaveBeenCalledWith('apply_messenger_lead_stage', expect.objectContaining({ p_page_id: 'page', p_contact_id: 'contact', p_stage: 'qualified' }));
     expect(mock.from.mock.calls.every(([table]) => table === 'contacts')).toBe(true);
+    expect(mock.rpc.mock.calls.some(([name]) => name === 'veo_seed_contact_identities')).toBe(false);
     expect(fetch.mock.calls.every(([url, options]) => url.hostname === 'graph.facebook.com' && !url.searchParams.has('access_token') && options.headers.Authorization === 'Bearer secret-token' && !options.method)).toBe(true);
     expect(finish().p_result).toMatchObject({ next_cursor: null, stage_events: 1 });
 });
@@ -36,9 +37,25 @@ it('looks at new edits during paginated recovery, deduplicates threads and queue
     expect(fetch).toHaveBeenCalledTimes(3);expect(mock.rpc).toHaveBeenCalledWith('veo_request_source_refresh', { p_actor: 'owner', p_contact: 'contact' });expect(finish().p_result.next_cursor).toBe('after-next');
 });
 it('processes known contacts despite an unmatched participant and leaves a visible retry without inventing a contact', async () => {
-    mock.from.mockImplementation(() => { let psid: string; const q: any = { select: () => q, eq: (key: string, value: string) => { if (key === 'psid') psid = value;return q; }, maybeSingle: async () => ({ data: psid === 'unknown' ? null : { id: 'contact' } }) };return q; });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ data: [conversation('unknown', 'unknown'), conversation()] })).mockResolvedValueOnce(Response.json({ data: [stage()] })));
+    mock.from.mockImplementation(() => { let psid: string; const q: any = { select: () => q, eq: (key: string, value: string) => { if (key === 'psid') psid = value;return q; }, maybeSingle: async () => ({ data: psid === '222' ? null : { id: 'contact' } }) };return q; });
+    mock.rpc.mockImplementation(async name => name === 'veo_seed_contact_identities' ? { error: { message: 'private sync failure' } } : { data: name === 'apply_messenger_lead_stage' ? { applied: true } : true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ data: [conversation('unknown', '222'), conversation()] })).mockResolvedValueOnce(Response.json({ data: [stage()] })));
     expect(await scanVeoAutoTags(page)).toMatchObject({ complete: false, stage_events: 1 });expect(finish().p_result.error).toBe('CONTACT_SYNC_REQUIRED');
+});
+it('recovers missing numeric Page participant identities through the existing Owner sync before applying their stage', async () => {
+    let reads = 0;mock.from.mockImplementation(() => { const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: reads++ ? { id: 'synced-contact' } : null }) };return q; });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ data: [{ ...conversation('old', '333'), updated_time: '2026-11-01T00:00:00Z' }, { ...conversation('current', '222'), participants: { data: [{ id: '111' }, { id: '222', name: '  Client Name  ' }] } }] })).mockResolvedValueOnce(Response.json({ data: [stage()] })));
+    expect(await scanVeoAutoTags(page)).toMatchObject({ complete: true, conversations: 1, stage_events: 1 });
+    expect(mock.rpc).toHaveBeenCalledWith('veo_seed_contact_identities', { p_actor: 'owner', p_page: 'page', p_contacts: [{ psid: '222', name: 'Client Name' }] });
+    expect(mock.rpc.mock.calls.filter(([name]) => name === 'veo_seed_contact_identities')).toHaveLength(1);
+    expect(mock.rpc).toHaveBeenCalledWith('apply_messenger_lead_stage', expect.objectContaining({ p_contact_id: 'synced-contact', p_stage: 'qualified' }));
+});
+it('never seeds an identity from an invalid or ambiguous participant', async () => {
+    mock.from.mockImplementation(() => { const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: null }) };return q; });
+    for (const thread of [conversation('invalid', 'not-a-psid'), { ...conversation(), participants: { data: [{ id: '222' }, { id: '333' }] } }]) {
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [thread] })));expect((await scanVeoAutoTags(page)).complete).toBe(false);
+    }
+    expect(mock.rpc.mock.calls.some(([name]) => name === 'veo_seed_contact_identities')).toBe(false);
 });
 it('rejects incomplete evidence and non-advancing cursors instead of silently certifying a scan', async () => {
     for (const data of [{ data: [conversation()], paging: { next: 'next', cursors: { after: 'old' } } }, { data: [{ ...conversation(), updated_time: null }] }]) {

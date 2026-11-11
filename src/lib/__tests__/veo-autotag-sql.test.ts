@@ -9,23 +9,43 @@ beforeAll(async () => {
       CREATE SCHEMA app_private;CREATE TABLE app_private.schema_migrations(version text PRIMARY KEY,description text);
       CREATE TABLE veo_tenants(id uuid PRIMARY KEY,owner_id uuid,launch_at timestamptz);
       CREATE TABLE pages(id uuid PRIMARY KEY,name text,veo_tenant_id uuid,veo_enabled boolean DEFAULT true,fb_page_id text DEFAULT '111',access_token text DEFAULT 'private-token',messaging_auto_tag_enabled boolean DEFAULT true,messaging_auto_tag_attempted_at timestamptz DEFAULT '2026-01-01',messaging_auto_tag_last_error text);
-      CREATE TABLE contacts(id uuid PRIMARY KEY,page_id uuid REFERENCES pages(id),pipeline_stage text DEFAULT 'new',pipeline_stage_source text DEFAULT 'system',pipeline_stage_updated_at timestamptz DEFAULT now());
+      CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),page_id uuid REFERENCES pages(id),psid text,name text,pipeline_stage text DEFAULT 'new',pipeline_stage_source text DEFAULT 'system',pipeline_stage_updated_at timestamptz DEFAULT now(),UNIQUE(page_id,psid));
       CREATE TABLE tags(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text,color text,owner_type text,owner_id uuid,page_id uuid,is_default boolean DEFAULT false,system_key text,UNIQUE(owner_id,system_key));
       CREATE TABLE contact_tags(contact_id uuid REFERENCES contacts(id),tag_id uuid REFERENCES tags(id),UNIQUE(contact_id,tag_id));
       CREATE TABLE chatbot_contact_states(page_id uuid,contact_id uuid,messenger_history_reset_at timestamptz);
       CREATE TABLE ad_lead_stage_events(page_id uuid,contact_id uuid,stage text,source text);
       CREATE TABLE veo_accounts(user_id uuid PRIMARY KEY,tenant_id uuid,active boolean,role text);
       CREATE TABLE user_pages(user_id uuid,page_id uuid);
+      CREATE TABLE users(id uuid PRIMARY KEY,is_active boolean DEFAULT true);
+      CREATE TABLE identity_insert_events(kind text,contact_id uuid);
+      CREATE FUNCTION veo_queue_contact_source() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN INSERT INTO identity_insert_events VALUES('source',NEW.id);RETURN NEW;END$$;
+      CREATE FUNCTION record_ad_lead_stage_event() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN INSERT INTO identity_insert_events VALUES('stage',NEW.id);RETURN NEW;END$$;
+      CREATE TRIGGER source_insert AFTER INSERT ON contacts FOR EACH ROW EXECUTE FUNCTION veo_queue_contact_source();
+      CREATE TRIGGER stage_insert AFTER INSERT ON contacts FOR EACH ROW EXECUTE FUNCTION record_ad_lead_stage_event();
       CREATE FUNCTION veo_can_page(actor uuid,pg uuid) RETURNS boolean LANGUAGE sql AS $$SELECT EXISTS(SELECT 1 FROM user_pages WHERE user_id=actor AND page_id=pg)$$;`);
-    for (const name of ['202611020002_messenger_stage_history.sql', '202611020003_stage_history_repair_index.sql', '202611050007_scope_stage_events_to_contact.sql', '202611110004_veo_autotag_page_recovery.sql']) await db.exec(readFileSync('supabase/migrations/' + name, 'utf8'));
+    for (const name of ['202611020002_messenger_stage_history.sql', '202611020003_stage_history_repair_index.sql', '202611050007_scope_stage_events_to_contact.sql', '202611090003_veo_contact_identity_sync.sql', '202611110004_veo_autotag_page_recovery.sql']) await db.exec(readFileSync('supabase/migrations/' + name, 'utf8'));
 }, 30000);
 afterAll(async () => { await db?.close(); });
 beforeEach(async () => {
-    await db.exec('TRUNCATE veo_tenants,pages,contacts,tags,contact_tags,chatbot_contact_states,ad_lead_stage_events,veo_accounts,user_pages,veo_autotag_page_state,messenger_lead_stage_events CASCADE');
+    await db.exec('TRUNCATE veo_tenants,pages,contacts,tags,contact_tags,chatbot_contact_states,ad_lead_stage_events,veo_accounts,user_pages,users,identity_insert_events,veo_autotag_page_state,messenger_lead_stage_events CASCADE');
     await db.query("INSERT INTO veo_tenants VALUES($1,$2,now()-interval '2 days'),($3,$4,NULL)", [id(100), id(50), id(101), id(51)]);
     for (let n = 1; n <= 7; n++) await db.query('INSERT INTO pages(id,name,veo_tenant_id,messaging_auto_tag_enabled) VALUES($1,$2,$3,$4)', [id(n), 'Page ' + n, id(n === 7 ? 101 : 100), n !== 6]);
     await db.query("INSERT INTO veo_accounts VALUES($1,$2,true,'owner'),($3,$2,true,'team_leader'),($4,$2,true,'member')", [id(50), id(100), id(52), id(53)]);
     await db.query('INSERT INTO user_pages VALUES($1,$3),($1,$4),($2,$3)', [id(50), id(52), id(1), id(2)]);
+    await db.query('INSERT INTO users(id) VALUES($1),($2),($3)', [id(50), id(52), id(53)]);
+});
+it('seeds only absent Owner-scoped identities, preserves existing decisions and suppresses historical insertion jobs', async () => {
+    await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,pipeline_stage_source) VALUES($1,$2,'222','Original','qualified','manual')", [id(70), id(1)]);
+    await db.exec('TRUNCATE identity_insert_events');
+    const contacts = JSON.stringify([{ psid: '222', name: 'Replacement' }, { psid: '333', name: 'New identity' }]);
+    const seed = async (actor = id(50), page = id(1)) => (await db.query<any>('SELECT veo_seed_contact_identities($1,$2,$3) result', [actor, page, contacts])).rows[0].result;
+    expect(await seed()).toEqual({ received: 2, inserted: 1, skipped: 1 });expect(await seed()).toEqual({ received: 2, inserted: 0, skipped: 2 });
+    expect((await db.query<any>('SELECT name,pipeline_stage,pipeline_stage_source FROM contacts WHERE id=$1', [id(70)])).rows[0]).toEqual({ name: 'Original', pipeline_stage: 'qualified', pipeline_stage_source: 'manual' });
+    expect((await db.query('SELECT * FROM identity_insert_events')).rows).toHaveLength(0);
+    expect((await db.query('SELECT * FROM messenger_lead_stage_events')).rows).toHaveLength(0);
+    await expect(seed(id(52))).rejects.toThrow('Owner Page access');await expect(seed(id(50), id(3))).rejects.toThrow('Owner Page access');
+    await db.query("INSERT INTO contacts(page_id,psid,name) VALUES($1,'444','Live identity')", [id(1)]);
+    expect((await db.query('SELECT kind FROM identity_insert_events ORDER BY kind')).rows).toEqual([{ kind: 'source' }, { kind: 'stage' }]);
 });
 const claim = async (limit = 3) => (await db.query<any>('SELECT veo_claim_autotag_pages($1) jobs', [limit])).rows[0].jobs;
 it('fairly leases every enabled launched Page, rejects stale acknowledgments and never exposes credentials through status', async () => {

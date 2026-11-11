@@ -19,7 +19,8 @@ export default function VeoAutoTagStatus() {
     }, [version]);
     return <section className="rounded-xl border bg-white p-4 space-y-3" aria-label="Auto-tag recovery by Page">
         <div className="flex flex-wrap justify-between gap-2"><h2 className="font-bold text-lg">Auto-tag recovery</h2><button className="underline text-sm" onClick={() => setVersion(v => v + 1)}>Recheck tag status</button></div>
-        <p className="text-sm text-slate-600">Webhooks save stage history immediately. Scheduled scans recover exposed notices on existing contacts and restore missing saved history tags. Meta may omit administrative notices; a successful scan cannot prove every Business Suite change was exposed.</p>
+        <p className="text-sm text-slate-600">Webhooks save stage history immediately. Scheduled scans recover exposed notices and restore missing saved history tags. Missing contact names and identities are synced from the Page without importing old chat transcripts.</p>
+        <p className="text-xs text-slate-500">Meta may omit administrative notices; a successful scan cannot prove every Business Suite change was exposed.</p>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {!data && !error && <p role="status" className="text-sm">Loading Page tag status…</p>}
         {data && <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead><tr>{['Page', 'Recovery status', 'Last successful scan', 'Observed stage notices'].map(label => <th className="p-2 border-b" key={label}>{label}</th>)}</tr></thead><tbody>{data.pages.map((page: any) => <tr key={page.page_id}>
