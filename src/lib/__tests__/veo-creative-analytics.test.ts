@@ -52,3 +52,16 @@ it('keeps mixed currencies separate and refuses net from unconverted financial m
     const data: any = input(); data.cash.push({ contact_id: 'c', currency: 'USD', amount_minor: 2000 });
     const ad = buildCreativeReport(data).ads[0]; expect(ad.finance).toHaveLength(2); expect(ad.finance.every((f: any) => f.net_minor == null)).toBe(true);
 });
+it('returns daily unique reach and frequency without summing reach into a misleading range audience', () => {
+    const report = buildCreativeReport(input()); expect(report.ads[0].reach).toBeNull(); expect(report.ads[0].frequency).toBeNull();
+    expect(report.daily[0]).toMatchObject({ reach: 100, frequency: 2 }); expect(report.daily[1]).toMatchObject({ reach: 100, frequency: 3 });
+    expect(report.ads[0].finance[0].cost_per_link_click_minor).toBe(150); expect(report.ads[0].finance[0].cost_per_video_play_minor).toBe(20);
+    const data: any = input(); data.spend[0].reach = null;
+    expect(buildCreativeReport(data).daily[0].reach).toBeNull(); expect(buildCreativeReport(data).daily[0].frequency).toBeNull();
+});
+it('does not turn missing or zero messaging results into a fake zero cost per message', () => {
+    for (const messaging of [null, 0]) {
+        const data: any = input(); data.spend.forEach((r: any) => { r.messaging_started = messaging; });
+        const ad = buildCreativeReport(data).ads[0]; expect(ad.messaging_started).toBe(messaging); expect(ad.finance[0].cost_per_message_minor).toBeNull();
+    }
+});

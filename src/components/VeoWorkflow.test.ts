@@ -68,5 +68,5 @@ it('renders creative profit and cohort trends with demographics and explicit fre
     const ad = { ad_id: '1', ad: { ad_name: 'Creative' }, inquiries: 2, converted: 1, conversion_rate: .5, finance: [f], demographics: [{ key: 'industry', total: 2, rows: [{ label: 'Food', count: 1, percent: .5 }] }] };
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ads: [ad], daily: [{ ...ad, day: '2026-11-06' }], coverage: {} }))));
     await act(async () => { view = create(createElement(Creative, { query: 'pageId=page&range=7' })); });
-    expect(text(view.toJSON())).toContain('Net profit after salary and ads'); expect(text(view.toJSON())).toContain('Food: 1 (50.0%)'); expect(view.root.findByProps({ 'aria-label': 'Daily creative performance chart' })).toBeTruthy();
+    expect(text(view.toJSON())).toContain('Net profit after salary and ads'); expect(text(view.toJSON())).toContain('Food: 1 (50.0%)'); expect(view.root.findByProps({ 'aria-label': 'Impressions by day' })).toBeTruthy();
 });

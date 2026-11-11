@@ -21,15 +21,23 @@ export async function GET(request: NextRequest) {
         if (Date.parse(to) - Date.parse(from) > 92 * 86400000) throw Error('Choose at most 93 days for creative analytics');
         const db = getSupabaseAdmin(), result = await readVeoRpc(db, 'veo_creative_inputs', { p_actor: scope.user_id, p_page: page, p_from: from, p_to: to, p_ad: ad });
         if (result.error) throw Object.assign(Error('Creative report is temporarily unavailable. Retry shortly.'), { status: result.error.code === '42501' ? 403 : 503 });
-        const report: any = buildCreativeReport({ ...result.data, selected_ad: ad }); report.exact_frequency = null;
-        if (ad && report.ads.some((a: any) => a.ad_id === ad)) {
+        const report: any = buildCreativeReport({ ...result.data, selected_ad: ad }); report.exact_frequency = null; report.exact_delivery = null;
+        const selectedAd = report.daily_ad_id;
+        if (selectedAd && report.ads.some((a: any) => a.ad_id === selectedAd)) {
             try {
                 const tenant = await db.from('veo_tenants').select('owner_id').eq('id', scope.tenant_id).single();
                 if (tenant.error || !tenant.data) throw Error('Ad credential owner unavailable');
                 const credential = await db.from('meta_ads_credentials').select('token_ciphertext,token_iv,token_auth_tag,token_expires_at').eq('user_id', tenant.data.owner_id).maybeSingle();
                 if (credential.data && (!credential.data.token_expires_at || Date.parse(credential.data.token_expires_at) > Date.now())) {
-                    const raw = await readMetaAds(ad + '/insights', decryptMetaAdsToken(credential.data), { fields: 'ad_id,frequency,reach,impressions', time_range: JSON.stringify({ since: from, until: to }), level: 'ad', limit: '1' });
-                    const value = raw.data?.[0]; if (value?.ad_id === ad && typeof value.frequency !== 'undefined' && value.frequency !== null && String(value.frequency).trim() !== '' && Number.isFinite(Number(value.frequency)) && Number(value.frequency) >= 0) report.exact_frequency = { value: Number(value.frequency), checked_at: new Date().toISOString(), from, to, timezone: 'Ad-account reporting dates' };
+                    const raw = await readMetaAds(selectedAd + '/insights', decryptMetaAdsToken(credential.data), { fields: 'ad_id,frequency,reach,impressions', time_range: JSON.stringify({ since: from, until: to }), level: 'ad', limit: '1' });
+                    const value = raw.data?.[0];
+                    if (value?.ad_id === selectedAd) {
+                        const number = (v: unknown, integer = false) => (typeof v === 'string' || typeof v === 'number') && /^\d+(?:\.\d+)?$/.test(String(v)) && Number.isFinite(Number(v)) && (!integer || Number.isSafeInteger(Number(v))) ? Number(v) : null;
+                        const frequency = number(value.frequency), reach = number(value.reach, true), impressions = number(value.impressions, true);
+                        const dates = { checked_at: new Date().toISOString(), from, to, timezone: 'Ad-account reporting dates' };
+                        if (frequency != null || reach != null || impressions != null) report.exact_delivery = { ad_id: selectedAd, frequency, reach, impressions, ...dates };
+                        if (frequency != null) report.exact_frequency = { value: frequency, ...dates };
+                    }
                 }
             } catch { /* Saved metrics remain usable; no fabricated range frequency. */ }
         }

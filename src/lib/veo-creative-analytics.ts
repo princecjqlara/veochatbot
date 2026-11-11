@@ -61,10 +61,13 @@ export function buildCreativeReport(input: any) {
         const deliveryComplete = ads.length > 0 && [...new Set(ads.map((r: any) => r.currency))].every(currency => money.find(f => f.currency === currency)?.spend_complete), metric = (field: string) => deliveryComplete && ads.length && ads.every((r: any) => r[field] != null && Number.isFinite(Number(r[field])) && Number(r[field]) >= 0) ? sum(ads, field) : null;
         const impressions = metric('impressions'), clicks = metric('clicks'), linkClicks = metric('link_clicks'), conversations = metric('messaging_started'), plays = metric('video_plays'), thruplays = metric('video_thruplays'), completions = metric('video_complete');
         money.forEach(f => Object.assign(f, { cpc_minor: f.spend_complete && f.ad_spend_minor != null && clicks != null ? ratio(f.ad_spend_minor, clicks) : null,
+            cost_per_link_click_minor: f.spend_complete && f.ad_spend_minor != null && linkClicks != null ? ratio(f.ad_spend_minor, linkClicks) : null,
             cpm_minor: f.spend_complete && f.ad_spend_minor != null && impressions != null ? ratio(f.ad_spend_minor * 1000, impressions) : null,
             cost_per_message_minor: f.spend_complete && f.ad_spend_minor != null && conversations != null ? ratio(f.ad_spend_minor, conversations) : null,
-            cost_per_thruplay_minor: f.spend_complete && f.ad_spend_minor != null && thruplays != null ? ratio(f.ad_spend_minor, thruplays) : null }));
+            cost_per_thruplay_minor: f.spend_complete && f.ad_spend_minor != null && thruplays != null ? ratio(f.ad_spend_minor, thruplays) : null,
+            cost_per_video_play_minor: f.spend_complete && f.ad_spend_minor != null && plays != null ? ratio(f.ad_spend_minor, plays) : null }));
         const frequencyRows = ads.filter((s: any) => s.frequency != null && s.reach > 0), weights = sum(frequencyRows, 'reach');
+        const dailyFrequency = deliveryComplete && weights && ads.every((r: any) => r.reach != null && (Number(r.reach) === 0 || r.frequency != null)) ? frequencyRows.reduce((n: number, r: any) => n + Number(r.frequency) * Number(r.reach), 0) / weights : null;
         const history = (input.delivery_history || []).find((h: any) => h.ad_id === ad);
         return { ad_id: ad, ad: (input.ads || []).find((a: any) => a.ad_id === ad), inquiries: cohort.length, converted, qualified: cohort.filter((c: any) => c.stage === 'qualified').length,
             not_qualified: cohort.filter((c: any) => c.stage === 'not_qualified').length, pending: cohort.filter((c: any) => !['qualified', 'not_qualified', 'converted'].includes(c.stage)).length,
@@ -72,7 +75,10 @@ export function buildCreativeReport(input: any) {
             mean_inquiry_to_conversion_hours: mean(cohort.filter((c: any) => c.converted_at && Date.parse(c.converted_at) >= Date.parse(c.inquiry_at)).map((c: any) => (Date.parse(c.converted_at) - Date.parse(c.inquiry_at)) / 3600000)),
             first_delivery_date: history?.first_delivery_date || null, latest_delivery_date: history?.latest_delivery_date || null, recorded_delivery_days: Number(history?.delivery_days || 0),
             running_calendar_days: history?.first_delivery_date ? Math.floor((Date.parse(day(input.as_of)) - Date.parse(history.first_delivery_date)) / 86400000) + 1 : null,
-            daily_frequency_weighted_mean: deliveryComplete && weights && ads.every((r: any) => r.reach != null && (Number(r.reach) === 0 || r.frequency != null)) ? frequencyRows.reduce((n: number, r: any) => n + Number(r.frequency) * Number(r.reach), 0) / weights : null,
+            daily_frequency_weighted_mean: dailyFrequency,
+            // Reach is unique within one reporting day. Whole-period reach must
+            // come from a separate range Insights read, never a daily sum.
+            reach: selectedDay ? metric('reach') : null, frequency: selectedDay ? dailyFrequency : null,
             impressions, clicks, link_clicks: linkClicks, messaging_started: conversations, video_plays: plays, video_thruplays: thruplays, video_complete: completions,
             ctr: impressions != null && clicks != null ? ratio(clicks, impressions) : null,
             link_ctr: impressions != null && linkClicks != null ? ratio(linkClicks, impressions) : null,
