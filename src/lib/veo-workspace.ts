@@ -6,7 +6,7 @@ import { readVeoRpc } from './veo-report-read';
 export const workspaceEnabled = () => process.env.VEO_WORKSPACE_ENABLED === 'true';
 export const roles = ['member', 'manager', 'team_leader', 'owner'] as const;
 export type WorkspaceRole = typeof roles[number];
-export type WorkspaceScope = { user_id: string; tenant_id: string; role: WorkspaceRole; page_ids: string[]; worker_ids: string[]; launch_at: string | null; telegram_username?: string | null; telegram_profile_completed_at?: string | null };
+export type WorkspaceScope = { user_id: string; tenant_id: string; role: WorkspaceRole; page_ids: string[]; worker_ids: string[]; launch_at: string | null; telegram_username?: string | null; telegram_profile_completed_at?: string | null; reviewed_deals_enabled?: boolean };
 export const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 // Prehash avoids bcrypt's 72-byte truncation while accepting every nonempty password.

@@ -3,10 +3,15 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { receiptHoldLabels } from '@/lib/veo-receipts';
 import VeoReceiptSaleDetails from './VeoReceiptSaleDetails';
+import VeoDealEvidenceInbox from './VeoDealEvidenceInbox';
 const today = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
 const field = 'block w-full rounded border border-slate-300 bg-white p-2 text-sm';
 const money = (v: number | null, c: string | null) => v == null || !c ? 'Unverified' : new Intl.NumberFormat('en-PH', { style: 'currency', currency: c }).format(v / 100);
-export default function VeoReceiptInbox({ scope, accounts, compact = false, initialContactId = '', initialKind = 'closed' }: { scope: any; accounts: any[]; compact?: boolean; initialContactId?: string; initialKind?: 'closed' | 'done' }) {
+type ReceiptProps = { scope: any; accounts: any[]; compact?: boolean; initialContactId?: string; initialKind?: 'closed' | 'done' };
+export default function VeoReceiptInbox(props: ReceiptProps) {
+    return props.scope.reviewed_deals_enabled ? <VeoDealEvidenceInbox {...props}/> : <LegacyVeoReceiptInbox {...props}/>;
+}
+function LegacyVeoReceiptInbox({ scope, accounts, compact = false, initialContactId = '', initialKind = 'closed' }: ReceiptProps) {
     const [data, setData] = useState<any>(null), [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [version, setVersion] = useState(0);
     const [from, setFrom] = useState(() => new Date(Math.max(Date.parse(scope.launch_at), Date.now() - 29 * 86400000) + 8 * 3600000).toISOString().slice(0, 10)), [to, setTo] = useState(today), [worker, setWorker] = useState(''), [offset, setOffset] = useState(0);
     const [search, setSearch] = useState(''), [contacts, setContacts] = useState<any[]>([]), [picked, setPicked] = useState<any>(null), [client, setClient] = useState(initialContactId), [orders, setOrders] = useState<any[]>([]), [seller, setSeller] = useState(['manager', 'member'].includes(scope.role) ? scope.user_id : '');

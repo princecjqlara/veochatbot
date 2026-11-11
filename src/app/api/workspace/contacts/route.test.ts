@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ rpc: vi.fn(), session: vi.fn() }));
-vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => ({ rpc: m.rpc }) }));
+const m = vi.hoisted(() => ({ rpc: vi.fn(), session: vi.fn(), pages: vi.fn(), scope: vi.fn() }));
+vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => ({ rpc: m.rpc, from: () => ({select:()=>({in:(_key:string,ids:string[])=>({order:()=>m.pages(ids)})})}) }) }));
+vi.mock('@/lib/veo-workspace', async importOriginal => ({...await importOriginal<any>(),workspaceScope:m.scope}));
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: m.session }));
 import { GET } from './route';
 afterEach(() => { vi.clearAllMocks(); });
@@ -9,9 +10,10 @@ describe('workspace contact search', () => {
     it('returns the items contract with no-store and searches all authorized pages using the signed-in actor', async () => {
         m.session.mockResolvedValue({ user: { id: 'worker' } });
         m.rpc.mockResolvedValue({ data: { items: [{ id: 'no-order-client' }], total: 1, offset: 25 } });
+        m.scope.mockResolvedValue({page_ids:['page-a']});m.pages.mockResolvedValue({data:[{id:'page-a',name:'Page A'}]});
         const response = await GET(new NextRequest('https://veo.test/api/workspace/contacts?search=%20Alice%20&offset=25&actor=owner'));
         expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('no-store');
-        expect(await response.json()).toMatchObject({ items: [{ id: 'no-order-client' }] });
+        expect(await response.json()).toMatchObject({ items: [{ id: 'no-order-client' }],pages:[{id:'page-a',name:'Page A'}] });expect(m.pages).toHaveBeenCalledWith(['page-a']);
         expect(m.rpc).toHaveBeenCalledWith('veo_contacts_page', { p_actor: 'worker', p_search: 'Alice', p_page: null, p_offset: 25, p_limit: 25 });
     });
     it('rejects anonymous access, invalid filters and revoked page access', async () => {

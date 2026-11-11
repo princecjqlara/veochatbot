@@ -925,8 +925,9 @@ describe('automatic fresh inquiry editor rotation', () => {
         const sentAt=new Date(Date.now()-30000).toISOString();
         await rpc('veo_ack_intake_offer',[tenant,first.offer_id,chat,778,sentAt]);
         const expiry=(await db.query<any>('SELECT expires_at FROM veo_client_offers WHERE id=$1',[first.offer_id])).rows[0].expires_at;
-        expect(new Date(expiry).getTime()-Date.now()).toBeGreaterThan(14*60000);
-        expect(new Date(expiry).getTime()-new Date(sentAt).getTime()).toBe(15*60000);
+        const readyUntil=(await db.query<any>('SELECT expires_at FROM veo_intake_readiness WHERE user_id=$1',[editorA])).rows[0].expires_at;
+        expect(new Date(expiry).getTime()).toBeGreaterThan(Date.now());
+        expect(new Date(expiry).getTime()).toBe(Math.min(new Date(sentAt).getTime()+15*60000,new Date(readyUntil).getTime()));
         await rpc('veo_ack_intake_offer',[tenant,first.offer_id,chat,778]);
         expect(new Date((await db.query<any>('SELECT expires_at FROM veo_client_offers WHERE id=$1',[first.offer_id])).rows[0].expires_at).getTime()).toBe(new Date(expiry).getTime());
         await db.query("UPDATE veo_client_offers SET expires_at=now()-interval '1 second' WHERE id=$1",[first.offer_id]);

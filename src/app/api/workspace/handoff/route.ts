@@ -132,5 +132,15 @@ async function getHandoff(request: NextRequest, db: HandoffDb) {
     const signed = s.data && await db.storage.from('veo-conversation-submissions').createSignedUrl(s.data.object_path, 60);
     if (signed && isSupabaseUnavailable(signed.error)) throw signed.error;
     if (!signed || signed.error) return NextResponse.json({ error: 'Photo unavailable; re-upload required' }, { status: 410 });
-    return NextResponse.json({ ...result.data, photo_url: signed.data.signedUrl }, { headers: { 'Cache-Control': 'no-store' } });
+    let evidence_photos;
+    if (result.data.deal_review_id) {
+        const photos = result.data.evidence_photos;
+        if (!Array.isArray(photos) || photos.length !== 3 || new Set(photos.map((p: any) => p.slot)).size !== 3 || photos.some((p: any) => !['stage','payment','order'].includes(p.slot) || typeof p.object_path !== 'string')) return NextResponse.json({ error: 'Review evidence incomplete' }, { status: 409 });
+        evidence_photos = await Promise.all(photos.map(async (photo: any) => {
+            const link = await db.storage.from('veo-conversation-submissions').createSignedUrl(photo.object_path, 120);
+            if (link.error || !link.data?.signedUrl) throw new Error('Review photo unavailable');
+            return { slot: photo.slot, photo_url: link.data.signedUrl };
+        }));
+    }
+    return NextResponse.json({ ...result.data, ...(evidence_photos ? { evidence_photos } : {}), photo_url: signed.data.signedUrl }, { headers: { 'Cache-Control': 'no-store' } });
 }

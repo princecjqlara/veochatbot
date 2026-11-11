@@ -61,7 +61,7 @@ it('does not remove active standalone identities or transfer documents outside t
 it('fully clears the workforce and planning rows while retaining the Owner, connections and customers and restoring write guards',async()=>{
  const contact=id(60);await db.query("INSERT INTO contacts(id,page_id,psid,name) VALUES($1,$2,'customer','Retained customer')",[contact,page]);
  const beforeOwner=(await db.query('SELECT * FROM users WHERE id=$1',[owner])).rows,backup=async(data:any)=>{expect(data.rows.users).toHaveLength(4);expect(data.rows.veo_teams).toHaveLength(3);};
- const context=await inspectWorkforceReset(db,{owner,tenant});expect(context.plan.blockers).toEqual([]);expect(context.plan.counts.veo_operating_quotas).toBeGreaterThan(0);
+ const context=await inspectWorkforceReset(db,{owner,tenant});expect(context.plan.blockers).toEqual([]);expect((context.plan.counts as Record<string,number>).veo_operating_quotas).toBeGreaterThan(0);
  const result=await applyWorkforceReset(db,context,{backup});expect(result).toMatchObject({remainingStaffAccounts:0,remainingTeams:0,ownerAndBusinessDataPreserved:true,triggerProtectionsRestored:true});
  expect((await db.query('SELECT * FROM users WHERE id=$1',[owner])).rows).toEqual(beforeOwner);expect((await db.query('SELECT user_id FROM veo_accounts')).rows).toEqual([{user_id:owner}]);
  expect((await db.query('SELECT id FROM contacts')).rows).toEqual([{id:contact}]);expect((await db.query('SELECT * FROM user_pages WHERE user_id=$1',[owner])).rows).toHaveLength(2);

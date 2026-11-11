@@ -49,6 +49,8 @@ async function processWorkspace(request: NextRequest) {
         let budgetRetry = false;
         try { await refreshPageBudgets(); } catch { budgetRetry = true; }
         const processed = await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin, Math.max(0, 210000 - (Date.now() - startedAt)));
+        const approved = await db.rpc('veo_enqueue_approved_deal_reviews', { p_limit: 20 });
+        if (approved.error) throw new Error('Approved receipt queue unavailable');
         const claimed = await db.rpc('veo_claim_submissions');
         if (claimed.error) throw new Error('Delivery queue unavailable');
         for (const s of claimed.data || []) {
