@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { decryptMetaAdsToken } from './meta-ads-credentials';
 import { refreshMetaAdSpend } from './meta-ads-sync';
 
-export async function refreshStoredWorkspaceAds({ db, user, from, to, authorize, deadline = Date.now() + 245000, workspaceOnly = true }: {
-    db: any; user: string; from: string; to: string; authorize: () => Promise<string[]>; deadline?: number; workspaceOnly?: boolean;
+export async function refreshStoredWorkspaceAds({ db, user, from, to, authorize, deadline = Date.now() + 245000, workspaceOnly = true, preserveOtherCheckpoint = false }: {
+    db: any; user: string; from: string; to: string; authorize: () => Promise<string[]>; deadline?: number; workspaceOnly?: boolean; preserveOtherCheckpoint?: boolean;
 }) {
     const loaded = await db.from('meta_ads_credentials').select('token_ciphertext,token_iv,token_auth_tag,token_expires_at,sync_checkpoint').eq('user_id', user).maybeSingle();
     if (loaded.error) throw Error('Saved advertising access is temporarily unavailable');
@@ -23,7 +23,7 @@ export async function refreshStoredWorkspaceAds({ db, user, from, to, authorize,
             completed: checkpoint?.completed_windows, completedPages: checkpoint?.page_ids, completedAccounts: checkpoint?.account_ids });
         const saved = await db.from('meta_ads_credentials').update({
             ...(result.complete ? { last_synced_at: new Date().toISOString() } : {}), last_error: result.errors.join('; ').slice(0, 300) || null,
-            sync_checkpoint: result.complete ? null : { from, to, completed_windows: result.completed_windows, page_ids: result.page_ids, account_ids: result.account_ids },
+            ...(preserveOtherCheckpoint && credential.sync_checkpoint && !checkpoint ? {} : { sync_checkpoint: result.complete ? null : { from, to, completed_windows: result.completed_windows, page_ids: result.page_ids, account_ids: result.account_ids } }),
             updated_at: new Date().toISOString(), refresh_lease_token: null, refresh_lease_until: null
         }).eq('user_id', user).eq('refresh_lease_token', lease);
         if (saved.error) throw Error('Advertising results were fetched but refresh progress could not be saved. Recheck before retrying.');

@@ -27,3 +27,7 @@ it('retains partial progress and releases the lease after a failed or interrupte
     await run();expect(writes[0]).toMatchObject({last_error:'Incomplete source',sync_checkpoint:{completed_windows:['one']}});expect(writes[0].last_synced_at).toBeUndefined();
     m.refresh.mockRejectedValue(Error('Network failed'));await expect(run()).rejects.toThrow('Network failed');expect(writes.at(-1)).toEqual({refresh_lease_token:null,refresh_lease_until:null});
 });
+it('does not let the hourly recent-date refresh erase an unfinished historical import checkpoint',async()=>{
+    await refreshStoredWorkspaceAds({db,user:'owner',from:'2026-11-09',to:'2026-11-11',authorize:async()=>['page'],preserveOtherCheckpoint:true});
+    expect(writes[0].sync_checkpoint).toBeUndefined();expect(writes[0].last_synced_at).toBeDefined();expect(m.refresh.mock.calls[0][0].completed).toBeUndefined();
+});

@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
         try {
             if (Date.now() >= deadline) throw Error('Scheduled ad refresh deadline reached');
             if (credential.token_expires_at && Date.parse(credential.token_expires_at) <= Date.now()) throw Error('Stored Meta ad credential has expired');
-            const result = await refreshStoredWorkspaceAds({ db, user: credential.user_id, from, to: today, deadline, workspaceOnly: workspaceEnabled(),
+            const result = await refreshStoredWorkspaceAds({ db, user: credential.user_id, from, to: today, deadline, workspaceOnly: workspaceEnabled(), preserveOtherCheckpoint: true,
                 authorize: () => getUserPageIds(credential.user_id) });
             reports.push({ user_id: credential.user_id, ...result });
         } catch (error) {
