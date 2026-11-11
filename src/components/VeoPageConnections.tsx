@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { AlertCircle, CheckCircle2, ExternalLink, Link2, Plus, RefreshCw, Search } from 'lucide-react';
 import VeoPageState from './VeoPageState';
+import VeoAutoTagStatus from './VeoAutoTagStatus';
 
 type SavedPage = { id: string; facebookPageId: string; name: string; enabled: boolean; status: 'ready' | 'reconnect_required' | 'setup_needed' | 'unknown' | 'disabled'; updatedAt: string };
 type AvailablePage = { id: string; name: string; category?: string | null; tasks?: string[] };
@@ -189,5 +190,6 @@ export default function VeoPageConnections() {
             {!visible.length && <p className="p-8 text-center text-sm text-slate-500">{saved.length ? 'No Pages match these filters. Clear the search or choose All statuses.' : 'No Pages are connected yet. Add your first Facebook Page above.'}</p>}
         </section>
         <section className="rounded-xl border bg-white p-5 text-sm"><h2 className="font-semibold">Contact collection & webhook setup</h2><p className="mt-2 max-w-4xl leading-6 text-slate-500">Sync contacts adds names and identities in resumable batches. Existing contacts stay unchanged; past messages, sales and archived automation are retained under the current workspace rules. New messages continue through the Page webhook.</p><div className="mt-4 flex flex-wrap gap-3"><Link className="btn" href="/dashboard/workspace?view=sync">Open collection health</Link><Link className="btn" href="/dashboard/settings">Webhook settings</Link></div><details className="mt-4"><summary className="cursor-pointer text-xs font-medium text-slate-500">Facebook app callback details</summary><p className="mt-2 text-xs text-slate-500">If Facebook reports a redirect URL mismatch, register this exact OAuth redirect URL in the connected Meta app:</p><code className="mt-2 block break-all rounded-lg bg-slate-50 p-3 text-xs">{directory.callbackUrl}</code></details></section>
+        <VeoAutoTagStatus />
     </div>;
 }

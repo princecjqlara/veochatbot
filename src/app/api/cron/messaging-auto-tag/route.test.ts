@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const mocks = vi.hoisted(() => ({ processPage: vi.fn(), processBatch: vi.fn() }));
+const mocks = vi.hoisted(() => ({ processPage: vi.fn(), processBatch: vi.fn(), workspace: vi.fn() }));
 vi.mock('@/lib/messaging-auto-tag-worker', () => ({ processOneMessagingAutoTagPage: mocks.processPage, processMessagingStageSyncBatch: mocks.processBatch }));
+vi.mock('@/lib/veo-autotag', () => ({ processVeoAutoTags: mocks.workspace }));
 import { GET } from './route';
-beforeEach(() => { vi.stubEnv('CRON_SECRET', 'test-secret'); mocks.processPage.mockReset().mockResolvedValue({ pages: 1, webhookHealth: { verified: true } }); mocks.processBatch.mockReset().mockResolvedValue({pages:6,completed:6,failed:0}); });
+beforeEach(() => { vi.stubEnv('CRON_SECRET', 'test-secret'); mocks.processPage.mockReset().mockResolvedValue({ pages: 1, webhookHealth: { verified: true } }); mocks.processBatch.mockReset().mockResolvedValue({pages:6,completed:6,failed:0}); mocks.workspace.mockReset().mockResolvedValue({ pages: 3, completed: 3, failed: 0 }); });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 describe('targeted chatbot Page maintenance', () => {
-    it('does not claim legacy stage scans in workspace mode', async () => {
+    it('uses bounded workspace recovery without claiming legacy stage scans', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
         const response = await GET(new NextRequest('https://app.test/api/cron/messaging-auto-tag', { headers: { Authorization: 'Bearer test-secret' } }));
-        expect(await response.json()).toMatchObject({ success: true, skipped: true });
+        expect(await response.json()).toMatchObject({ success: true, pages: 3, completed: 3 });
+        expect(mocks.workspace).toHaveBeenCalledOnce();
         expect(mocks.processBatch).not.toHaveBeenCalled();
         expect(mocks.processPage).not.toHaveBeenCalled();
     });

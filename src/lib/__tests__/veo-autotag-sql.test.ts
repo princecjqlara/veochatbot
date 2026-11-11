@@ -1,0 +1,64 @@
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+let db: PGlite;
+const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;
+      CREATE SCHEMA app_private;CREATE TABLE app_private.schema_migrations(version text PRIMARY KEY,description text);
+      CREATE TABLE veo_tenants(id uuid PRIMARY KEY,owner_id uuid,launch_at timestamptz);
+      CREATE TABLE pages(id uuid PRIMARY KEY,name text,veo_tenant_id uuid,veo_enabled boolean DEFAULT true,fb_page_id text DEFAULT '111',access_token text DEFAULT 'private-token',messaging_auto_tag_enabled boolean DEFAULT true,messaging_auto_tag_attempted_at timestamptz DEFAULT '2026-01-01',messaging_auto_tag_last_error text);
+      CREATE TABLE contacts(id uuid PRIMARY KEY,page_id uuid REFERENCES pages(id),pipeline_stage text DEFAULT 'new',pipeline_stage_source text DEFAULT 'system',pipeline_stage_updated_at timestamptz DEFAULT now());
+      CREATE TABLE tags(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text,color text,owner_type text,owner_id uuid,page_id uuid,is_default boolean DEFAULT false,system_key text,UNIQUE(owner_id,system_key));
+      CREATE TABLE contact_tags(contact_id uuid REFERENCES contacts(id),tag_id uuid REFERENCES tags(id),UNIQUE(contact_id,tag_id));
+      CREATE TABLE chatbot_contact_states(page_id uuid,contact_id uuid,messenger_history_reset_at timestamptz);
+      CREATE TABLE ad_lead_stage_events(page_id uuid,contact_id uuid,stage text,source text);
+      CREATE TABLE veo_accounts(user_id uuid PRIMARY KEY,tenant_id uuid,active boolean,role text);
+      CREATE TABLE user_pages(user_id uuid,page_id uuid);
+      CREATE FUNCTION veo_can_page(actor uuid,pg uuid) RETURNS boolean LANGUAGE sql AS $$SELECT EXISTS(SELECT 1 FROM user_pages WHERE user_id=actor AND page_id=pg)$$;`);
+    for (const name of ['202611020002_messenger_stage_history.sql', '202611020003_stage_history_repair_index.sql', '202611050007_scope_stage_events_to_contact.sql', '202611110004_veo_autotag_page_recovery.sql']) await db.exec(readFileSync('supabase/migrations/' + name, 'utf8'));
+}, 30000);
+afterAll(async () => { await db?.close(); });
+beforeEach(async () => {
+    await db.exec('TRUNCATE veo_tenants,pages,contacts,tags,contact_tags,chatbot_contact_states,ad_lead_stage_events,veo_accounts,user_pages,veo_autotag_page_state,messenger_lead_stage_events CASCADE');
+    await db.query("INSERT INTO veo_tenants VALUES($1,$2,now()-interval '2 days'),($3,$4,NULL)", [id(100), id(50), id(101), id(51)]);
+    for (let n = 1; n <= 7; n++) await db.query('INSERT INTO pages(id,name,veo_tenant_id,messaging_auto_tag_enabled) VALUES($1,$2,$3,$4)', [id(n), 'Page ' + n, id(n === 7 ? 101 : 100), n !== 6]);
+    await db.query("INSERT INTO veo_accounts VALUES($1,$2,true,'owner'),($3,$2,true,'team_leader'),($4,$2,true,'member')", [id(50), id(100), id(52), id(53)]);
+    await db.query('INSERT INTO user_pages VALUES($1,$3),($1,$4),($2,$3)', [id(50), id(52), id(1), id(2)]);
+});
+const claim = async (limit = 3) => (await db.query<any>('SELECT veo_claim_autotag_pages($1) jobs', [limit])).rows[0].jobs;
+it('fairly leases every enabled launched Page, rejects stale acknowledgments and never exposes credentials through status', async () => {
+    const first = await claim(), rest = await claim();expect(first).toHaveLength(3);expect(rest).toHaveLength(2);expect(await claim()).toEqual([]);
+    expect(new Set([...first, ...rest].map((p: any) => p.page_id)).size).toBe(5);
+    const p = first[0];await db.query("UPDATE veo_autotag_page_state SET lease_until=now()-interval '1 minute' WHERE page_id=$1", [p.page_id]);
+    const retry = (await claim(1))[0];expect(retry.page_id).toBe(p.page_id);expect(retry.lease_token).not.toBe(p.lease_token);
+    expect((await db.query<any>('SELECT veo_finish_autotag_page($1,$2,$3) ok', [p.page_id, p.lease_token, '{}'])).rows[0].ok).toBe(false);
+    const status = (await db.query<any>('SELECT veo_autotag_status($1) data', [id(50)])).rows[0].data;
+    expect(status.pages).toHaveLength(2);expect(JSON.stringify(status)).not.toMatch(/private-token|access_token|lease_token|cursor/);
+    expect((await db.query<any>('SELECT veo_autotag_status($1) data', [id(52)])).rows[0].data.pages).toHaveLength(1);
+    await expect(db.query('SELECT veo_autotag_status($1)', [id(53)])).rejects.toThrow('Supervisor access');
+    for (const fn of ['veo_claim_autotag_pages(integer)', 'veo_finish_autotag_page(uuid,uuid,jsonb)', 'veo_repair_autotag_history(uuid,integer)', 'veo_autotag_status(uuid)']) expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed", [fn])).rows[0].exposed).toBe(false);
+});
+it('retains a failed scan checkpoint, clears only a successful checkpoint and preserves totals across partial passes', async () => {
+    const p = (await claim(1))[0], before = p.checked_at;
+    await db.query('SELECT veo_finish_autotag_page($1,$2,$3)', [p.page_id, p.lease_token, JSON.stringify({ error: 'META_READ_UNAVAILABLE', conversations: 2 })]);
+    let state = (await db.query<any>('SELECT checked_at::text,cursor,last_error,failures FROM veo_autotag_page_state WHERE page_id=$1', [p.page_id])).rows[0];expect(Date.parse(state.checked_at)).toBe(Date.parse(before));expect(state).toMatchObject({ cursor: null, failures: 1, last_error: 'META_READ_UNAVAILABLE' });
+    await db.query("UPDATE veo_autotag_page_state SET next_attempt_at=now()-interval '1 minute' WHERE page_id=$1", [p.page_id]);
+    const jobs = [...await claim(6)], retry = jobs.find((j: any) => j.page_id === p.page_id);
+    await db.query('SELECT veo_finish_autotag_page($1,$2,$3)', [p.page_id, retry.lease_token, JSON.stringify({ next_cursor: 'next', stage_events: 1 })]);
+    state = (await db.query<any>('SELECT cursor,last_error,conversations,stage_events FROM veo_autotag_page_state WHERE page_id=$1', [p.page_id])).rows[0];expect(state).toEqual({ cursor: 'next', last_error: null, conversations: 2, stage_events: 1 });
+});
+it('restores older missing history tags idempotently without changing the current stage or manual tags', async () => {
+    await db.query('INSERT INTO contacts(id,page_id) VALUES($1,$2)', [id(30), id(1)]);
+    await db.query("SELECT apply_messenger_lead_stage($1,$2,'q','Qualified','qualified',now()-interval '1 hour')", [id(1), id(30)]);
+    await db.query("SELECT apply_messenger_lead_stage($1,$2,'n','Not Qualified','not_qualified',now()-interval '30 minutes')", [id(1), id(30)]);
+    await db.query("INSERT INTO tags(id,name,owner_type,owner_id,page_id) VALUES($1,'Existing manual tag','page',$2,$2)", [id(40), id(1)]);
+    await db.query('INSERT INTO contact_tags VALUES($1,$2)', [id(30), id(40)]);
+    await db.exec("DELETE FROM contact_tags WHERE tag_id IN(SELECT id FROM tags WHERE system_key='stage_history:qualified')");
+    expect((await db.query<any>('SELECT veo_repair_autotag_history($1,250) n', [id(1)])).rows[0].n).toBe(1);
+    expect((await db.query<any>('SELECT veo_repair_autotag_history($1,250) n', [id(1)])).rows[0].n).toBe(0);
+    expect((await db.query<any>('SELECT pipeline_stage FROM contacts WHERE id=$1', [id(30)])).rows[0].pipeline_stage).toBe('not_qualified');
+    const names = (await db.query<any>('SELECT t.name FROM tags t JOIN contact_tags ct ON ct.tag_id=t.id WHERE ct.contact_id=$1', [id(30)])).rows.map(r => r.name);
+    expect(names).toEqual(expect.arrayContaining(['History: Qualified', 'History: Not Qualified', 'Existing manual tag']));expect(names).not.toContain('Paid / Availed Service');
+});
