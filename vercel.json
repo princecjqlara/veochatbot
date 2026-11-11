@@ -17,7 +17,7 @@
     },
     {
       "path": "/api/cron/meta-ads-sync",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 * * * *"
     }
   ],
   "functions": {

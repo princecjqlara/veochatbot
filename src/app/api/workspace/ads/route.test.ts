@@ -17,7 +17,7 @@ it('reports missing advertising access honestly without reading tokens or claimi
 });
 it('exposes only pending-grant availability and allows Owner recovery through the same-origin endpoint',async()=>{
  m.grant.mockResolvedValue({token:'private-token'});m.recover.mockResolvedValue(Response.json({connected:true}));const response=await GET(new NextRequest('https://veo.test/api/workspace/ads'));
- const body=await response.json();expect(body.pending_authorization).toBe(true);expect(JSON.stringify(body)).not.toContain('private-token');expect(body.sync_interval_minutes).toBe(5);
+ const body=await response.json();expect(body.pending_authorization).toBe(true);expect(JSON.stringify(body)).not.toContain('private-token');expect(body.sync_interval_minutes).toBe(60);
  expect((await post({action:'recover'})).status).toBe(200);expect(m.recover).toHaveBeenCalledOnce();
  expect((await post({action:'recover'},'https://other.test')).status).toBe(403);
 });
