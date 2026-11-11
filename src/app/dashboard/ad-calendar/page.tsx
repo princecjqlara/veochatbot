@@ -6,6 +6,7 @@ import AdCreativePreview from '@/components/AdCreativePreview';
 import { requestDeadline } from '@/lib/request-deadline';
 import { useSession } from 'next-auth/react';
 import VeoWorkCalendar from '@/components/VeoWorkCalendar';
+import { useHourlyReportRefresh } from '@/lib/use-hourly-report-refresh';
 
 const number = (value: number | null | undefined) => value == null ? 'Not available' : new Intl.NumberFormat('en-PH', { maximumFractionDigits: 2 }).format(value);
 const money = (value: number | null | undefined, currency?: string | null) => value == null || !currency ? 'Not available' : new Intl.NumberFormat('en-PH', { style: 'currency', currency, currencyDisplay: 'code' }).format(value);
@@ -147,11 +148,7 @@ function LegacyAdCalendar() {
  const refresh = useCallback(async (signal?: AbortSignal) => { if (pagesLoading || !hasSelectedPage) return; const current = ++issue.current; refreshing.current = true; setLoading(true); try { const result = await getReport(signal); if (issue.current === current && !signal?.aborted) { setData(result); setError(''); } } catch (e) { if (issue.current === current && !signal?.aborted) setError((e as Error).message); } finally { if (issue.current === current) { refreshing.current = false; setLoading(false); } } }, [getReport, pagesLoading, hasSelectedPage]);
  useEffect(() => { const controller = new AbortController(); void refresh(controller.signal); return () => { controller.abort(); issue.current++; }; }, [refresh]);
  useEffect(() => { setData(null); setNotice(''); setImportError(''); setCreativePage(1); setShowPeople(false); setPeopleOffset(0); if (tasks.current.scope !== scope) { tasks.current = { scope, items: [] }; setRemaining(0); } }, [scope]);
- useEffect(() => {
-  const update = () => { if (!document.hidden && !syncing && !refreshing.current) void refresh(); };
-  const timer = setInterval(update, 60000); document.addEventListener('visibilitychange', update); window.addEventListener('online', update);
-  return () => { clearInterval(timer); document.removeEventListener('visibilitychange', update); window.removeEventListener('online', update); };
- }, [refresh, syncing]);
+ useHourlyReportRefresh(() => { if (!syncing && !refreshing.current) return refresh(); }, true, scope);
  useEffect(() => { setCreativePage(1); setPeopleOffset(0); setPeople(null); setProof(null); proofIssue.current++; }, [day, creativeMode, peopleStatus, scope]);
  useEffect(() => {
   if (!showPeople) return; const controller = new AbortController(); setPeople(null);

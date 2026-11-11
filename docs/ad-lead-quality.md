@@ -1,6 +1,10 @@
 # Ad Lead Quality
 
-`/dashboard/ad-quality` updates every 15 seconds while visible and on window focus.
+`/dashboard/ad-quality` refreshes saved reports once per hour while visible.
+Returning to the window refreshes only when that hour is due; explicit refresh
+and date/Page changes still load immediately. The existing external cron route
+fetches Meta Ads hourly after the Owner connects advertising access. Page
+authorization and Messenger ad references do not substitute for Ads Manager consent.
 It supports all accessible Pages or one Page, Today, last 7/30 Philippine calendar
 days including today, all time, and inclusive custom calendar-date endpoints.
 Future periods are never presented as completed observations.

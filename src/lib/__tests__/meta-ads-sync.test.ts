@@ -27,6 +27,13 @@ it('checks every account and saves real daily spend plus proven zero-spend Pages
     expect(saved.veo_ad_spend_coverage).toHaveLength(4);
     expect(saved.veo_ad_spend_coverage.find(r => r.page_id === 'quiet')).toMatchObject({ amount_minor: 0, accounts_checked: 2, ad_count: 0, report_complete: true });
 });
+it('retains spend, impressions, clicks, frequency, messaging and video metrics from the hourly import',async()=>{
+ const original=m.read.getMockImplementation()!;
+ m.read.mockImplementation(async(path,token,params)=>{const result=await original(path,token,params);if(path==='act_99/insights')return{...result,data:result.data.map((row:any)=>({...row,impressions:'1000',clicks:'25',reach:'400',frequency:'2.5',inline_link_clicks:'20',actions:[{action_type:'onsite_conversion.messaging_conversation_started_7d',value:'5'}],video_play_actions:[{action_type:'video_view',value:'100'}],video_thruplay_watched_actions:[{action_type:'video_view',value:'60'}],video_p100_watched_actions:[{action_type:'video_view',value:'40'}]}))};return result;});
+ expect((await run()).complete).toBe(true);
+ expect(saved.ad_daily_spend[0]).toMatchObject({amount:123.45,impressions:1000,clicks:25,reach:400,frequency:2.5,link_clicks:20,messaging_started:5,video_plays:100,video_thruplays:60,video_complete:40});
+ const fields=m.read.mock.calls.find(([path])=>path==='act_99/insights')![2].fields.split(',');for(const field of ['spend','impressions','clicks','reach','frequency','actions','video_play_actions'])expect(fields).toContain(field);
+});
 it('resolves old referral-only creatives even when current inventory and recent spend do not include them',async()=>{
     cached=[{page_id:'veo',ad_id:'7',ad_account_id:null}];
     m.read.mockImplementation(async path=>path==='act_99'||path==='act_88'?{id:path,currency:'PHP',timezone_name:'Asia/Manila'}:path==='7'?{id:'7',account_id:'99',effective_status:'PAUSED',creative:{page:'111'}}:{data:[]});

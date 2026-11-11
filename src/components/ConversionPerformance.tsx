@@ -1,6 +1,7 @@
 'use client';
 import{useCallback,useEffect,useRef,useState}from'react';
 import AdCreativePreview from'./AdCreativePreview';
+import { HOURLY_REPORT_REFRESH_MS, useHourlyReportRefresh } from '@/lib/use-hourly-report-refresh';
 const pct=(v:number|null|undefined)=>v==null?'N/A':(v*100).toFixed(2)+'%';
 const count=(v:number)=>Number(v||0).toLocaleString();
 const hours=(v:number|null|undefined)=>v==null?'N/A':v<1?(v*60).toFixed(0)+' min':v<48?v.toFixed(1)+' h':(v/24).toFixed(1)+' days';
@@ -29,7 +30,7 @@ export default function ConversionPerformance({query='range=today',compact=false
  },[query]);
  const loadRef=useRef(load);useEffect(()=>{loadRef.current=load;},[load]);
  useEffect(()=>{setData(null);void load();return()=>{generation.current++;};},[load]);
- useEffect(()=>{if(!automatic)return;const timer=setInterval(()=>{if(!document.hidden&&!fetching.current)void loadRef.current();},60_000);return()=>clearInterval(timer);},[automatic]);
+ useHourlyReportRefresh(()=>{if(!fetching.current)return loadRef.current();},automatic,query);
  const verify=useCallback(async(manual=true)=>{
   if(evidenceBusy.current)return;evidenceBusy.current=true;setRefreshing(true);const sourceQuery=query,skip:string[]=[];let successful=0,failed=0;
   try{
@@ -47,7 +48,7 @@ export default function ConversionPerformance({query='range=today',compact=false
  useEffect(()=>{
   // Today's queue is small and contains new activity from older cohorts too.
   // Historical ranges use the explicit bounded verification action.
-  if(automatic&&connection?.readOnlyReports!==true&&data?.read_only_reports!==true&&new URLSearchParams(query).get('range')==='today'&&data?.refresh_pending>0&&Date.now()-lastAuto.current>60_000&&Date.now()>failedUntil.current){lastAuto.current=Date.now();void verify(false);}
+  if(automatic&&connection?.readOnlyReports!==true&&data?.read_only_reports!==true&&new URLSearchParams(query).get('range')==='today'&&data?.refresh_pending>0&&Date.now()-lastAuto.current>HOURLY_REPORT_REFRESH_MS&&Date.now()>failedUntil.current){lastAuto.current=Date.now();void verify(false);}
  },[data,query,automatic,verify,connection?.readOnlyReports]);
  const syncSpend=async()=>{
   if(spending||!connection?.accounts?.length)return;setSpending(true);const sourceQuery=query,q=new URLSearchParams(query),now=Date.now(),from=data?.range?.from?day(Date.parse(data.range.from)):day(now-29*86_400_000),to=day(Date.parse(data?.range?.to||new Date().toISOString())-1);let saved=0,calls=0;
@@ -85,7 +86,7 @@ export default function ConversionPerformance({query='range=today',compact=false
     <div className="flex gap-3 items-center text-sm"><button className="border px-2 py-1 disabled:opacity-40" disabled={!offset} onClick={()=>setOffset(Math.max(0,offset-100))}>Previous creative rows</button><span>{visible.length?offset+1:0}–{Math.min(offset+100,visible.length)} of {count(visible.length)}</span><button className="border px-2 py-1 disabled:opacity-40" disabled={offset+100>=visible.length} onClick={()=>setOffset(offset+100)}>Next creative rows</button></div>
     <p className="text-xs text-gray-600">Expected outcomes follow historical payment patterns for these existing leads. Day 7/14/30 runs from each lead&apos;s first inquiry. The expected outcome includes recorded payers plus projected additional payers within each lead’s remaining 30-day window. Expected payer counts are probability-weighted averages and may include decimals. Cutoff dates describe the 30-day forecast window, not an estimated purchase date. Future inquiry volume is not assumed. The five-Page contact model is aggregated here; it was not trained separately for each ad. Missing or outdated sources keep the whole-cohort outlook N/A.</p>
    </>}
-   <div className="flex flex-wrap gap-4 text-xs text-gray-600"><span>Source summary checked: {when(data.generated_at)} PHT</span><label><input type="checkbox" checked={automatic} onChange={e=>setAutomatic(e.target.checked)}/> Update summary every minute; verify a small batch of today’s changed conversations</label></div>
+   <div className="flex flex-wrap gap-4 text-xs text-gray-600"><span>Source summary checked: {when(data.generated_at)} PHT</span><label><input type="checkbox" checked={automatic} onChange={e=>setAutomatic(e.target.checked)}/> Update summary every hour; verify a small batch of today’s changed conversations</label></div>
   </>}
  </section>;
 }

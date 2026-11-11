@@ -22,10 +22,11 @@ it('consumes the authorization-return flag so reopening the report does not repe
  await act(async()=>{view=create(createElement(Connection));});expect(replaceState).toHaveBeenCalledTimes(1);expect(location.search).not.toContain('ads_connected');
  await act(async()=>{view.unmount();view=create(createElement(Connection));});expect(fetcher.mock.calls.filter(([,options])=>options?.method==='POST')).toHaveLength(1);
 });
-it('polls an existing refresh until completion and then stops without duplicate source writes',async()=>{
- vi.useFakeTimers();vi.stubGlobal('window',{location:{search:'',assign:vi.fn()}});let running=true;const refreshed=vi.fn(),fetcher=vi.fn(async()=>Response.json(status({status:'connected',refresh_running:running})));vi.stubGlobal('fetch',fetcher);
+it('checks running import status hourly without frequent polling or duplicate source writes',async()=>{
+ vi.useFakeTimers();vi.stubGlobal('window',Object.assign(new EventTarget(),{location:{search:'',assign:vi.fn()}}));vi.stubGlobal('document',Object.assign(new EventTarget(),{hidden:false}));let running=true;const refreshed=vi.fn(),fetcher=vi.fn(async()=>Response.json(status({status:'connected',refresh_running:running})));vi.stubGlobal('fetch',fetcher);
  await act(async()=>{view=create(createElement(Connection,{onRefreshed:refreshed}));});running=false;
- await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});expect(refreshed).toHaveBeenCalledTimes(1);const calls=fetcher.mock.calls.length;
+ await act(async()=>{await vi.advanceTimersByTimeAsync(59*60000);});expect(refreshed).not.toHaveBeenCalled();expect(fetcher).toHaveBeenCalledTimes(1);
+ await act(async()=>{await vi.advanceTimersByTimeAsync(60000);});expect(refreshed).toHaveBeenCalledTimes(1);const calls=fetcher.mock.calls.length;
  await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});expect(fetcher).toHaveBeenCalledTimes(calls);
 });
 it('recovers a transient failed callback once and starts fetching without replaying OAuth or losing browser identity',async()=>{

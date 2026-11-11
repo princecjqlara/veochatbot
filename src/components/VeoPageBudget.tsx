@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import VeoAdsConnection from './VeoAdsConnection';
 import VeoWorkforceReadiness from './VeoWorkforceReadiness';
+import { useHourlyReportRefresh } from '@/lib/use-hourly-report-refresh';
 const field = 'w-full rounded border bg-white px-3 py-2';
 const button = 'rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40';
 const pht = (extra = 0) => new Date(Date.now() + 8 * 3600000 + extra * 86400000).toISOString().slice(0, 10);
@@ -11,6 +12,7 @@ export default function VeoPageBudget({ scope, compact = false, submit, refreshT
     const [day, setDay] = useState(pht(compact ? 0 : 1)), [responseData, setData] = useState<any>(null), [error, setError] = useState(''), [message, setMessage] = useState('');
     const data = responseData?.__date === day ? responseData : null;
     const [key, setKey] = useState(''), [inputs, setInputs] = useState<any>({}), [currency, setCurrency] = useState('PHP'), [preview, setPreview] = useState<any>(null), [busy, setBusy] = useState(false), [version, setVersion] = useState(0);
+    useHourlyReportRefresh(() => setVersion(v => v + 1), ['owner', 'team_leader'].includes(scope.role), day);
     useEffect(() => {
         if (!['owner', 'team_leader'].includes(scope.role)) return;
         const controller = new AbortController(); setError('');

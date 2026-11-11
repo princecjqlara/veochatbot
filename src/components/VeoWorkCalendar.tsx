@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { veoCalendarShade } from '@/lib/veo-calendar-analytics';
 import { calendarHeat, calendarRange, shiftCalendarMonth } from '@/lib/ad-calendar';
+import { useHourlyReportRefresh } from '@/lib/use-hourly-report-refresh';
+import VeoAdsConnection from './VeoAdsConnection';
 const money = (n: number | null, c: string) => n == null ? 'Unavailable' : new Intl.NumberFormat('en-PH', { style: 'currency', currency: c }).format(Number(n) / 100);
 const number = (n: number | null | undefined) => n == null ? 'Unavailable' : new Intl.NumberFormat('en-PH', { maximumFractionDigits: 1 }).format(n);
 const pct = (n: number | null | undefined) => n == null ? 'Unavailable' : `${(n * 100).toFixed(1)}%`;
@@ -57,6 +59,7 @@ export default function VeoWorkCalendar({ scope, pages }: { scope: any; pages: a
     const refreshRequested = useRef(false);
     const [month, setMonth] = useState(today().slice(0, 7)), [page, setPage] = useState(''), [selected, setSelected] = useState(today()), [metric, setMetric] = useState('net'), [shadeCurrency, setShadeCurrency] = useState('PHP');
     const [data, setData] = useState<any>(null), [error, setError] = useState(''), [loading, setLoading] = useState(false), [attempt, setAttempt] = useState(0), [clientSearch, setClientSearch] = useState(''), [clientOffset, setClientOffset] = useState(0);
+    useHourlyReportRefresh(() => { refreshRequested.current = true; setAttempt(v => v + 1); }, ['owner', 'team_leader'].includes(scope.role), JSON.stringify([month, page]));
     useEffect(() => {
         if (!['owner', 'team_leader'].includes(scope.role)) return;
         const controller = new AbortController(); setLoading(true); setError('');
@@ -77,6 +80,8 @@ export default function VeoWorkCalendar({ scope, pages }: { scope: any; pages: a
     const changeMonth = (next: string) => { if (!/^\d{4}-\d{2}$/.test(next)) return; setMonth(next); setSelected(next === today().slice(0, 7) ? today() : `${next}-01`); setClientOffset(0); };
     const clients = (row?.clients || []).filter((c: any) => `${c.name || ''} ${c.id}`.toLowerCase().includes(clientSearch.toLowerCase()));
     return <section className="rounded border bg-white p-4 space-y-5" aria-label="Inquiry cohorts, daily sales and salary calendar">
+        <VeoAdsConnection onRefreshed={() => { refreshRequested.current = true; setAttempt(v => v + 1); }} />
+        <p className="text-sm text-slate-600">Calendar reports refresh every hour. Recorded inquiries and deals remain visible while advertising access is disconnected; missing spend keeps net profit and ROAS unavailable.</p>
         <header className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold">Calendar · inquiries, sales and eventual returns</h2><p className="text-xs text-slate-500">All permitted Pages and retained historical dates. Later conversions and payments remain linked to the original inquiry day.</p></div><button className="underline text-sm" onClick={() => { refreshRequested.current = true; setAttempt(v => v + 1); }}>Refresh report</button></header>
         <div className="flex flex-wrap items-end gap-3"><label className="text-sm">Page<select className={`${field} block min-w-48`} value={page} onChange={e => setPage(e.target.value)}><option value="">All your assigned Pages</option>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><div className="flex items-center gap-2"><button className={field} aria-label="Previous calendar month" onClick={() => changeMonth(shiftCalendarMonth(month, -1))}>‹</button><input aria-label="Calendar month" className={field} type="month" value={month} onChange={e => changeMonth(e.target.value)} /><button aria-label="Next calendar month" className={field} onClick={() => changeMonth(shiftCalendarMonth(month, 1))}>›</button></div><label className="text-sm">Calendar shading<select className={`${field} block`} value={metric} onChange={e => setMetric(e.target.value)}><option value="net">Daily net profit / loss</option><option value="cohort_net">Inquiry cohort net profit / loss through now</option><option value="inquiries">Inquiries</option><option value="orders_created_count">Orders created that day</option><option value="closed">Closed Deals that day</option><option value="done">Done Deals that day</option><option value="cohort_converted">Eventual converted clients</option></select></label>{['net', 'cohort_net'].includes(metric) && <label className="text-sm">Shading currency<select className={`${field} block`} value={currency} onChange={e => setShadeCurrency(e.target.value)}>{(currencies.length ? currencies : ['PHP']).map(c => <option key={c}>{c}</option>)}</select></label>}</div>
         <p className="text-xs text-slate-500">{['net', 'cohort_net'].includes(metric) ? `Net shading uses ${currency} after actual salary and ads: green profit, red loss, white break-even, gray incomplete costs. Currency totals stay separate.` : 'Shading follows the selected activity metric.'}</p>

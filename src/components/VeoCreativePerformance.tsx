@@ -3,27 +3,32 @@ import { useEffect, useState } from 'react';
 import VeoAdsConnection from './VeoAdsConnection';
 import VeoAdPerformanceChart from './VeoAdPerformanceChart';
 import { CREATIVE_CHART_METRICS, creativeChartValue, formatCreativeChartValue } from '@/lib/veo-creative-chart';
+import { useHourlyReportRefresh } from '@/lib/use-hourly-report-refresh';
 const money = (n: number | null, c: string) => n == null ? 'Unavailable' : new Intl.NumberFormat('en-PH', { style: 'currency', currency: c }).format(n / 100);
 const pct = (n: number | null) => n == null ? 'Unknown' : (100 * n).toFixed(1) + '%';
 const hours = (n: number | null) => n == null ? 'Unknown' : n < 48 ? n.toFixed(1) + ' hours' : (n / 24).toFixed(1) + ' days';
-export default function VeoCreativePerformance({ query }: { query: string }) {
+export default function VeoCreativePerformance({ query, pages = [], onRefreshed }: { query: string; pages?: Array<{ id: string; name: string; has_ads?: boolean }>; onRefreshed?: () => void }) {
     const [responseData, setData] = useState<any>(null), [options, setOptions] = useState<any[]>([]), [error, setError] = useState(''), [ad, setAd] = useState(''), [version, setVersion] = useState(0), [metric, setMetric] = useState('impressions'), [currency, setCurrency] = useState('PHP');
-    const page = new URLSearchParams(query).get('pageId');
-    const requestKey = JSON.stringify([query, ad, version]), data = responseData?.__requestKey === requestKey ? responseData : null;
-    useEffect(() => { setAd(''); setData(null); setOptions([]); }, [query]);
+    const [creativePage, setCreativePage] = useState('');
+    const requestedPage = new URLSearchParams(query).get('pageId'), allPages = !requestedPage || requestedPage === 'all';
+    const page = allPages ? pages.find(p => p.id === creativePage)?.id || pages.find(p => p.has_ads)?.id || pages[0]?.id : requestedPage;
+    const requestKey = JSON.stringify([query, page, ad, version]), data = responseData?.__requestKey === requestKey ? responseData : null;
+    useEffect(() => { setAd(''); setData(null); setOptions([]); }, [query, page]);
+    useHourlyReportRefresh(() => setVersion(v => v + 1), !!page, JSON.stringify([query, page]));
     useEffect(() => {
         if (!page || page === 'all') return;
-        const controller = new AbortController(), q = new URLSearchParams(query); if (ad) q.set('ad_id', ad);
+        const controller = new AbortController(), q = new URLSearchParams(query); q.set('pageId', page); if (ad) q.set('ad_id', ad);
         setError('');
-        void fetch('/api/workspace/creatives?' + q, { cache: 'no-store', signal: controller.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); if (controller.signal.aborted) return; if (!Array.isArray(b.ads) || !Array.isArray(b.daily)) throw Error('Creative data is unavailable'); setData({ ...b, __requestKey: JSON.stringify([query, ad, version]) }); if (!ad) setOptions(b.ads); }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
+        void fetch('/api/workspace/creatives?' + q, { cache: 'no-store', signal: controller.signal }).then(async r => { const b = await r.json(); if (!r.ok) throw Error(b.error); if (controller.signal.aborted) return; if (!Array.isArray(b.ads) || !Array.isArray(b.daily)) throw Error('Creative data is unavailable'); setData({ ...b, __requestKey: JSON.stringify([query, page, ad, version]) }); if (!ad) setOptions(b.ads); }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
         return () => controller.abort();
     }, [query, page, ad, version]);
     const selected = ad ? data?.ads?.find((a: any) => a.ad_id === ad) : data?.ads?.[0], id = selected?.ad_id;
     const rows = (data?.daily || []).filter((r: any) => r.ad_id === id), currencies = selected?.finance?.map((f: any) => f.currency) || [], chosen = currencies.includes(currency) ? currency : currencies[0] || 'PHP';
     return <section className="rounded-xl border bg-white p-5 space-y-4" aria-label="Verified creative performance">
         <div className="flex flex-wrap justify-between gap-3"><h2 className="text-xl font-bold">Creative performance — verified sales and customers</h2><button className="underline text-sm" onClick={() => setVersion(v => v + 1)}>Recheck creative</button></div>
-        <p className="text-sm">Select one Page and a period up to 93 days. Each row represents an ad/creative placement; shared creative assets can appear in multiple ads. Outcomes stay linked to the original inquiry date, including later payments.</p>
-        <VeoAdsConnection onRefreshed={() => setVersion(v => v + 1)} />
+        <p className="text-sm">Creative charts use one Page at a time and a period up to 93 days. A Page with recorded ads is selected automatically. Each row represents an ad/creative placement; shared creative assets can appear in multiple ads. Outcomes stay linked to the original inquiry date, including later payments.</p>
+        {allPages && !!pages.length && <label className="block text-sm">Creative chart Page<select aria-label="Creative chart Page" className="block w-full rounded border p-2" value={page || ''} onChange={e => setCreativePage(e.target.value)}>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
+        <VeoAdsConnection onRefreshed={() => { setVersion(v => v + 1); onRefreshed?.(); }} />
         {data?.attribution_coverage && <p className="rounded border bg-amber-50 p-3 text-sm">Page origin coverage for these dates: {data.attribution_coverage.verified_clients} of {data.attribution_coverage.tracked_clients} recorded inquiry clients have a verified originating ad. {data.attribution_coverage.unattributed_clients} unknown or conflicting origins are excluded from per-creative totals.</p>}
         {(!page || page === 'all') && <p className="text-sm text-amber-800">Choose a Page above to see creative financial results, demographics and graphs.</p>}
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}

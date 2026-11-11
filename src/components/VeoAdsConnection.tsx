@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { startAdaptivePolling } from '@/lib/adaptive-polling';
+import { useHourlyReportRefresh } from '@/lib/use-hourly-report-refresh';
 const date = (offset = 0) => new Date(Date.now() + 8 * 3600000 + offset * 86400000).toISOString().slice(0, 10);
 export default function VeoAdsConnection({ onRefreshed }: { onRefreshed?: () => void }) {
     const [state, setState] = useState<any>(null), [error, setError] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
@@ -17,10 +17,10 @@ export default function VeoAdsConnection({ onRefreshed }: { onRefreshed?: () => 
         setState(body); return body;
     }, []);
     useEffect(() => { mounted.current = true; void load().catch(e => { if (mounted.current) setError(e.message); }); return () => { mounted.current = false; }; }, [load]);
-    useEffect(() => {
-        if (!state?.refresh_running) return;
-        return startAdaptivePolling(async signal => { const body = await load(signal); if (body && !body.refresh_running && !signal.aborted) { setMessage('Advertising refresh finished. Review the latest fetch status.'); refreshCallback.current?.(); } }, { intervalMs: 5000 });
-    }, [state?.refresh_running, load]);
+    useHourlyReportRefresh(async () => {
+        const body = await load();
+        if (body && (body.last_synced_at !== state?.last_synced_at || state?.refresh_running && !body.refresh_running)) refreshCallback.current?.();
+    }, !state?.hidden);
     useEffect(() => {
         if (typeof window === 'undefined') return;
         const code = new URLSearchParams(window.location.search).get('connection_error');
@@ -68,13 +68,15 @@ export default function VeoAdsConnection({ onRefreshed }: { onRefreshed?: () => 
         <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">Ad-account connection and data fetching</h3><button type="button" disabled={busy} className="text-sm underline disabled:opacity-40" onClick={() => { setError(''); void load().catch(e => setError(e.message)); }}>Recheck connection</button></div>
         {!state && !error && <p className="text-sm">Checking advertising data source…</p>}
         {state && <><p className="text-sm">{state.message}</p><p className="text-xs text-slate-600">Verified Marketing API ads: {state.verified_inventory_ads} · Last complete fetch: {state.last_synced_at ? new Date(state.last_synced_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) + ' PHT' : 'Not completed'}{state.expires_at && ' · Access expires ' + new Date(state.expires_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</p>
+            <p className="text-xs text-slate-600">Messenger ad references: {state.recorded_referral_ads || 0}. These can identify an originating ad before its full creative details and spend are imported.</p>
+            {state.status === 'connected' && <p className="text-xs text-slate-600">Hourly source fetch: {state.scheduled_refresh_status || 'Waiting for the first scheduled import'}{state.next_scheduled_refresh_at && ' · Next eligible fetch: ' + new Date(state.next_scheduled_refresh_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) + ' PHT'}.</p>}
             {state.last_error && <p className="text-sm text-amber-800">Last fetch: {state.last_error}</p>}
             {state.can_manage ? <><button type="button" disabled={busy || !state.configured} className="rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-40" onClick={() => void action('authorize')}>{busy ? 'Working…' : state.status === 'connected' ? 'Reconnect Meta Ads' : 'Connect Meta Ads'}</button>{!state.configured && <p className="text-xs text-amber-800">Facebook app authorization is not configured on this server.</p>}
                 {state.pending_authorization && <button type="button" disabled={busy} className="rounded border bg-white px-3 py-2 text-sm disabled:opacity-40" onClick={() => void action('recover')}>Retry saved authorization</button>}
                 {state.status === 'connected' && <div className="flex flex-wrap items-end gap-3"><label className="text-sm">Fetch from (PHT)<input aria-label="Ads fetch from date" className="block rounded border bg-white p-2" type="date" value={from} max={to} disabled={busy} onChange={e => setFrom(e.target.value)} /></label><label className="text-sm">Fetch through (PHT)<input aria-label="Ads fetch to date" className="block rounded border bg-white p-2" type="date" value={to} min={from} max={date()} disabled={busy} onChange={e => setTo(e.target.value)} /></label><button type="button" disabled={busy || state.refresh_running} className="rounded border bg-white px-3 py-2 text-sm disabled:opacity-40" onClick={() => void action('refresh')}>{busy ? 'Fetching inventory and spend…' : state.refresh_running ? 'Refresh already running' : 'Fetch creatives, budgets and spend'}</button></div>}
             </> : <p className="text-sm text-amber-800">The workspace Owner manages the ad-account connection and source refresh. Your saved reports remain available.</p>}
         </>}
-        <p className="text-xs text-slate-600">Your existing follow-up cron route triggers automatic ads fetching once per hour, even when this page is closed. No additional scheduler job is needed. Interrupted imports resume on the next hourly run. Choose up to 93 dates for a custom fetch.</p>
+        <p className="text-xs text-slate-600">After Meta Ads is connected, your existing follow-up cron route fetches creatives, budgets, spend and delivery metrics once per hour, even when this page is closed. Reports also refresh hourly. Interrupted imports resume on the next hourly run. Choose up to 93 dates for a custom fetch.</p>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}{message && <p role="status" className="text-sm text-green-800">{message}</p>}
     </section>;
 }

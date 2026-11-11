@@ -7,6 +7,7 @@ import {visibleAdRows,sortAdRows}from'@/lib/ad-quality-view';
 import ConversionPerformance from '@/components/ConversionPerformance';
 import VeoCreativePerformance from '@/components/VeoCreativePerformance';
 import LeadQualityBadge from '@/components/LeadQualityBadge';
+import { useHourlyReportRefresh } from '@/lib/use-hourly-report-refresh';
 
 type AdRow = { ad_id: string | null; ad_name: string | null; ad_title: string | null; campaign_name: string | null; inquiries: number; qualified: number; not_qualified: number; pending: number; opted_out: number; crm_converted: number; order_created: number; not_qualified_rate: number | null; not_qualified_assessed_rate: number | null; photo_url: string | null; post_id: string | null; creative_id: string | null; legacy_dates: number };
 type ReportPage = { page: { id: string; name: string; fb_page_id: string }; inquiries: number; attributed: number; not_qualified: number; qualified: number; pending: number; legacy_dates: number; without_inquiry_timestamp: number; tracking_started_at: string; rows: AdRow[];tracked_ads?:any[] };
@@ -36,11 +37,7 @@ export default function AdQualityPage() {
     const latestLoad=useRef(load);useEffect(()=>{latestLoad.current=load;},[load]);
     useEffect(()=>{void fetch('/api/ad-quality/connection',{cache:'no-store'}).then(async r=>{const d=await r.json();if(r.ok)setConnection(d);}).catch(()=>setConnection({status:'temporarily_unavailable',message:'Ad-account connection could not be checked. Recorded creatives remain available.'}));},[]);
     useEffect(() => { setReport(null); setDetail(null); void load(true); }, [load]);
-    useEffect(() => {
-        if (!automatic) return;
-        const tick = () => { if (!document.hidden) void load(); }, timer = setInterval(tick, 15_000);
-        window.addEventListener('focus', tick); return () => { clearInterval(timer); window.removeEventListener('focus', tick); };
-    }, [automatic, load]);
+    useHourlyReportRefresh(() => load(), automatic, params().toString());
     const loadContacts = useCallback(async () => {
         if (!detail) return;
         const issue = ++detailGeneration.current; setDetailLoading(true); setDetailError('');
@@ -52,7 +49,7 @@ export default function AdQualityPage() {
         finally { if (issue === detailGeneration.current) setDetailLoading(false); }
     }, [detail, offset, params, botFilter]);
     useEffect(() => { setContacts([]); void loadContacts(); }, [loadContacts]);
-    useEffect(() => { if (!automatic || !detail) return; const timer = setInterval(() => { if (!document.hidden) void loadContacts(); }, 15_000); return () => clearInterval(timer); }, [automatic, detail, loadContacts]);
+    useHourlyReportRefresh(() => loadContacts(), automatic && !!detail, JSON.stringify([params().toString(), detail?.ad.ad_id, detail?.page.id, detail?.filter, offset, botFilter]));
     const open = (page: ReportPage['page'], ad: AdRow, filter: string) => { setOffset(0); setContacts([]); setContactTotal(0); setBotFilter('all'); setDetail({ page, ad, filter }); };
     const close = () => { detailGeneration.current++; setDetail(null); };
     const resolve = async () => {
@@ -91,11 +88,11 @@ export default function AdQualityPage() {
             <label className="text-sm">First inquiry date · Philippine Time<select aria-label="Date range" className="block border border-black p-2" value={range} onChange={e => setRange(e.target.value)}>{[['today', 'Today'], ['7', 'Last 7 calendar days'], ['30', 'Last 30 calendar days'], ['all', 'All time'], ['custom', 'Custom dates']].map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></label>
             {range === 'custom' && <><label className="text-sm">From<input aria-label="From date" type="date" className="block border border-black p-2" value={from} max={to} onChange={e => setFrom(e.target.value)} /></label><label className="text-sm">Through<input aria-label="Through date" type="date" className="block border border-black p-2" value={to} max={initialDate()} onChange={e => setTo(e.target.value)} /></label></>}
             <button className="border border-black p-2 flex gap-2 items-center" onClick={() => void load(true)} disabled={loading}><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />Refresh</button>
-            <label className="text-sm flex gap-2 items-center py-2"><input type="checkbox" checked={automatic} onChange={e => setAutomatic(e.target.checked)} />Update every 15 seconds</label>
+            <label className="text-sm flex gap-2 items-center py-2"><input type="checkbox" checked={automatic} onChange={e => setAutomatic(e.target.checked)} />Refresh reports every hour</label>
         </div>
         <p className="text-sm text-gray-600">Dates select when a lead first inquired. Qualification shows their current recorded pipeline stage, including changes made later. Today is partial; 7 and 30 days include today.</p>
         <p className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">Marketing analytics use saved ad delivery, spend and recorded pipeline/chat outcomes. They do not verify bank payments or determine workspace commission. View Capacity &amp; Quotas and Salary for the authoritative new-period results.</p>
-        <VeoCreativePerformance query={params().toString()} />
+        <VeoCreativePerformance query={params().toString()} pages={(report?.pages || []).map(p => ({ ...p.page, has_ads: !!p.tracked_ads?.length || p.rows.some(a => !!a.ad_id) }))} onRefreshed={() => void load(true)} />
         <ConversionPerformance query={params().toString()} connection={connection}/>
         <div className="border border-black p-3 text-sm space-y-2"><p>{connection?.message||'Checking Facebook ad-account access…'}</p>{!connection?.readOnlyReports && <div className="flex flex-wrap gap-2"><button className="border border-black px-3 py-2 disabled:opacity-40" disabled={connection?.status!=='ready'||!connection?.accounts?.length||syncing} onClick={()=>void importAds()}>{syncing?'Importing Facebook ads…':'Import Facebook ads'}</button></div>}<p className="text-xs text-gray-600">Recorded Messenger creatives and Page-post previews appear without importing the account. Import adds ad inventory; it does not assign unknown contacts to an ad.</p></div>
         {error && <div role="alert" className="border border-red-600 bg-red-50 p-3 text-red-800">{error}{report && ' Last successful results remain below; they are not current.'}</div>}

@@ -23,13 +23,15 @@ export async function GET(request: NextRequest) {
         const c = credential.data, expired = c?.token_expires_at && Date.parse(c.token_expires_at) <= Date.now();
         const inventory = await db.from('ad_source_catalog').select('ad_id', { count: 'exact', head: true }).in('page_id', scope.page_ids).eq('metadata_source', 'marketing_api');
         if (inventory.error) throw Error('Creative inventory status is unavailable');
+        const referrals = await db.from('ad_source_catalog').select('ad_id', { count: 'exact', head: true }).in('page_id', scope.page_ids).eq('metadata_source', 'webhook_context');
+        if (referrals.error) throw Error('Recorded ad-reference status is unavailable');
         const pendingAuthorization = scope.role === 'owner' ? !!await readFacebookPageGrant(request, scope.user_id, db, scope.tenant_id) : false;
         return json({ status: !c ? 'connect_required' : expired ? 'reconnect_required' : 'connected', can_manage: scope.role === 'owner', configured: pageAuthorizationConfigured(),
             pending_authorization: pendingAuthorization, automatic_sync: !!c && !expired, sync_interval_minutes: 60, scheduler: 'existing_follow_up_cron', initial_fetch_pending: !!c?.sync_checkpoint,
             next_scheduled_refresh_at:c?.next_scheduled_refresh_at||null,scheduled_refresh_status:c?.scheduled_refresh_status||null,
             expires_at: c?.token_expires_at || null, last_synced_at: c?.last_synced_at || null, last_error: c?.last_error || null,
-            refresh_running: !!c?.refresh_lease_until && Date.parse(c.refresh_lease_until) > Date.now(), verified_inventory_ads: inventory.count || 0,
-            message: !c ? 'Page authorization is separate from advertising access. Connect Meta Ads to fetch budgets, creative metadata and spend.' : 'Fetch reads ad inventory, budgets and Insights; it does not change Meta ad budgets or send messages.' });
+            refresh_running: !!c?.refresh_lease_until && Date.parse(c.refresh_lease_until) > Date.now(), verified_inventory_ads: inventory.count || 0, recorded_referral_ads: referrals.count || 0,
+            message: !c ? 'Meta Ads is not connected. Messenger ad references and Page authorization do not include Ads Manager spend or complete creative inventory. Connect Meta Ads to start automatic hourly fetching.' : expired ? 'Meta advertising access has expired. Reconnect Meta Ads to resume hourly imports; saved reports remain available.' : 'Automatic imports read creative inventory, budgets, spend and delivery metrics hourly through your existing external scheduler. Current-day results remain provisional.' });
     } catch (e: any) { return json({ error: e.message || 'Advertising status is unavailable' }, e.status || 503); }
 }
 export async function POST(request: NextRequest) {
