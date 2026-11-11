@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
     processDueChatbotFollowUps: vi.fn(),
     processOneMessagingAutoTagPage: vi.fn(),
     recoverMissingChatbotMessages: vi.fn(),
-    processChatbotContinuationReviews: vi.fn()
+    processChatbotContinuationReviews: vi.fn(),ads:vi.fn(),wait:vi.fn()
 }));
 
 vi.mock('@/lib/supabase', () => ({
@@ -27,18 +27,37 @@ vi.mock('@/lib/messaging-auto-tag-worker', () => ({
 }));
 vi.mock('@/lib/chatbot-inbound-recovery', () => ({ recoverMissingChatbotMessages: mocks.recoverMissingChatbotMessages }));
 vi.mock('@/lib/chatbot-continuation', () => ({ processChatbotContinuationReviews: mocks.processChatbotContinuationReviews }));
+vi.mock('@/lib/veo-scheduled-ads',()=>({runScheduledMetaAds:mocks.ads}));
+vi.mock('@vercel/functions',()=>({waitUntil:mocks.wait}));
 
 import { GET } from './route';
 
 describe('GET /api/cron/follow-up-automations', () => {
+    afterEach(()=>{vi.unstubAllEnvs();vi.restoreAllMocks();});
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','false');mocks.ads.mockResolvedValue({complete:true,reports:[]});
         mocks.getSupabaseAdmin.mockReturnValue({ database: true });
         mocks.processDueFollowUpAutomationSteps.mockResolvedValue({ processed: 0 });
         mocks.processDueChatbotFollowUps.mockResolvedValue({ checked: 0, sent: 0 });
         mocks.processOneMessagingAutoTagPage.mockResolvedValue({ pages: 1, conversations: 0, tagged: 0 });
         mocks.recoverMissingChatbotMessages.mockResolvedValue({ recovered: 0 });
         mocks.processChatbotContinuationReviews.mockResolvedValue({ reviewed: 0 });
+    });
+    it('reuses the existing authorized external route without blocking or removing its ordinary follow-up work',async()=>{
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','true');vi.stubEnv('CRON_SECRET','private-cron');
+        const pending=new Promise(()=>{});mocks.ads.mockReturnValue(pending);vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({success:true}));
+        const response=await GET(new Request('https://veo.test/api/cron/follow-up-automations',{headers:{Authorization:'Bearer private-cron'}}) as NextRequest);
+        expect(response.status).toBe(200);expect((await response.json()).meta_ads).toMatchObject({accepted:true,interval_minutes:60,trigger:'existing_follow_up_cron'});
+        expect(mocks.ads).toHaveBeenCalledOnce();expect(mocks.wait).toHaveBeenCalledOnce();expect(mocks.processDueFollowUpAutomationSteps).toHaveBeenCalledOnce();expect(mocks.processDueChatbotFollowUps).toHaveBeenCalledOnce();
+    });
+    it('rejects an unauthorized existing-cron invocation before any ads or message work',async()=>{
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','true');vi.stubEnv('CRON_SECRET','private-cron');
+        expect((await GET(new Request('https://veo.test/api/cron/follow-up-automations') as NextRequest)).status).toBe(401);expect(mocks.ads).not.toHaveBeenCalled();expect(mocks.processDueFollowUpAutomationSteps).not.toHaveBeenCalled();
+    });
+    it('keeps ordinary follow-ups working when ads coordination fails',async()=>{
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','true');vi.stubEnv('CRON_SECRET','private-cron');mocks.ads.mockRejectedValue(Error('Ads database unavailable'));vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({success:true}));
+        const response=await GET(new Request('https://veo.test/api/cron/follow-up-automations',{headers:{Authorization:'Bearer private-cron'}}) as NextRequest);expect(response.status).toBe(200);expect(mocks.processDueChatbotFollowUps).toHaveBeenCalledOnce();
     });
 
     it('uses the existing minute cron invocation to continue campaigns', async () => {

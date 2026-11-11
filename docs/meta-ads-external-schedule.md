@@ -1,24 +1,18 @@
 # Hourly Meta Ads fetch
 
-Use the existing cron-job.org job for Meta Ads. Vercel hosts the endpoint but does not schedule Meta Ads fetching.
+The existing cron-job.org job calling `/api/cron/follow-up-automations` also triggers Meta Ads fetching. Keep that job and its current URL. No additional job, cron-job.org API key or Vercel Ads schedule is required.
 
-Set the existing job to:
+The existing route must receive:
 
-- URL: `https://veochatbot.vercel.app/api/cron/meta-ads-sync`
+- URL: `https://veochatbot.vercel.app/api/cron/follow-up-automations`
 - Method: GET
-- Schedule: every hour at minute 0, timezone Asia/Manila
+- Schedule: keep its current recurring cadence
 - Request header: `Authorization: Bearer <production CRON_SECRET>`
 - Save responses: disabled
 - Enabled: yes
 
-The existing authorization and encrypted Meta Ads credential are required. Without them, the endpoint returns an explicit waiting-for-connection result. Interrupted imports resume when the scheduler next invokes it. The manual fetch action remains available in Budget.
+An atomic database claim limits automatic advertising fetches to one start per 60 minutes for each saved advertising credential. Concurrent invocations and the separate authenticated `/api/cron/meta-ads-sync` worker share that check. A recent completed manual refresh also delays the next automatic fetch for an hour. Existing follow-up, campaign and chatbot work is retained.
 
-To inspect and update an existing matching job without creating another one, load `CRONJOB_API_KEY` and the production `CRON_SECRET` through the environment, then run:
+The ads task runs in the background within the request's configured duration, so it does not add a blocking ads fetch to the existing cron response. Its actual result is logged with `[META_ADS_EXISTING_CRON]`. The saved credential records `scheduled_refresh_started_at`, `scheduled_refresh_finished_at`, `scheduled_refresh_status` and `next_scheduled_refresh_at`.
 
-```powershell
-node --env-file=.env.local scripts/configure-meta-ads-cron.mjs --inspect
-node --env-file=.env.local scripts/configure-meta-ads-cron.mjs --apply
-node --env-file=.env.local scripts/configure-meta-ads-cron.mjs --verify
-```
-
-If more than one matching job exists, use `META_ADS_CRON_JOB_ID` to select the intended job. The helper refuses to create jobs, modify another endpoint, or run deliveries manually. Its private backup and safe verification receipt are saved under the ignored `.vercel/meta-ads-cron-job-org` directory. Do not commit or share API keys or the scheduler secret.
+Meta consent and a valid encrypted ad-account credential are required before fetching. Without a credential the ads task reports `connect_meta_ads_required`. Interrupted imports resume on the next due hourly run. The manual fetch action remains available in Budget. Advertising budgets and customer messages are never changed by the ads task.

@@ -67,6 +67,24 @@ it('serializes ad refreshes by credential and keeps the lease private and token-
         expect((await db.query<any>("SELECT has_function_privilege('anon','veo_claim_meta_ads_refresh(uuid,uuid)','EXECUTE') OR has_function_privilege('authenticated','veo_claim_meta_ads_refresh(uuid,uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
     }finally{await db.exec('ROLLBACK');}
 });
+it('limits repeated automatic cron calls to one start per hour across requests',async()=>{
+ await db.exec('BEGIN');try{
+  await db.query("INSERT INTO meta_ads_credentials(user_id,token_ciphertext,token_iv,token_auth_tag,token_expires_at) VALUES($1,'test','test','test',now()+interval '2 hours')",[owner]);
+  const claim=async()=>(await db.query<any>('SELECT veo_claim_scheduled_meta_ads_refresh($1) ok',[owner])).rows[0].ok;
+  expect(await claim()).toBe(true);expect(await claim()).toBe(false);
+  const state=(await db.query<any>('SELECT * FROM meta_ads_credentials WHERE user_id=$1',[owner])).rows[0];expect(state.scheduled_refresh_status).toBe('running');expect(new Date(state.next_scheduled_refresh_at).getTime()-new Date(state.scheduled_refresh_started_at).getTime()).toBeGreaterThanOrEqual(3599990);
+  await db.query("UPDATE meta_ads_credentials SET next_scheduled_refresh_at=now()-interval '1 second' WHERE user_id=$1",[owner]);expect(await claim()).toBe(true);
+  expect((await db.query<any>("SELECT has_function_privilege('authenticated','veo_claim_scheduled_meta_ads_refresh(uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+ }finally{await db.exec('ROLLBACK');}
+});
+it('defers automatic ads reads after a recent manual refresh, during a live lease, and after token expiry',async()=>{
+ await db.exec('BEGIN');try{
+  await db.query("INSERT INTO meta_ads_credentials(user_id,token_ciphertext,token_iv,token_auth_tag,token_expires_at,last_synced_at) VALUES($1,'test','test','test',now()+interval '2 hours',now())",[owner]);
+  const claim=async()=>(await db.query<any>('SELECT veo_claim_scheduled_meta_ads_refresh($1) ok',[owner])).rows[0].ok;
+  expect(await claim()).toBe(false);await db.query("UPDATE meta_ads_credentials SET last_synced_at=now()-interval '2 hours',refresh_lease_until=now()+interval '5 minutes' WHERE user_id=$1",[owner]);expect(await claim()).toBe(false);
+  await db.query("UPDATE meta_ads_credentials SET refresh_lease_until=NULL,token_expires_at=now()-interval '1 second' WHERE user_id=$1",[owner]);expect(await claim()).toBe(false);
+ }finally{await db.exec('ROLLBACK');}
+});
 it('requires the complete matching ad-cost window before deriving an ad-supported operating CPA',async()=>{
     await db.exec('BEGIN');try{
         await db.query("INSERT INTO veo_ad_planning_state VALUES($1,'93','PHP',1,10000,'daily',now(),'test')",[page]);

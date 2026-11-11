@@ -5,12 +5,24 @@ import { processOneMessagingAutoTagPage } from '@/lib/messaging-auto-tag-worker'
 import { processDueChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 import { processChatbotContinuationReviews } from '@/lib/chatbot-continuation';
 import { recoverMissingChatbotMessages } from '@/lib/chatbot-inbound-recovery';
+import { waitUntil } from '@vercel/functions';
+import { runScheduledMetaAds } from '@/lib/veo-scheduled-ads';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 // GET /api/cron/follow-up-automations - Called by cron-jobs.org every minute.
 export async function GET(_request: NextRequest) {
     const startTime = Date.now();
+    let metaAds: Record<string,unknown> = {skipped:true};
+
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+        if (!process.env.CRON_SECRET || _request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({error:'Unauthorized'},{status:401});
+        waitUntil(runScheduledMetaAds().then(result => {
+            console.info('[META_ADS_EXISTING_CRON]', {complete:result.complete,skipped:!!result.skipped,reason:result.reason||null,attempted:result.reports.filter(r=>!r.skipped).length});
+        }).catch(()=>{console.warn('[META_ADS_EXISTING_CRON] Automatic refresh needs retry');}));
+        metaAds={accepted:true,interval_minutes:60,trigger:'existing_follow_up_cron'};
+    }
 
     try {
         let inboundRecovery: Record<string, unknown>;
@@ -82,6 +94,7 @@ export async function GET(_request: NextRequest) {
             messagingAutoTag,
             intakeReviews,
             inboundRecovery,
+            meta_ads: metaAds,
             duration: Date.now() - startTime
         });
     } catch (error) {

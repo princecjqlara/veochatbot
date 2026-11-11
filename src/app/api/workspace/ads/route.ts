@@ -18,14 +18,15 @@ export async function GET(request: NextRequest) {
     try {
         const scope = await access(request), db = getSupabaseAdmin(), tenant = await db.from('veo_tenants').select('owner_id').eq('id', scope.tenant_id).single();
         if (tenant.error) throw Error('Advertising connection status is unavailable');
-        const credential = await db.from('meta_ads_credentials').select('token_expires_at,last_synced_at,last_error,refresh_lease_until,sync_checkpoint').eq('user_id', tenant.data.owner_id).maybeSingle();
+        const credential = await db.from('meta_ads_credentials').select('token_expires_at,last_synced_at,last_error,refresh_lease_until,sync_checkpoint,next_scheduled_refresh_at,scheduled_refresh_started_at,scheduled_refresh_finished_at,scheduled_refresh_status').eq('user_id', tenant.data.owner_id).maybeSingle();
         if (credential.error) throw Error('Advertising connection status is unavailable');
         const c = credential.data, expired = c?.token_expires_at && Date.parse(c.token_expires_at) <= Date.now();
         const inventory = await db.from('ad_source_catalog').select('ad_id', { count: 'exact', head: true }).in('page_id', scope.page_ids).eq('metadata_source', 'marketing_api');
         if (inventory.error) throw Error('Creative inventory status is unavailable');
         const pendingAuthorization = scope.role === 'owner' ? !!await readFacebookPageGrant(request, scope.user_id, db, scope.tenant_id) : false;
         return json({ status: !c ? 'connect_required' : expired ? 'reconnect_required' : 'connected', can_manage: scope.role === 'owner', configured: pageAuthorizationConfigured(),
-            pending_authorization: pendingAuthorization, automatic_sync: !!c && !expired, sync_interval_minutes: 60, scheduler: 'cron-job.org', initial_fetch_pending: !!c?.sync_checkpoint,
+            pending_authorization: pendingAuthorization, automatic_sync: !!c && !expired, sync_interval_minutes: 60, scheduler: 'existing_follow_up_cron', initial_fetch_pending: !!c?.sync_checkpoint,
+            next_scheduled_refresh_at:c?.next_scheduled_refresh_at||null,scheduled_refresh_status:c?.scheduled_refresh_status||null,
             expires_at: c?.token_expires_at || null, last_synced_at: c?.last_synced_at || null, last_error: c?.last_error || null,
             refresh_running: !!c?.refresh_lease_until && Date.parse(c.refresh_lease_until) > Date.now(), verified_inventory_ads: inventory.count || 0,
             message: !c ? 'Page authorization is separate from advertising access. Connect Meta Ads to fetch budgets, creative metadata and spend.' : 'Fetch reads ad inventory, budgets and Insights; it does not change Meta ad budgets or send messages.' });
