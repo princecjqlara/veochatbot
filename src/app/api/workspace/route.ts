@@ -6,6 +6,7 @@ import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
 import { jaucianRead, verifyWorkerMapping } from '@/lib/veo-jaucian';
 import { readVeoRpc } from '@/lib/veo-report-read';
 import { loadVeoAccountDirectory } from '@/lib/veo-account-directory';
+import { isSupabaseUnavailable } from '@/lib/supabase-errors';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -77,7 +78,10 @@ export async function POST(request: NextRequest) {
             if (!['owner', 'team_leader'].includes(scope.role)) return NextResponse.json({ error: 'Owner or Team Leader access required' }, { status: 403 });
             if (![body.user_id, body.parent_id, body.expected_parent_id].every(uuid)) throw new Error('Choose the member and current and new supervisors');
             const result = await db.rpc('veo_change_member_supervisor', { p_actor: scope.user_id, p_user: body.user_id, p_parent: body.parent_id, p_expected_parent: body.expected_parent_id });
-            if (result.error) throw Object.assign(new Error(result.error.message || 'Could not change supervisor'), { status: result.error.code === '42501' ? 403 : result.error.code === '40001' ? 409 : 400 });
+            if (result.error) {
+                if (isSupabaseUnavailable(result.error)) throw Object.assign(new Error('Supervisor save could not be confirmed. Refresh Accounts to check the current supervisor before retrying.'), { status: 503 });
+                throw Object.assign(new Error(result.error.message || 'Could not change supervisor'), { status: result.error.code === '42501' ? 403 : ['40001', '23505'].includes(result.error.code) ? 409 : 400 });
+            }
             return NextResponse.json({ saved: result.data }, { headers: { 'Cache-Control': 'no-store' } });
         }
         if (action === 'recover_account_login') {

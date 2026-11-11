@@ -30,6 +30,7 @@ beforeAll(async()=>{
  const capacity=(await db.query<any>('SELECT veo_team_capacity($1,veo_today()) p',[owner])).rows[0].p;expect(capacity.combined.quota.closed).toBeGreaterThan(0);
  await db.exec(plan.find(m=>m.name.startsWith('202611110005_'))!.sql);
  await db.exec(plan.find(m=>m.name.startsWith('202611110006_'))!.sql);
+ await db.exec(plan.find(m=>m.name.startsWith('202611110007_'))!.sql);
  expect((await db.query('SELECT * FROM veo_teams WHERE manager_id<>$1 ORDER BY id',[leader])).rows).toEqual(teams);expect((await db.query('SELECT * FROM user_pages ORDER BY user_id,page_id')).rows).toEqual(grants);
  expect((await db.query('SELECT * FROM veo_teams WHERE manager_id=$1',[leader])).rows).toHaveLength(1);
  const afterCapacity=(await db.query<any>('SELECT veo_team_capacity($1,veo_today()) p',[owner])).rows[0].p;
@@ -43,6 +44,8 @@ it('moves an existing member directly under their Team Leader without changing a
  expect((await db.query('SELECT id,email,password_hash,is_active FROM users ORDER BY id')).rows).toEqual(before);expect((await db.query('SELECT * FROM user_pages ORDER BY user_id,page_id')).rows).toEqual(grants);
  const login=(await db.query<any>('SELECT password_hash FROM users WHERE id=$1',[member])).rows[0];expect(compareSync(createHash('sha256').update('test password').digest('base64'),login.password_hash.slice(11))).toBe(true);
  await expect(rpc('veo_change_member_supervisor',[owner,member,manager,manager])).rejects.toThrow('Supervisor changed');
+ await expect(rpc('veo_change_member_supervisor',[owner,member,manager,manager])).rejects.toMatchObject({code:'23505'});
+ expect((await db.query<any>("SELECT proconfig FROM pg_proc WHERE oid='veo_change_member_supervisor(uuid,uuid,uuid,uuid)'::regprocedure")).rows[0].proconfig).toContain('jit=off');
  expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(0);expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
 });
 it('rejects out-of-branch, lower-role and Page-losing supervisor changes',async()=>{

@@ -14,6 +14,8 @@ describe('workspace work-date boundaries', () => {
         const request=()=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify({action:'member_supervisor',user_id:user,parent_id:parent,expected_parent_id:old,actor:'foreign'})});
         m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'team_leader',launch_at:'launched'}:{saved:true}}));expect((await POST(request())).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_change_member_supervisor',{p_actor:'owner',p_user:user,p_parent:parent,p_expected_parent:old});
         m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'40001',message:'Refresh Accounts'}});expect((await POST(request())).status).toBe(409);
+        m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'23505',message:'Supervisor changed'}});expect((await POST(request())).status).toBe(409);
+        m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'SUPABASE_REQUEST_TIMEOUT',message:'Error: Supabase request timed out'}});expect((await POST(request())).status).toBe(503);
         m.rpc.mockResolvedValue({data:{user_id:'owner',role:'manager',launch_at:'launched'}});expect((await POST(request())).status).toBe(403);
     });
     it('uses the atomic password reset and cooldown cleanup without trusting a browser actor', async () => {
