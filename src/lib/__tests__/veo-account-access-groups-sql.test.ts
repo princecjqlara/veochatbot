@@ -5,6 +5,8 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { vector } from '@electric-sql/pglite-pgvector';
 import { schemaMigrationPlan } from '../../../scripts/lib/database-migration-safety.mjs';
 import { createHash } from 'node:crypto';import { hashSync, compareSync } from 'bcryptjs';
+import {inspectWorkforceReset,applyWorkforceReset} from '../../../scripts/lib/workforce-reset.mjs';
+import {inspectLegacyAuthors,applyLegacyAuthorReset} from '../../../scripts/lib/workforce-legacy-authors.mjs';
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const owner=id(1),leader=id(4),manager=id(5),member=id(6),other=id(7),page=id(2),pageB=id(3);
 const stored='veo-sha256:'+hashSync(createHash('sha256').update('test password').digest('base64'),4);
@@ -37,6 +39,46 @@ beforeAll(async()=>{
  expect(afterCapacity.combined.quota).toEqual(capacity.combined.quota);expect(afterCapacity.combined.workers).toEqual(capacity.combined.workers);
 },60000);
 afterAll(async()=>{await db?.close();});beforeEach(async()=>{await db.exec('BEGIN');});afterEach(async()=>{await db.exec('ROLLBACK');});
+it('removes a disabled legacy author while preserving chatbot documents, media metadata and timestamps',async()=>{
+ const legacy=id(80),doc=id(81),folder=id(82),file=id(83);await db.query("INSERT INTO users(id,name,is_active) VALUES($1,'Legacy author',false)",[legacy]);
+ await db.query("INSERT INTO chatbot_knowledge_documents(id,page_id,title,content,content_hash,created_by,created_at,updated_at) VALUES($1,$2,'Saved knowledge','Retained knowledge text','legacy-hash',$3,'2026-01-01','2026-01-02')",[doc,page,legacy]);
+ await db.query("INSERT INTO chatbot_drive_folders(id,page_id,name,folder_url,created_by) VALUES($1,$2,'Samples','https://drive.google.com/drive/folders/samples',$3)",[folder,page,owner]);
+ await db.query("INSERT INTO chatbot_drive_files(id,page_id,folder_id,knowledge_document_id,drive_file_id,name,mime_type,media_type,web_view_url,created_by,updated_at) VALUES($1,$2,$3,$4,'sample','Sample image','image/jpeg','image','https://drive.google.com/file/d/sample/view',$5,'2026-01-02')",[file,page,folder,doc,legacy]);
+ const beforeDoc=(await db.query<any>('SELECT * FROM chatbot_knowledge_documents WHERE id=$1',[doc])).rows[0],beforeFile=(await db.query<any>('SELECT * FROM chatbot_drive_files WHERE id=$1',[file])).rows[0];
+ const context=await inspectLegacyAuthors(db,{owner,tenant});expect(context.plan.blockers).toEqual([]);expect(context.plan.staff.map((a:any)=>a.id)).toEqual([legacy]);
+ const result=await applyLegacyAuthorReset(db,context,{backup:async(b:any)=>{expect(b.rows.users).toHaveLength(1);expect(b.rows.chatbot_knowledge_documents[0].content).toBe('Retained knowledge text');}});
+ expect(result.legacyAuthorsDeleted).toBe(1);expect((await db.query('SELECT * FROM users WHERE id=$1',[legacy])).rows).toHaveLength(0);
+ expect((await db.query('SELECT * FROM chatbot_knowledge_documents WHERE id=$1',[doc])).rows[0]).toEqual({...beforeDoc,created_by:owner});
+ expect((await db.query('SELECT * FROM chatbot_drive_files WHERE id=$1',[file])).rows[0]).toEqual({...beforeFile,created_by:owner});
+});
+it('does not remove active standalone identities or transfer documents outside the Owner workspace',async()=>{
+ const legacy=id(84),foreign=id(85);await db.query("INSERT INTO users(id,name,is_active) VALUES($1,'Unused legacy author',false),($2,'Active standalone account',true)",[legacy,id(86)]);
+ await db.query("INSERT INTO pages(id,fb_page_id,name,access_token) VALUES($1,'foreign','Foreign Page','test')",[foreign]);
+ await db.query("INSERT INTO chatbot_knowledge_documents(page_id,title,content,content_hash,created_by) VALUES($1,'Foreign knowledge','Retain other Page','foreign-hash',$2)",[foreign,legacy]);
+ const context=await inspectLegacyAuthors(db,{owner,tenant});expect(context.plan.staff.map((a:any)=>a.id)).toEqual([legacy]);expect(context.plan.blockers.some((b:any)=>b.outsideWorkspace===1)).toBe(true);
+ await expect(applyLegacyAuthorReset(db,context,{backup:async()=>{}})).rejects.toThrow('protected dependencies');expect((await db.query('SELECT * FROM users WHERE id=$1',[legacy])).rows).toHaveLength(1);
+});
+it('fully clears the workforce and planning rows while retaining the Owner, connections and customers and restoring write guards',async()=>{
+ const contact=id(60);await db.query("INSERT INTO contacts(id,page_id,psid,name) VALUES($1,$2,'customer','Retained customer')",[contact,page]);
+ const beforeOwner=(await db.query('SELECT * FROM users WHERE id=$1',[owner])).rows,backup=async(data:any)=>{expect(data.rows.users).toHaveLength(4);expect(data.rows.veo_teams).toHaveLength(3);};
+ const context=await inspectWorkforceReset(db,{owner,tenant});expect(context.plan.blockers).toEqual([]);expect(context.plan.counts.veo_operating_quotas).toBeGreaterThan(0);
+ const result=await applyWorkforceReset(db,context,{backup});expect(result).toMatchObject({remainingStaffAccounts:0,remainingTeams:0,ownerAndBusinessDataPreserved:true,triggerProtectionsRestored:true});
+ expect((await db.query('SELECT * FROM users WHERE id=$1',[owner])).rows).toEqual(beforeOwner);expect((await db.query('SELECT user_id FROM veo_accounts')).rows).toEqual([{user_id:owner}]);
+ expect((await db.query('SELECT id FROM contacts')).rows).toEqual([{id:contact}]);expect((await db.query('SELECT * FROM user_pages WHERE user_id=$1',[owner])).rows).toHaveLength(2);
+ expect((await db.query('SELECT * FROM veo_teams')).rows).toHaveLength(0);expect((await db.query('SELECT * FROM veo_daily_targets WHERE user_id<>$1',[owner])).rows).toHaveLength(0);
+ expect((await rpc('veo_telegram_groups_page',[owner])).teams).toEqual([]);expect((await rpc('veo_account_access',[owner])).accounts).toHaveLength(1);
+ await expect(rpc('veo_scope',[member])).resolves.toBeNull();await expect(db.query("DELETE FROM veo_audit WHERE action='workforce_fresh_start'")).rejects.toThrow('read-only');
+ await db.exec('ROLLBACK;BEGIN');
+});
+it('refuses a workforce purge when it would erase a customer order or an unknown embedded staff reference',async()=>{
+ const contact=id(61),team=(await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1',[manager])).rows[0].id;
+ await db.query("INSERT INTO contacts(id,page_id,psid,name) VALUES($1,$2,'customer','Retained')",[contact,page]);
+ await db.query("INSERT INTO veo_orders(request_id,tenant_id,team_id,page_id,contact_id,seller_id,description,total_minor,currency,created_by) VALUES($1,$2,$3,$4,$5,$6,'Preserved order',1000,'PHP',$7)",[id(62),tenant,team,page,contact,member,owner]);
+ let context=await inspectWorkforceReset(db,{owner,tenant});expect(context.plan.blockers.some((b:any)=>b.table==='veo_orders')).toBe(true);await expect(applyWorkforceReset(db,context,{backup:async()=>{}})).rejects.toThrow('Protected business records');
+ await db.exec('CREATE TABLE unknown_staff_records(payload jsonb)');await db.query('INSERT INTO unknown_staff_records VALUES($1)',[JSON.stringify({user_id:member})]);
+ context=await inspectWorkforceReset(db,{owner,tenant});expect(context.plan.blockers.some((b:any)=>b.table==='unknown_staff_records'&&b.embeddedStaffReference)).toBe(true);
+ expect((await db.query('SELECT * FROM veo_accounts')).rows).toHaveLength(5);expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(1);
+});
 it('moves an existing member directly under their Team Leader without changing any login, Page assignment or recorded financial row',async()=>{
  const before=(await db.query('SELECT id,email,password_hash,is_active FROM users ORDER BY id')).rows,grants=(await db.query('SELECT * FROM user_pages ORDER BY user_id,page_id')).rows;
  const changed=await rpc('veo_change_member_supervisor',[leader,member,leader,manager]);expect(changed).toMatchObject({id:member,parent_id:leader,credentials_unchanged:true,page_assignments_unchanged:true});
