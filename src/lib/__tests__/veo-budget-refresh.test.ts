@@ -1,9 +1,20 @@
 import { afterEach, expect, it, vi } from 'vitest';
-const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), read: vi.fn() }));
+const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), read: vi.fn(), ids:vi.fn() }));
+vi.mock('@/lib/page-access',()=>({getUserPageIds:m.ids}));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
 vi.mock('@/lib/veo-report-read', () => ({ readVeoRpc: m.read }));
-import { refreshPageBudgets, calculateVeoBudget } from '../veo-budget';
+import { refreshPageBudgets, calculateVeoBudget, pageBudgetData } from '../veo-budget';
 afterEach(() => { vi.clearAllMocks(); });
+it('detects Meta settings for permitted Pages even before selling teams have capacity plans',async()=>{
+    m.ids.mockResolvedValue(['allowed']);m.read.mockResolvedValue({data:{plans:[]}});
+    const scopes:any[]=[];m.from.mockImplementation(table=>{const query:any={select:()=>query,in:(field:string,ids:string[])=>{scopes.push({table,ids});return Promise.resolve({data:table==='pages'?[{id:'allowed',name:'Allowed Page'}]:[{page_id:'allowed',active_ads:1}]});}};return query;});
+    const result=await pageBudgetData('owner','2026-11-11');expect(result.plans).toEqual([]);expect(result.live_ads).toHaveLength(1);expect(result.ad_pages[0].id).toBe('allowed');expect(scopes.every(row=>row.ids.join(',')==='allowed')).toBe(true);
+});
+it('does not return saved budgets for a revoked Page on the same team',async()=>{
+    m.ids.mockResolvedValue(['allowed']);m.read.mockResolvedValue({data:{historical:true,plans:[{team_id:'team',page_id:'allowed'}]}});
+    m.from.mockImplementation(table=>{const query:any={select:()=>query,in:()=>query,eq:()=>query,then:(resolve:any)=>resolve({data:table==='veo_ad_budget_plans'?[{team_id:'team',page_id:'allowed'},{team_id:'team',page_id:'revoked'}]:[]})};return query;});
+    expect((await pageBudgetData('owner','2026-11-10')).saved.map((row:any)=>row.page_id)).toEqual(['allowed']);
+});
 it('reads capacity once per tenant/day while preserving every authoritative budget write', async () => {
     const day = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
     const inputs = { day: 4, startingBudget: 2000, currentBudget: 2800, yesterdayCPA: 400, yesterdayResult: 'PROFIT' };

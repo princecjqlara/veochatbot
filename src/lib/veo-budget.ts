@@ -1,6 +1,7 @@
 import model from './veo-budget-model';
 import { getSupabaseAdmin } from './supabase';
 import { readVeoRpc } from './veo-report-read';
+import { getUserPageIds } from './page-access';
 
 export function calculateVeoBudget(inputs: Record<string, any>, plan: any) {
     const profile = inputs.profile || 'aggressive';
@@ -27,15 +28,18 @@ export async function pageBudgetData(actor: string, day: string) {
     const ids = [...new Set<string>((plan.data.plans || []).map((p: any) => p.team_id))];
     const saved = ids.length ? await db.from('veo_ad_budget_plans').select('*').in('team_id', ids).eq('work_date', day) : { data: [], error: null };
     if (saved.error) throw new Error('Saved Page budgets are unavailable');
-    const records = (saved.data || []).map(row => {
+    const allowedPages = await getUserPageIds(actor), allowed = new Set(allowedPages);
+    const records = (saved.data || []).filter(row => allowed.has(row.page_id)).map(row => {
         const current = (plan.data.plans || []).find((p: any) => p.team_id === row.team_id && p.page_id === row.page_id);
         if (plan.data.historical || !current) return row;
         try { return { ...row, result_current: calculateVeoBudget(row.inputs, current).result }; }
         catch { return { ...row, calculation_unavailable: true }; }
     });
-    const pages = [...new Set<string>((plan.data.plans || []).map((p: any) => p.page_id))];
+    const pages = allowedPages;
     const ads = pages.length ? await db.from('veo_ad_planning_state').select('*').in('page_id', pages) : { data: [], error: null };
-    return { ...plan.data, live_ads: ads.error ? null : ads.data, saved: records, presets: model.profiles, defaults: { ...model.defaults, profile: 'aggressive', startingBudget: null, currentBudget: null, yesterdayCPA: null, activePeople: null, maxPerPerson: null } };
+    const directory = pages.length ? await db.from('pages').select('id,name').in('id', pages) : { data: [], error: null };
+    if (directory.error) throw new Error('Advertising Page names are unavailable');
+    return { ...plan.data, ad_pages: directory.data, live_ads: ads.error ? null : ads.data, saved: records, presets: model.profiles, defaults: { ...model.defaults, profile: 'aggressive', startingBudget: null, currentBudget: null, yesterdayCPA: null, activePeople: null, maxPerPerson: null } };
 }
 
 export async function savePageBudget(actor: string, body: any) {

@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
         if (Date.parse(to) - Date.parse(from) > 92 * 86400000) throw Error('Choose at most 93 days for creative analytics');
         const db = getSupabaseAdmin(), result = await readVeoRpc(db, 'veo_creative_inputs', { p_actor: scope.user_id, p_page: page, p_from: from, p_to: to, p_ad: ad });
         if (result.error) throw Object.assign(Error('Creative report is temporarily unavailable. Retry shortly.'), { status: result.error.code === '42501' ? 403 : 503 });
-        const report: any = buildCreativeReport(result.data); report.exact_frequency = null;
+        const report: any = buildCreativeReport({ ...result.data, selected_ad: ad }); report.exact_frequency = null;
         if (ad && report.ads.some((a: any) => a.ad_id === ad)) {
             try {
                 const tenant = await db.from('veo_tenants').select('owner_id').eq('id', scope.tenant_id).single();
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
                 const credential = await db.from('meta_ads_credentials').select('token_ciphertext,token_iv,token_auth_tag,token_expires_at').eq('user_id', tenant.data.owner_id).maybeSingle();
                 if (credential.data && (!credential.data.token_expires_at || Date.parse(credential.data.token_expires_at) > Date.now())) {
                     const raw = await readMetaAds(ad + '/insights', decryptMetaAdsToken(credential.data), { fields: 'ad_id,frequency,reach,impressions', time_range: JSON.stringify({ since: from, until: to }), level: 'ad', limit: '1' });
-                    const value = raw.data?.[0]; if (value?.ad_id === ad && Number.isFinite(Number(value.frequency))) report.exact_frequency = { value: Number(value.frequency), checked_at: new Date().toISOString(), from, to, timezone: 'Ad-account reporting dates' };
+                    const value = raw.data?.[0]; if (value?.ad_id === ad && typeof value.frequency !== 'undefined' && value.frequency !== null && String(value.frequency).trim() !== '' && Number.isFinite(Number(value.frequency)) && Number(value.frequency) >= 0) report.exact_frequency = { value: Number(value.frequency), checked_at: new Date().toISOString(), from, to, timezone: 'Ad-account reporting dates' };
                 }
             } catch { /* Saved metrics remain usable; no fabricated range frequency. */ }
         }

@@ -45,6 +45,41 @@ it('retains historical receipts and later completions without inventing archived
     expect(r.leads[0].id).toBe(id(6)); expect(r.orders[0]).toMatchObject({ paid_minor: 10000, commission_minor: null, financial_source: 'retained' });
     expect(r.cash.reduce((n: number, p: any) => n + Number(p.amount_minor), 0)).toBe(10000);
 });
+it('includes Qualified-lead verified payments in creative cohorts with stable payment identities and reconciled cost coverage',async()=>{
+    await db.exec('BEGIN');try{
+        await db.query("UPDATE contacts SET pipeline_stage='qualified' WHERE id=$1",[client]);
+        await db.query("INSERT INTO ad_contact_sources(contact_id,page_id,first_inquiry_at,inquiry_basis,origin_ad_id,attribution_status) VALUES($1,$2,$3,'live_message','999','verified_inline') ON CONFLICT(contact_id) DO UPDATE SET origin_ad_id='999',attribution_status='verified_inline'",[client,page,`${earlier}T01:00:00+08:00`]);
+        const report=(await db.query<any>('SELECT veo_creative_inputs($1,$2,$3,$4,$5) r',[owner,page,earlier,today,'999'])).rows[0].r;
+        expect(report.cash).toHaveLength(2);expect(report.cash.reduce((n:number,p:any)=>n+Number(p.amount_minor),0)).toBe(203);
+        expect(report.cash.every((p:any)=>p.payment_key.startsWith('workspace:')&&p.financial_source==='workspace')).toBe(true);
+        expect(new Set(report.cash.map((p:any)=>p.payment_key)).size).toBe(2);expect(Array.isArray(report.reconciled_spend)).toBe(true);
+        expect(report.orders[0].paid_minor).toBe(203);expect(JSON.stringify(report)).not.toContain('Suno');
+    }finally{await db.exec('ROLLBACK');}
+});
+it('serializes ad refreshes by credential and keeps the lease private and token-bound',async()=>{
+    await db.exec('BEGIN');try{
+        await db.query("INSERT INTO meta_ads_credentials(user_id,token_ciphertext,token_iv,token_auth_tag,token_expires_at) VALUES($1,'test','test','test',now()+interval '1 hour')",[owner]);
+        expect((await db.query<any>('SELECT veo_claim_meta_ads_refresh($1,$2) ok',[owner,id(800)])).rows[0].ok).toBe(true);
+        expect((await db.query<any>('SELECT veo_claim_meta_ads_refresh($1,$2) ok',[owner,id(801)])).rows[0].ok).toBe(false);
+        await db.query("UPDATE meta_ads_credentials SET refresh_lease_until=now()-interval '1 second' WHERE user_id=$1",[owner]);
+        expect((await db.query<any>('SELECT veo_claim_meta_ads_refresh($1,$2) ok',[owner,id(801)])).rows[0].ok).toBe(true);
+        expect((await db.query('UPDATE meta_ads_credentials SET refresh_lease_token=NULL WHERE user_id=$1 AND refresh_lease_token=$2 RETURNING user_id',[owner,id(800)])).rows).toHaveLength(0);
+        expect((await db.query<any>("SELECT has_function_privilege('anon','veo_claim_meta_ads_refresh(uuid,uuid)','EXECUTE') OR has_function_privilege('authenticated','veo_claim_meta_ads_refresh(uuid,uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+    }finally{await db.exec('ROLLBACK');}
+});
+it('requires the complete matching ad-cost window before deriving an ad-supported operating CPA',async()=>{
+    await db.exec('BEGIN');try{
+        await db.query("INSERT INTO veo_ad_planning_state VALUES($1,'93','PHP',1,10000,'daily',now(),'test')",[page]);
+        await db.query(`INSERT INTO veo_ad_spend_coverage(page_id,spend_date,currency,amount_minor,ad_count,accounts_checked,checked_at,report_complete,pht_aligned)
+          SELECT $1,d::date,'PHP',CASE WHEN d::date=$2::date THEN 1000 ELSE 0 END,CASE WHEN d::date=$2::date THEN 1 ELSE 0 END,1,now(),true,true
+          FROM generate_series((SELECT(launch_at AT TIME ZONE 'Asia/Manila')::date FROM veo_tenants WHERE owner_id=$3),(veo_today()-1)::timestamp,interval '1 day') d`,[page,earlier,owner]);
+        await db.query("INSERT INTO ad_daily_spend(page_id,ad_id,account_id,spend_date,currency,account_timezone,pht_aligned,amount,checked_at) VALUES($1,'91','93',$2,'PHP','Asia/Manila',true,10,now())",[page,earlier]);
+        const read=async()=>(await db.query<any>('SELECT veo_supply_target($1,$2,3) r',[manager,today])).rows[0].r;
+        expect((await read()).pages[0].observed_cpa_minor).toBe(1000);
+        await db.query("UPDATE ad_daily_spend SET checked_at=now()+interval '1 second' WHERE page_id=$1 AND ad_id='91'",[page]);
+        const partial=await read();expect(partial.pages[0].observed_cpa_minor).toBeNull();expect(partial.supply_known).toBe(false);expect(partial.quota).toBe(3);
+    }finally{await db.exec('ROLLBACK');}
+});
 it('allocates the exact whole-day commission across Pages and individual orders', async () => {
     const secondPage = id(30), secondClient = id(31), tenant = (await db.query<any>('SELECT tenant_id FROM veo_accounts WHERE user_id=$1', [owner])).rows[0].tenant_id;
     await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,veo_enabled,veo_tenant_id) VALUES($1,'333','VEO second','test',true,$2)", [secondPage, tenant]);

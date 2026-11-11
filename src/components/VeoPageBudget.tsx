@@ -1,20 +1,23 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import VeoAdsConnection from './VeoAdsConnection';
 const field = 'w-full rounded border bg-white px-3 py-2';
 const button = 'rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40';
 const pht = (extra = 0) => new Date(Date.now() + 8 * 3600000 + extra * 86400000).toISOString().slice(0, 10);
 const money = (value: number, currency: string) => /^[A-Z]{3}$/.test(currency) ? new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(value) : 'Choose a currency';
 export default function VeoPageBudget({ scope, compact = false, submit, refreshToken }: { scope: any; compact?: boolean; submit: (body: any) => Promise<any>; refreshToken?: any }) {
-    const [day, setDay] = useState(pht(compact ? 0 : 1)), [data, setData] = useState<any>(null), [error, setError] = useState(''), [message, setMessage] = useState('');
+    const [day, setDay] = useState(pht(compact ? 0 : 1)), [responseData, setData] = useState<any>(null), [error, setError] = useState(''), [message, setMessage] = useState('');
+    const data = responseData?.__date === day ? responseData : null;
     const [key, setKey] = useState(''), [inputs, setInputs] = useState<any>({}), [currency, setCurrency] = useState('PHP'), [preview, setPreview] = useState<any>(null), [busy, setBusy] = useState(false), [version, setVersion] = useState(0);
     useEffect(() => {
         if (!['owner', 'team_leader'].includes(scope.role)) return;
         const controller = new AbortController(); setError('');
-        fetch('/api/workspace/budget?date=' + day, { signal: controller.signal, cache: 'no-store' }).then(async r => { const b = await r.json(); if (!r.ok) throw new Error(b.error); if (!Array.isArray(b.plans)) throw new Error('Page planning data is unavailable'); setData(b); setKey(k => b.plans.some((p: any) => `${p.team_id}:${p.page_id}` === k) ? k : b.plans.length ? `${b.plans[0].team_id}:${b.plans[0].page_id}` : ''); }).catch(e => { if (e.name !== 'AbortError') setError(e.message); });
+        fetch('/api/workspace/budget?date=' + day, { signal: controller.signal, cache: 'no-store' }).then(async r => { const b = await r.json(); if (!r.ok) throw new Error(b.error); if (!Array.isArray(b.plans)) throw new Error('Page planning data is unavailable'); if (controller.signal.aborted) return; setData({ ...b, __date: day }); setKey(k => b.plans.some((p: any) => `${p.team_id}:${p.page_id}` === k) ? k : b.plans.length ? `${b.plans[0].team_id}:${b.plans[0].page_id}` : ''); }).catch(e => { if (e.name !== 'AbortError') setError(e.message); });
         return () => controller.abort();
     }, [day, version, refreshToken, scope.role]);
     const plan = data?.plans.find((p: any) => `${p.team_id}:${p.page_id}` === key);
+    const activeContext = useRef(''); activeContext.current = JSON.stringify([day, key, currency, inputs, plan?.quota, plan?.active_workers]);
     const liveAds = (data?.live_ads || []).filter((a: any) => a.page_id === plan?.page_id);
     useEffect(() => {
         if (!data || !plan) return;
@@ -23,14 +26,16 @@ export default function VeoPageBudget({ scope, compact = false, submit, refreshT
     }, [key, day, !!data]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => { if (plan) setPreview(null); }, [plan?.quota, plan?.active_workers]); // eslint-disable-line react-hooks/exhaustive-deps
     async function post(body: any) {
+        const context = activeContext.current;
         setBusy(true); setError(''); setMessage('');
         try { const r = await fetch('/api/workspace/budget', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const b = await r.json(); if (!r.ok) throw new Error(b.error); return b.saved; }
-        catch (e: any) { setError(e.message); return null; } finally { setBusy(false); }
+        catch (e: any) { if (activeContext.current === context) setError(e.message); return null; } finally { setBusy(false); }
     }
     async function calculate(action: string) {
         if (!plan) return;
+        const context = activeContext.current;
         const saved = await post({ action, work_date: day, team_id: plan.team_id, page_id: plan.page_id, currency, inputs });
-        if (saved) { setPreview(action === 'calculate' ? saved.result : saved.result); if (action === 'budget_save') { setVersion(v => v + 1); setMessage('Page budget plan saved. Attendance and capacity changes will automatically reconcile the recommendation.'); } }
+        if (saved && activeContext.current === context) { setPreview(saved.result); if (action === 'budget_save') { setVersion(v => v + 1); setMessage('Page budget plan saved. Attendance and capacity changes will automatically reconcile the recommendation.'); } }
     }
     if (!['owner', 'team_leader'].includes(scope.role)) return null;
     const pageTotals = new Map<string, { name: string; quota: number; capacity: number; money: Record<string, number> }>();
@@ -42,6 +47,10 @@ export default function VeoPageBudget({ scope, compact = false, submit, refreshT
         pageTotals.set(p.page_id, t);
     }
     return <section className="rounded border bg-white p-4 space-y-4" aria-label="VEO Page ad budget and quotas"><div className="flex flex-wrap justify-between gap-3"><div><h2 className="font-bold text-xl">Page ad budget · shared capacity and quotas</h2><p className="text-xs text-slate-500">The VEO ad-budget model uses the same workforce and targets as VEO and Jaucian.</p></div><label className="text-sm">Planning date<input type="date" className={field} value={day} min={new Date(new Date(scope.launch_at).getTime() + 8 * 3600000).toISOString().slice(0, 10)} max={pht(1)} onChange={e => { setDay(e.target.value); setPreview(null); }} /></label></div>
+        {!compact && <VeoAdsConnection onRefreshed={() => setVersion(v => v + 1)} />}
+        {!compact && data && <section className="rounded border bg-slate-50 p-4 space-y-2" aria-label="Latest detected Meta budgets"><h3 className="font-semibold">Latest detected Meta budgets</h3><p className="text-xs text-slate-600">Current campaign/ad-set budget allocations by active-ad count, across connected accounts. These are the latest settings, independent of the planning date. Delivery can differ; saved VEO recommendations are listed separately below.</p>
+            {data.live_ads == null ? <p className="text-sm text-amber-800">Detected budget data is unavailable. Recheck the connection and fetch again.</p> : !data.live_ads.length ? <p className="text-sm">No verified Meta budget settings have been fetched yet. Connect Meta Ads above and fetch inventory and spend.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{['Page', 'Ad account', 'Active ads', 'Allocated daily budget', 'Budget type', 'Last checked'].map(label => <th className="border-b p-2" key={label}>{label}</th>)}</tr></thead><tbody>{data.live_ads.map((row: any) => <tr key={row.page_id + ':' + row.account_id}><td className="border-b p-2">{data.ad_pages?.find((page: any) => page.id === row.page_id)?.name || row.page_id}</td><td className="border-b p-2">{row.account_id}</td><td className="border-b p-2">{row.active_ads}</td><td className="border-b p-2">{row.allocated_daily_budget_minor == null ? 'Unavailable' : money(row.allocated_daily_budget_minor / 100, row.currency)}</td><td className="border-b p-2">{row.budget_mode.replaceAll('_', ' ')}</td><td className="border-b p-2">{new Date(row.checked_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}{Date.now() - Date.parse(row.checked_at) > 3 * 3600000 && <strong className="block text-amber-800">Stale; fetch updated settings</strong>}</td></tr>)}</tbody></table></div>}
+        </section>}
         {error && <p role="alert" className="text-red-700">{error}</p>}{message && <p role="status">{message}</p>}
         {!data && !error && <p role="status">Loading Page planning…</p>}
         {data && <><p className="text-xs text-slate-600">Production capacity stays separate from the daily operating quota. Operating quotas account for funded ads and existing paid client work, and freeze for each work date. Unknown ad budgets keep the capacity target. A budget recommendation does not change a Meta campaign.</p><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{['Page', 'Closed / Done quota', 'Full capacity', 'Planned ad budget'].map(h => <th key={h} className="border-b p-2">{h}</th>)}</tr></thead><tbody>{[...pageTotals].filter(([, p]) => !compact || p.capacity || Object.keys(p.money).length).map(([id, p]) => <tr key={id}><td className="p-2 border-b">{p.name}</td><td className="p-2 border-b">{p.quota} each</td><td className="p-2 border-b">{p.capacity} deals / day</td><td className="p-2 border-b">{Object.keys(p.money).length ? Object.entries(p.money).map(([c, n]) => <p key={c}>{money(n, c)}</p>) : 'No saved plan'}</td></tr>)}</tbody></table></div>

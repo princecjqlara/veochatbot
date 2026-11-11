@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from './supabase';
 import { FACEBOOK_PERMISSION_SCOPE } from './facebook-permissions';
+import { retainWorkspaceAdsGrant } from './veo-ads-authorization';
 import { checkedPageResult, decryptPageGrant, encryptPageGrant, PageSetupError, PAGE_AUTH_COOKIE, pageSetupResponse, readPageGrantCookie, requirePageOwner, setPageGrantCookie } from './veo-page-connections';
 
 export const FACEBOOK_PAGE_GRAPH = 'https://graph.facebook.com/v21.0';
@@ -43,15 +44,15 @@ export async function readFacebookPageGrant(request: NextRequest, actor: string,
         throw error;
     }
 }
-export async function beginFacebookPageAuthorization(request: NextRequest) {
+export async function beginFacebookPageAuthorization(request: NextRequest, purpose: 'pages' | 'ads' = 'pages') {
     const scope = await requirePageOwner(request, true);
     if (!pageAuthorizationConfigured()) throw new PageSetupError('Facebook Page setup is not configured on this server.', 503, 'SETUP_UNAVAILABLE');
-    const id = randomUUID(), state = randomBytes(32).toString('base64url');
+    const id = randomUUID(), state = (purpose === 'ads' ? 'ads.' : '') + randomBytes(32).toString('base64url');
     checkedPageResult(await getSupabaseAdmin().from('veo_page_authorizations').upsert({ id, actor_id: scope.user_id, tenant_id: scope.tenant_id,
         state_hash: createHash('sha256').update(state).digest('hex'), state_used_at: null, token_ciphertext: null,
         expires_at: new Date(Date.now() + 600000).toISOString(), created_at: new Date().toISOString() }, { onConflict: 'actor_id' }));
     const url = new URL('https://www.facebook.com/v21.0/dialog/oauth');
-    url.search = new URLSearchParams({ client_id: process.env.FACEBOOK_CLIENT_ID!, redirect_uri: pageCallbackUrl(request), state, response_type: 'code', scope: FACEBOOK_PERMISSION_SCOPE, auth_type: 'rerequest' }).toString();
+    url.search = new URLSearchParams({ client_id: process.env.FACEBOOK_CLIENT_ID!, redirect_uri: pageCallbackUrl(request), state, response_type: 'code', scope: FACEBOOK_PERMISSION_SCOPE + (purpose === 'ads' ? ',ads_read' : ''), auth_type: 'rerequest' }).toString();
     const response = pageSetupResponse({ authorizationUrl: url.toString() });
     setPageGrantCookie(response, request, scope.user_id, id, 600);
     return response;
@@ -61,6 +62,7 @@ export async function finishFacebookPageAuthorization(request: NextRequest) {
     try {
         const scope = await requirePageOwner(request), id = readPageGrantCookie(request, scope.user_id);
         const state = request.nextUrl.searchParams.get('state') || '', code = request.nextUrl.searchParams.get('code') || '';
+        if (state.startsWith('ads.')) { destination.pathname = '/dashboard/workspace'; destination.searchParams.set('view', 'budget'); }
         if (!id || state.length < 32 || state.length > 200) throw new PageSetupError('Start Facebook authorization again.', 400, 'INVALID_STATE');
         const db = getSupabaseAdmin();
         const claimed = checkedPageResult(await db.rpc('veo_claim_page_authorization', { p_actor: scope.user_id, p_id: id, p_state_hash: createHash('sha256').update(state).digest('hex') }));
@@ -71,6 +73,15 @@ export async function finishFacebookPageAuthorization(request: NextRequest) {
         if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new PageSetupError('Facebook did not supply a usable authorization.', 409);
         // A short-lived grant supports Page selection; it never changes app identity.
         await requirePageOwner(request);
+        if (state.startsWith('ads.')) {
+            await retainWorkspaceAdsGrant(db, scope.user_id, token.access_token, value => pageGraph('oauth/access_token', undefined, { body: new URLSearchParams({
+                grant_type: 'fb_exchange_token', client_id: process.env.FACEBOOK_CLIENT_ID!, client_secret: process.env.FACEBOOK_CLIENT_SECRET!, fb_exchange_token: value
+            }) }));
+            destination.searchParams.set('ads_connected', '1');
+            const response = NextResponse.redirect(destination); response.headers.set('Cache-Control', 'no-store'); response.headers.set('Referrer-Policy', 'no-referrer');
+            response.cookies.set(PAGE_AUTH_COOKIE, '', { httpOnly: true, secure: request.nextUrl.protocol === 'https:', sameSite: 'lax', path: '/api', maxAge: 0 });
+            return response;
+        }
         const saved = checkedPageResult(await db.from('veo_page_authorizations').update({ token_ciphertext: encryptPageGrant(token.access_token), expires_at: new Date(Date.now() + 3600000).toISOString() })
             .eq('id', id).eq('actor_id', scope.user_id).select('id').maybeSingle());
         if (!saved) throw new PageSetupError('Start Facebook authorization again.', 409, 'INVALID_STATE');

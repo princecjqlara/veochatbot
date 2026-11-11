@@ -1,0 +1,30 @@
+import {createElement} from 'react';
+import {act,create,type ReactTestRenderer} from 'react-test-renderer';
+import {afterEach,expect,it,vi} from 'vitest';
+import Connection from './VeoAdsConnection';
+let view:ReactTestRenderer;
+const text=(v:any):string=>typeof v==='string'||typeof v==='number'?String(v):(v?.children||[]).map(text).join('');
+const status=(extra:any={})=>({status:'connect_required',configured:true,can_manage:true,verified_inventory_ads:0,last_synced_at:null,message:'Page access is separate from ad read access.',...extra});
+afterEach(async()=>{if(view)await act(async()=>view.unmount());vi.unstubAllGlobals();vi.useRealTimers();});
+it('shows missing ads consent honestly and opens only the approved Meta OAuth address',async()=>{
+ const assign=vi.fn();vi.stubGlobal('window',{location:{search:'',assign}});const fetcher=vi.fn(async(_url:string,options?:any)=>Response.json(options?.method==='POST'?{authorizationUrl:'https://www.facebook.com/v21.0/dialog/oauth?state=private'}:status()));vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Connection));});expect(text(view.toJSON())).toContain('Not completed');expect(text(view.toJSON())).toContain('Verified Marketing API ads: 0');
+ await act(async()=>{await view.root.findAllByType('button').find(node=>text(node)==='Connect Meta Ads')!.props.onClick();});expect(assign).toHaveBeenCalledWith(expect.stringContaining('https://www.facebook.com/'));
+ expect(fetcher.mock.calls.filter(([,options])=>options?.method==='POST').map(([,options])=>JSON.parse(options.body).action)).toEqual(['authorize']);
+});
+it('automatically fetches once after successful ad consent and refreshes dependent reports',async()=>{
+ vi.stubGlobal('window',{location:{search:'?view=budget&ads_connected=1',assign:vi.fn()}});const refreshed=vi.fn(),fetcher=vi.fn(async(_url:string,options?:any)=>Response.json(options?.method==='POST'?{complete:true,inventory_ads:12,accounts:2,coverage_days:105}:status({status:'connected'})));vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Connection,{onRefreshed:refreshed}));});expect(fetcher.mock.calls.filter(([,options])=>options?.method==='POST')).toHaveLength(1);expect(refreshed).toHaveBeenCalledTimes(1);expect(text(view.toJSON())).toContain('Fetched 12 verified ad entries');
+});
+it('consumes the authorization-return flag so reopening the report does not repeat the initial source fetch',async()=>{
+ const location={search:'?view=budget&ads_connected=1',href:'https://veo.test/dashboard/workspace?view=budget&ads_connected=1',assign:vi.fn()},replaceState=vi.fn((_state:any,_title:any,url:string)=>{location.href=url;location.search=new URL(url).search;});
+ vi.stubGlobal('window',{location,history:{replaceState}});const fetcher=vi.fn(async(_url:string,options?:any)=>Response.json(options?.method==='POST'?{complete:true,inventory_ads:12,accounts:2,coverage_days:105}:status({status:'connected'})));vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Connection));});expect(replaceState).toHaveBeenCalledTimes(1);expect(location.search).not.toContain('ads_connected');
+ await act(async()=>{view.unmount();view=create(createElement(Connection));});expect(fetcher.mock.calls.filter(([,options])=>options?.method==='POST')).toHaveLength(1);
+});
+it('polls an existing refresh until completion and then stops without duplicate source writes',async()=>{
+ vi.useFakeTimers();vi.stubGlobal('window',{location:{search:'',assign:vi.fn()}});let running=true;const refreshed=vi.fn(),fetcher=vi.fn(async()=>Response.json(status({status:'connected',refresh_running:running})));vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Connection,{onRefreshed:refreshed}));});running=false;
+ await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});expect(refreshed).toHaveBeenCalledTimes(1);const calls=fetcher.mock.calls.length;
+ await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});expect(fetcher).toHaveBeenCalledTimes(calls);
+});

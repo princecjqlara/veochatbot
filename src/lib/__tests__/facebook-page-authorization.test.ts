@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ owner: vi.fn(), rpc: vi.fn(), upsert: vi.fn(), update: vi.fn(), saved: { id: '00000000-0000-4000-8000-000000000099' } as any }));
+const m = vi.hoisted(() => ({ owner: vi.fn(), rpc: vi.fn(), upsert: vi.fn(), update: vi.fn(), ads:vi.fn(), saved: { id: '00000000-0000-4000-8000-000000000099' } as any }));
+vi.mock('@/lib/veo-ads-authorization',()=>({retainWorkspaceAdsGrant:m.ads}));
 vi.mock('@/lib/veo-page-connections', async () => ({ ...await vi.importActual<any>('@/lib/veo-page-connections'), requirePageOwner: m.owner }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => ({ rpc: m.rpc, from: () => {
     const q: any = { upsert: m.upsert, update: (values: any) => { m.update(values); return q; }, eq: () => q, select: () => q, maybeSingle: async () => ({ data: m.saved }) }; return q;
@@ -23,6 +24,14 @@ it('starts a separate Page grant using hashed state and the existing callback UR
     expect(url.searchParams.get('redirect_uri')).toBe('https://veo.test/api/auth/callback/facebook');
     expect(m.upsert.mock.calls[0][0].state_hash).not.toBe(state); expect(m.upsert.mock.calls[0][0].token_ciphertext).toBeNull();
     const cookie = response.headers.get('set-cookie')!; expect(cookie).toContain('HttpOnly'); expect(cookie).toContain('SameSite=lax'); expect(cookie).not.toContain('next-auth.session-token');
+});
+it('binds advertising consent to the one-use Owner state and keeps Page sessions and login identity unchanged',async()=>{
+    const start=await beginFacebookPageAuthorization(new NextRequest('https://veo.test/api/workspace/ads',{method:'POST',headers:{Origin:'https://veo.test'}}),'ads');
+    const url=new URL((await start.json()).authorizationUrl);expect(url.searchParams.get('scope')).toContain('ads_read');expect(url.searchParams.get('scope')).not.toContain('ads_management');expect(url.searchParams.get('state')).toMatch(/^ads\./);
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({access_token:'private-short-token'})));m.ads.mockResolvedValue(undefined);
+    const response=await finishFacebookPageAuthorization(callback('state=ads.'+'s'.repeat(43)+'&code=private-auth-code'));
+    expect(response.headers.get('location')).toContain('view=budget');expect(response.headers.get('location')).toContain('ads_connected=1');
+    expect(m.ads).toHaveBeenCalledWith(expect.anything(),'owner','private-short-token',expect.any(Function));expect(m.update).not.toHaveBeenCalled();expect(response.headers.get('set-cookie')).not.toContain('next-auth.session-token');
 });
 it('exchanges the code only after claiming state, encrypts the grant and keeps VEO identity unchanged', async () => {
     const fetcher = vi.fn(async (_url: any, options: any) => { expect(options.body.get('code')).toBe('private-auth-code'); return Response.json({ access_token: 'private-user-token' }); }); vi.stubGlobal('fetch', fetcher);
