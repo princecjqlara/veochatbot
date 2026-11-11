@@ -2,8 +2,14 @@ import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, expect, it } from 'vitest';
 import Chart from './VeoAdPerformanceChart';
+import {creativeChartValue,CREATIVE_CHART_METRICS}from'@/lib/veo-creative-chart';
 let view: ReactTestRenderer;
 afterEach(async () => { if (view) await act(async () => view.unmount()); });
+it('shows verified provisional delivery costs without using them as final profit or ROAS',()=>{
+ const row={delivery_provisional:true,finance:[{currency:'PHP',cpc_minor:null,net_minor:null,gross_roas:null,provisional_delivery_costs:{cpc_minor:150,net_minor:9999,gross_roas:10}}]};
+ expect(creativeChartValue(row,CREATIVE_CHART_METRICS.find(m=>m.key==='cpc_minor')!,'PHP')).toBe(150);
+ for(const key of ['net_minor','gross_roas'])expect(creativeChartValue(row,CREATIVE_CHART_METRICS.find(m=>m.key===key)!,'PHP')).toBeNull();
+});
 it('shows real zeros while leaving missing delivery dates as gaps and offers exact day inspection', async () => {
     const rows = [{ day: '2026-11-01', impressions: 0 }, { day: '2026-11-02', impressions: null }, { day: '2026-11-03', impressions: 100 }];
     await act(async () => { view = create(createElement(Chart, { rows, metricKey: 'impressions', currency: 'PHP' })); });

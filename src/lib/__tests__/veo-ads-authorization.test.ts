@@ -10,7 +10,7 @@ it('retains only encrypted ad-read access with its actual expiry after successfu
     await retainWorkspaceAdsGrant(db,'owner','private-short-token',exchange);
     expect(db.from).toHaveBeenCalledWith('meta_ads_credentials');const saved=upsert.mock.calls[0] as any;
     expect(decryptMetaAdsToken(saved[0])).toBe('private-long-token');expect(JSON.stringify(saved)).not.toContain('private-long-token');expect(Date.parse(saved[0].token_expires_at)-Date.now()).toBeGreaterThan(3590000);
-    expect(saved[0].sync_checkpoint).toMatchObject({completed_windows:[],page_ids:[],account_ids:[]});expect(Date.parse(saved[0].sync_checkpoint.to)-Date.parse(saved[0].sync_checkpoint.from)).toBe(14*86400000);
+    expect(saved[0].sync_checkpoint).toMatchObject({completed_windows:[],page_ids:[],account_ids:[]});expect(Date.parse(saved[0].sync_checkpoint.to)-Date.parse(saved[0].sync_checkpoint.from)).toBe(92*86400000);
 });
 it('accepts a verified token when Meta omits expires_in and uses its actual data-access deadline',async()=>{
  const expires=Math.floor(Date.now()/1000)+86400,dataExpiry=expires-3600,upsert=vi.fn(async(_value:any,_options?:any)=>({data:{}})),db={from:()=>({upsert})};

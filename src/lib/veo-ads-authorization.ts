@@ -26,8 +26,8 @@ export async function retainWorkspaceAdsGrant(db: any, owner: string, token: str
         else if (!expiresAt) throw new PageSetupError('Meta did not provide a verifiable token expiry. Retry the saved authorization.', 409, 'ADS_TOKEN_EXPIRY_UNAVAILABLE');
     }
     if (expiresAt !== null && expiresAt <= Date.now() + 60000 || expiresAt === null && !inspect) throw new PageSetupError('The advertising credential is expired or its expiry could not be verified. Connect Meta Ads again.', 409, 'ADS_TOKEN_EXPIRY_UNAVAILABLE');
-    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10), from = new Date(Date.parse(today + 'T00:00:00Z') - 14 * 86400000).toISOString().slice(0, 10);
-    const saved = await db.from('meta_ads_credentials').upsert({ user_id: owner, ...encryptMetaAdsToken(long.access_token),
+    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10), from = new Date(Date.parse(today + 'T00:00:00Z') - 92 * 86400000).toISOString().slice(0, 10);
+    const saved = await db.from('meta_ads_credentials').upsert({ user_id: owner, ...encryptMetaAdsToken(long.access_token), credential_origin: 'owner_oauth', source_page_id: null,
         token_expires_at: expiresAt === null ? null : new Date(expiresAt).toISOString(), permissions: (connection as any).permissions || ['ads_read'],
         sync_checkpoint: { from, to: today, completed_windows: [], page_ids: [], account_ids: [] }, last_error: null, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
     if (saved.error) throw new PageSetupError('Advertising access could not be saved. Retry the saved authorization.', 503, 'ADS_CREDENTIAL_SAVE_FAILED');

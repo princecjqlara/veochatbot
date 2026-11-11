@@ -1,11 +1,12 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ refresh: vi.fn(), ids: vi.fn(), db: vi.fn(), decrypt: vi.fn(), claim:vi.fn() }));
+const m = vi.hoisted(() => ({ refresh: vi.fn(), ids: vi.fn(), db: vi.fn(), decrypt: vi.fn(), claim:vi.fn(), bootstrap:vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: m.db }));
 vi.mock('@/lib/page-access', () => ({ getUserPageIds: m.ids }));
 vi.mock('@/lib/veo-stored-ads-refresh', () => ({ refreshStoredWorkspaceAds: m.refresh }));
 vi.mock('@/lib/meta-ads-credentials', () => ({ decryptMetaAdsToken: m.decrypt }));
 vi.mock('@/lib/veo-workspace', () => ({ workspaceEnabled: () => true }));
+vi.mock('@/lib/veo-page-ads-bootstrap', () => ({ bootstrapPageAds: m.bootstrap }));
 import { GET } from './route';
 let pageQuery: any;
 beforeEach(() => {
@@ -43,5 +44,9 @@ it('fails closed without Meta API work if hourly coordination is unavailable',as
  m.claim.mockResolvedValue({error:{message:'Database unavailable'}});expect((await GET(request())).status).toBe(503);expect(m.refresh).not.toHaveBeenCalled();
 });
 it('returns an honest skipped state before any ad consent exists',async()=>{
- m.db.mockReturnValue({from:()=>({select:()=>({limit:async()=>({data:[]})})})});const response=await GET(request());expect(response.status).toBe(200);expect(await response.json()).toMatchObject({complete:false,skipped:true,reason:'connect_meta_ads_required'});expect(m.refresh).not.toHaveBeenCalled();
+ m.db.mockReturnValue({rpc:async()=>({data:[]}),from:()=>({select:()=>({limit:async()=>({data:[]})})})});const response=await GET(request());expect(response.status).toBe(200);expect(await response.json()).toMatchObject({complete:false,skipped:true,reason:'connect_meta_ads_required'});expect(m.refresh).not.toHaveBeenCalled();
+});
+it('discovers eligible saved Page grants on the existing cron path before refreshing their persisted source',async()=>{
+ m.claim.mockImplementation(async(fn:string)=>({data:fn==='veo_page_ads_discovery_candidates'?['owner']:true}));m.bootstrap.mockResolvedValue({connected:true});
+ expect((await GET(request())).status).toBe(200);expect(m.bootstrap).toHaveBeenCalledOnce();expect(await m.bootstrap.mock.calls[0][0].authorize()).toEqual(['veo']);expect(m.refresh).toHaveBeenCalledOnce();
 });

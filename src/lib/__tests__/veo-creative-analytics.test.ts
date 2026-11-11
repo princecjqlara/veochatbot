@@ -43,6 +43,17 @@ it('keeps unknown retained salary unknown and counts a verified payer without a 
     const data:any=input();data.cash.push({payment_key:'retained:1',financial_source:'retained',contact_id:'d',currency:'PHP',amount_minor:2000});
     const ad=buildCreativeReport(data).ads[0];expect(ad.paying_clients).toBe(2);expect(ad.finance[0]).toMatchObject({gross_minor:12000,salary_minor:null,net_minor:null,net_roas:null,cost_per_acquisition_minor:1500});expect(ad.finance[0].gross_roas).toBe(4);
 });
+it('shows a fully fetched current-day delivery snapshot as provisional while final profit and ROAS remain unavailable',()=>{
+ const data:any=input(),checked='2026-11-02T07:00:00Z';data.as_of='2026-11-02T08:00:00Z';data.reconciled_spend[1].complete=false;
+ Object.assign(data.spend[1],{report_complete:false,checked_at:checked});Object.assign(data.coverage[1],{report_complete:false,accounts_checked:27,checked_at:checked});
+ const report=buildCreativeReport(data),ad=report.ads[0];expect(ad).toMatchObject({delivery_complete:false,delivery_provisional:true,impressions:500,clicks:30,ctr:0.06});
+ expect(ad.finance[0]).toMatchObject({gross_roas:null,net_minor:null,cpc_minor:null,provisional_delivery_costs:{cpc_minor:100,cost_per_message_minor:1000}});expect(report.daily[1]).toMatchObject({delivery_provisional:true,impressions:300});
+});
+it('does not show an in-progress import as provisional when its rows are newer than the last complete source check',()=>{
+ const data:any=input();data.as_of='2026-11-02T08:00:00Z';data.reconciled_spend[1].complete=false;
+ Object.assign(data.spend[1],{report_complete:false,checked_at:'2026-11-02T07:01:00Z'});Object.assign(data.coverage[1],{report_complete:false,accounts_checked:27,checked_at:'2026-11-02T07:00:00Z'});
+ const ad=buildCreativeReport(data).ads[0];expect(ad.delivery_provisional).toBe(false);expect(ad.impressions).toBeNull();expect(ad.finance[0].provisional_delivery_costs).toBeNull();
+});
 it('deduplicates stable financial identities while preserving legitimate same-amount payments and scopes daily output to the chosen creative',()=>{
     const data:any=input();data.cash=[{payment_key:'workspace:1',contact_id:'c',currency:'PHP',amount_minor:5000},{payment_key:'workspace:2',contact_id:'c',currency:'PHP',amount_minor:5000}];data.cash.push({...data.cash[0]});data.orders.push({...data.orders[0]});
     const report=buildCreativeReport(data);expect(report.ads[0].finance[0].gross_minor).toBe(10000);expect(report.ads[0].paid_orders).toBe(1);expect(report.daily).toHaveLength(2);

@@ -58,7 +58,20 @@ export function buildCreativeReport(input: any) {
                 cost_per_conversion_minor: complete && amount != null ? ratio(amount, converted) : null,
                 spend_known_days: knownDays.length, spend_expected_days: validDays.length };
         });
-        const deliveryComplete = ads.length > 0 && [...new Set(ads.map((r: any) => r.currency))].every(currency => money.find(f => f.currency === currency)?.spend_complete), metric = (field: string) => deliveryComplete && ads.length && ads.every((r: any) => r[field] != null && Number.isFinite(Number(r[field])) && Number(r[field]) >= 0) ? sum(ads, field) : null;
+        const deliveryComplete = ads.length > 0 && [...new Set(ads.map((r: any) => r.currency))].every(currency => money.find(f => f.currency === currency)?.spend_complete);
+        const deliveryDays = selectedDay ? [selectedDay] : days;
+        // Today can have a fully fetched snapshot without being a finished day.
+        // Require matching source checks so a half-written import never becomes
+        // a provisional zero or a complete-looking delivery total.
+        const deliveryProvisional = !deliveryComplete && deliveryDays.includes(today) && ads.length > 0 && [...new Set(ads.map((r: any) => r.currency))].every(currency => deliveryDays.every(date => {
+            const rows = ads.filter((r: any) => r.currency === currency && r.spend_date === date);
+            if (!rows.length || rows.some((r: any) => r.pht_aligned !== true)) return false;
+            if (date < today) return reconciled.some((r: any) => r.spend_date === date && r.currency === currency && r.complete === true) && rows.every((r: any) => r.report_complete === true);
+            if (date !== today) return false;
+            const coverage = (input.coverage || []).filter((r: any) => r.spend_date === date && r.currency === currency);
+            return coverage.length > 0 && coverage.every((r: any) => r.pht_aligned === true && r.accounts_checked > 0 && Number.isFinite(Date.parse(r.checked_at))) && rows.every((r: any) => coverage.some((c: any) => Date.parse(r.checked_at) === Date.parse(c.checked_at)));
+        }));
+        const metric = (field: string) => (deliveryComplete || deliveryProvisional) && ads.length && ads.every((r: any) => r[field] != null && Number.isFinite(Number(r[field])) && Number(r[field]) >= 0) ? sum(ads, field) : null;
         const impressions = metric('impressions'), clicks = metric('clicks'), linkClicks = metric('link_clicks'), conversations = metric('messaging_started'), plays = metric('video_plays'), thruplays = metric('video_thruplays'), completions = metric('video_complete');
         money.forEach(f => Object.assign(f, { cpc_minor: f.spend_complete && f.ad_spend_minor != null && clicks != null ? ratio(f.ad_spend_minor, clicks) : null,
             cost_per_link_click_minor: f.spend_complete && f.ad_spend_minor != null && linkClicks != null ? ratio(f.ad_spend_minor, linkClicks) : null,
@@ -67,7 +80,12 @@ export function buildCreativeReport(input: any) {
             cost_per_thruplay_minor: f.spend_complete && f.ad_spend_minor != null && thruplays != null ? ratio(f.ad_spend_minor, thruplays) : null,
             cost_per_video_play_minor: f.spend_complete && f.ad_spend_minor != null && plays != null ? ratio(f.ad_spend_minor, plays) : null }));
         const frequencyRows = ads.filter((s: any) => s.frequency != null && s.reach > 0), weights = sum(frequencyRows, 'reach');
-        const dailyFrequency = deliveryComplete && weights && ads.every((r: any) => r.reach != null && (Number(r.reach) === 0 || r.frequency != null)) ? frequencyRows.reduce((n: number, r: any) => n + Number(r.frequency) * Number(r.reach), 0) / weights : null;
+        const dailyFrequency = (deliveryComplete || deliveryProvisional) && weights && ads.every((r: any) => r.reach != null && (Number(r.reach) === 0 || r.frequency != null)) ? frequencyRows.reduce((n: number, r: any) => n + Number(r.frequency) * Number(r.reach), 0) / weights : null;
+        money.forEach(f => Object.assign(f, { provisional_delivery_costs: deliveryProvisional && f.ad_spend_minor != null ? {
+            cpc_minor: clicks == null ? null : ratio(f.ad_spend_minor, clicks), cost_per_link_click_minor: linkClicks == null ? null : ratio(f.ad_spend_minor, linkClicks),
+            cpm_minor: impressions == null ? null : ratio(f.ad_spend_minor * 1000, impressions), cost_per_message_minor: conversations == null ? null : ratio(f.ad_spend_minor, conversations),
+            cost_per_thruplay_minor: thruplays == null ? null : ratio(f.ad_spend_minor, thruplays), cost_per_video_play_minor: plays == null ? null : ratio(f.ad_spend_minor, plays)
+        } : null }));
         const history = (input.delivery_history || []).find((h: any) => h.ad_id === ad);
         return { ad_id: ad, ad: (input.ads || []).find((a: any) => a.ad_id === ad), inquiries: cohort.length, converted, qualified: cohort.filter((c: any) => c.stage === 'qualified').length,
             not_qualified: cohort.filter((c: any) => c.stage === 'not_qualified').length, pending: cohort.filter((c: any) => !['qualified', 'not_qualified', 'converted'].includes(c.stage)).length,
@@ -83,10 +101,10 @@ export function buildCreativeReport(input: any) {
             ctr: impressions != null && clicks != null ? ratio(clicks, impressions) : null,
             link_ctr: impressions != null && linkClicks != null ? ratio(linkClicks, impressions) : null,
             video_completion_rate: plays != null && completions != null ? ratio(completions, plays) : null,
-            delivery_complete: deliveryComplete,
+            delivery_complete: deliveryComplete, delivery_provisional: deliveryProvisional,
             demographics: selectedDay ? [] : creativeDemographics(cohort), subdemographics: selectedDay ? [] : demographicSubgroups(cohort) };
     }
-    const ads = [...ids].map(id => report(id)).sort((a, b) => b.inquiries - a.inquiries || a.ad_id.localeCompare(b.ad_id));
+    const ads = [...ids].map(id => report(id)).sort((a, b) => b.inquiries - a.inquiries || Number(b.impressions || 0) - Number(a.impressions || 0) || Number(b.ad?.ad_status === 'ACTIVE') - Number(a.ad?.ad_status === 'ACTIVE') || a.ad_id.localeCompare(b.ad_id));
     const selected = input.selected_ad || ads[0]?.ad_id;
     return { from: input.from, to: input.to, generated_at: input.as_of, ads, daily_ad_id: selected || null, daily: selected && ids.has(selected) ? days.map(date => ({ ...report(selected, date), day: date })) : [],
         attribution_coverage: input.attribution_coverage || null, ad_planning: input.ad_planning || [], coverage: { attribution: 'Only verified originating-ad relationships. Unattributed inquiries are excluded, never guessed. Imported contact identities alone do not prove an inquiry date or originating ad.',

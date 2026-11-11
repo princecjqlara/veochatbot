@@ -9,6 +9,21 @@ export async function readMetaAds(path:string,token:string,params:Record<string,
  try{response=await fetch(url,{headers:{Authorization:'Bearer '+token},cache:'no-store',signal:AbortSignal.timeout(8000)});body=await response.json();}catch{throw new MetaAdAccessError('META_UNAVAILABLE');}
  if(!response.ok||body.error)throw new MetaAdAccessError(body.error?.code||response.status,[10,190,200,294].includes(body.error?.code));return body;
 }
+/** A saved Page grant can read its issuing user's advertising directory, while
+ * /me/adaccounts addresses the Page and fails. Verify the app, Page identity,
+ * expiry and granted scopes before resolving that directory. */
+export async function inspectPageAdGrant(token:string,expectedPage?:string){
+ const app=process.env.FACEBOOK_CLIENT_ID,secret=process.env.FACEBOOK_CLIENT_SECRET;
+ if(!app||!secret)throw new MetaAdAccessError('META_CONFIG_UNAVAILABLE');
+ const result=await readMetaAds('debug_token',app+'|'+secret,{input_token:token}),m=result.data;
+ const expiries=[Number(m?.expires_at),Number(m?.data_access_expires_at)].filter(v=>Number.isFinite(v)&&v>0).map(v=>v*1000);
+ if(m?.is_valid!==true||String(m.app_id)!==app||m.type!=='PAGE'||!/^\d+$/.test(String(m.user_id||''))||expiries.some(v=>v<=Date.now()))throw new MetaAdAccessError('PAGE_GRANT_INVALID',true);
+ const permissions=(m.scopes||[]).filter((p:string)=>p==='ads_read'||p==='ads_management');
+ if(!permissions.length)throw new MetaAdAccessError('PAGE_AD_PERMISSION_REQUIRED',true);
+ const identity=await readMetaAds('me',token,{fields:'id'});
+ if(!/^\d+$/.test(String(identity.id||''))||expectedPage&&String(identity.id)!==expectedPage)throw new MetaAdAccessError('PAGE_GRANT_MISMATCH',true);
+ return{user_id:String(m.user_id),page_id:String(identity.id),permissions,expires_at:expiries.length?new Date(Math.min(...expiries)).toISOString():null};
+}
 export async function marketingConnection(token?:string){
  if(!token)return{status:'connect_required',accounts:[],message:'Connect Facebook ad details to read your Ads Manager inventory. Recorded Messenger ads and Page previews remain available.'};
  try{
@@ -22,8 +37,15 @@ export async function marketingConnection(token?:string){
    permissionsUnavailable=true;
   }
   if(!permissionsUnavailable&&!granted.has('ads_read')&&!granted.has('ads_management'))return{status:'permission_required',accounts:[],permissions:[...granted],message:'Your Facebook login has Page access but no ad-account read permission. Reconnect with ads_read to import all ads and their Ads Manager names.'};
-  const accounts=[];let after:string|undefined;
-  for(let i=0;i<4;i++){const page=await readMetaAds('me/adaccounts',token,{fields:'id,name,account_status,currency',limit:'25',...(after?{after}:{})});accounts.push(...(page.data||[]).filter((a:any)=>/^act_\d+$/.test(a.id)).map((a:any)=>({id:a.id,name:text(a.name),currency:text(a.currency,10),status:a.account_status})));if(!page.paging?.next)return{status:'ready',accounts,permissions:[...granted].filter(p=>p==='ads_read'||p==='ads_management'),message:accounts.length?'Ad-account read access is connected.':'Facebook returned no accessible ad accounts.'};after=page.paging?.cursors?.after;if(!after)break;}
+  const accounts=[];let after:string|undefined,directory='me';
+  for(let i=0;i<4;i++){const params={fields:'id,name,account_status,currency',limit:'25',...(after?{after}:{})};let page;
+   try{page=await readMetaAds(directory+'/adaccounts',token,params);}catch(error){
+    if(directory!=='me'||(error as MetaAdAccessError).code!==100)throw error;
+    let grant;try{grant=await inspectPageAdGrant(token);}catch{throw error;}
+    directory=grant.user_id;granted=new Set(grant.permissions);page=await readMetaAds(directory+'/adaccounts',token,params);
+   }
+   accounts.push(...(page.data||[]).filter((a:any)=>/^act_\d+$/.test(a.id)).map((a:any)=>({id:a.id,name:text(a.name),currency:text(a.currency,10),status:a.account_status})));if(!page.paging?.next)return{status:'ready',accounts,permissions:[...granted].filter(p=>p==='ads_read'||p==='ads_management'),message:accounts.length?'Ad-account read access is connected.':'Facebook returned no accessible ad accounts.'};after=page.paging?.cursors?.after;if(!after)break;
+  }
   return{status:'ready',accounts,permissions:[...granted].filter(p=>p==='ads_read'||p==='ads_management'),partial:true,message:'Showing the first 100 accessible ad accounts.'};
  }catch(e){const error=e as MetaAdAccessError;return{status:error.reconnect?'reconnect_required':'temporarily_unavailable',accounts:[],error_code:error.code,message:error.message};}
 }
@@ -34,7 +56,7 @@ export function creativePageId(ad:any){
 }
 export function catalogMetadata(ad:any,pageId:string){
  const creative=ad.creative||{};
- return{page_id:pageId,ad_id:numeric(ad.id),ad_name:text(ad.name),ad_account_id:numeric(ad.account_id),ad_status:text(ad.effective_status,60),creative_id:numeric(creative.id),creative_name:text(creative.name),photo_url:safeAdMediaUrl(creative.thumbnail_url),post_id:text(creative.effective_object_story_id||creative.object_story_id,100),campaign_id:numeric(ad.campaign?.id),campaign_name:text(ad.campaign?.name),adset_id:numeric(ad.adset?.id),adset_name:text(ad.adset?.name),metadata_source:'marketing_api',metadata_status:'available',metadata_error_code:null};
+ return{page_id:pageId,ad_id:numeric(ad.id),ad_name:text(ad.name),ad_account_id:numeric(ad.account_id),ad_status:text(ad.effective_status,60),creative_id:numeric(creative.id),creative_name:text(creative.name),photo_url:[creative.thumbnail_url,creative.image_url,creative.object_story_spec?.video_data?.image_url,creative.object_story_spec?.link_data?.picture].map(safeAdMediaUrl).find(Boolean)||null,post_id:text(creative.effective_object_story_id||creative.object_story_id,100),campaign_id:numeric(ad.campaign?.id),campaign_name:text(ad.campaign?.name),adset_id:numeric(ad.adset?.id),adset_name:text(ad.adset?.name),metadata_source:'marketing_api',metadata_status:'available',metadata_error_code:null};
 }
 export async function resolveAdCreative(input:{pageId:string;facebookPageId:string;pageToken:string;userToken?:string;ad:{ad_id:string;post_id?:string|null}}){
  const {ad}=input;let patch:any={page_id:input.pageId,ad_id:ad.ad_id,metadata_status:'permissions_needed',metadata_error_code:null},adReadable=false;

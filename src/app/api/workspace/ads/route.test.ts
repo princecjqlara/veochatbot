@@ -1,19 +1,30 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {NextRequest} from 'next/server';
-const m=vi.hoisted(()=>({session:vi.fn(),scope:vi.fn(),from:vi.fn(),authorize:vi.fn(),recover:vi.fn(),grant:vi.fn(),refresh:vi.fn(),ids:vi.fn()}));
+const m=vi.hoisted(()=>({session:vi.fn(),scope:vi.fn(),from:vi.fn(),rpc:vi.fn(),authorize:vi.fn(),recover:vi.fn(),grant:vi.fn(),refresh:vi.fn(),ids:vi.fn(),bootstrap:vi.fn()}));
 vi.mock('@/lib/get-session',()=>({getSessionFromRequest:m.session}));
 vi.mock('@/lib/veo-workspace',()=>({workspaceScope:m.scope,philippineDate:()=> '2026-11-11'}));
-vi.mock('@/lib/supabase',()=>({getSupabaseAdmin:()=>({from:m.from})}));
+vi.mock('@/lib/supabase',()=>({getSupabaseAdmin:()=>({from:m.from,rpc:m.rpc})}));
 vi.mock('@/lib/page-access',()=>({getUserPageIds:m.ids}));
 vi.mock('@/lib/facebook-page-authorization',()=>({beginFacebookPageAuthorization:m.authorize,pageAuthorizationConfigured:()=>true,readFacebookPageGrant:m.grant,recoverFacebookAdsAuthorization:m.recover}));
 vi.mock('@/lib/veo-stored-ads-refresh',()=>({refreshStoredWorkspaceAds:m.refresh}));
+vi.mock('@/lib/veo-page-ads-bootstrap',()=>({bootstrapPageAds:m.bootstrap}));
 import {GET,POST} from './route';
-beforeEach(()=>{vi.clearAllMocks();m.session.mockResolvedValue({user:{id:'owner'}});m.scope.mockResolvedValue({user_id:'owner',role:'owner',tenant_id:'tenant',launch_at:'2026-11-09',page_ids:['page']});m.refresh.mockResolvedValue({complete:true,errors:[]});m.authorize.mockResolvedValue(Response.json({authorizationUrl:'https://www.facebook.com/dialog/oauth'}));
+beforeEach(()=>{vi.clearAllMocks();m.rpc.mockResolvedValue({data:[]});m.session.mockResolvedValue({user:{id:'owner'}});m.scope.mockResolvedValue({user_id:'owner',role:'owner',tenant_id:'tenant',launch_at:'2026-11-09',page_ids:['page']});m.refresh.mockResolvedValue({complete:true,errors:[]});m.authorize.mockResolvedValue(Response.json({authorizationUrl:'https://www.facebook.com/dialog/oauth'}));
  m.from.mockImplementation((table:string)=>{const q:any={select:()=>q,eq:()=>q,in:()=>q,single:async()=>({data:{owner_id:'owner'}}),maybeSingle:async()=>({data:null}),then:(resolve:any)=>resolve({count:0})};return q;});});
 afterEach(()=>{vi.unstubAllEnvs();});
 const post=(body:any,origin='https://veo.test')=>POST(new NextRequest('https://veo.test/api/workspace/ads',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)}));
 it('reports missing advertising access honestly without reading tokens or claiming that referral ads are fetched inventory',async()=>{
  const response=await GET(new NextRequest('https://veo.test/api/workspace/ads'));expect(response.status).toBe(200);expect(await response.json()).toMatchObject({status:'connect_required',verified_inventory_ads:0,last_synced_at:null,can_manage:true});expect(response.headers.get('cache-control')).toBe('no-store');expect(m.refresh).not.toHaveBeenCalled();
+});
+it('keeps Messenger references counted after their full creative metadata is imported',async()=>{
+ m.rpc.mockResolvedValue({data:[{ad_id:'1',metadata_source:'marketing_api',referral_events:8},{ad_id:'2',metadata_source:'marketing_api',referral_events:0}]});
+ const body=await(await GET(new NextRequest('https://veo.test/api/workspace/ads'))).json();expect(body.recorded_referral_ads).toBe(1);expect(m.rpc).toHaveBeenCalledWith('get_visible_ad_catalog',expect.objectContaining({p_page_ids:['page'],p_from:null}));
+});
+it('reuses existing Page advertising capability only for the current Owner and same-origin request',async()=>{
+ m.bootstrap.mockResolvedValue({connected:true,credential_origin:'connected_page',accounts:27});m.ids.mockResolvedValue(['page']);
+ let r=await post({action:'discover'});expect(r.status).toBe(200);expect((await r.json()).credential_origin).toBe('connected_page');expect(m.bootstrap.mock.calls[0][0].user).toBe('owner');expect(await m.bootstrap.mock.calls[0][0].authorize()).toEqual(['page']);
+ m.bootstrap.mockClear();expect((await post({action:'discover'},'https://other.test')).status).toBe(403);expect(m.bootstrap).not.toHaveBeenCalled();
+ m.scope.mockResolvedValue({role:'team_leader',launch_at:'2026-11-09',page_ids:['page']});expect((await post({action:'discover'})).status).toBe(403);expect(m.bootstrap).not.toHaveBeenCalled();
 });
 it('exposes only pending-grant availability and allows Owner recovery through the same-origin endpoint',async()=>{
  m.grant.mockResolvedValue({token:'private-token'});m.recover.mockResolvedValue(Response.json({connected:true}));const response=await GET(new NextRequest('https://veo.test/api/workspace/ads'));

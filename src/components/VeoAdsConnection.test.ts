@@ -16,6 +16,12 @@ it('automatically fetches once after successful ad consent and refreshes depende
  vi.stubGlobal('window',{location:{search:'?view=budget&ads_connected=1',assign:vi.fn()}});const refreshed=vi.fn(),fetcher=vi.fn(async(_url:string,options?:any)=>Response.json(options?.method==='POST'?{complete:true,inventory_ads:12,accounts:2,coverage_days:105}:status({status:'connected'})));vi.stubGlobal('fetch',fetcher);
  await act(async()=>{view=create(createElement(Connection,{onRefreshed:refreshed}));});expect(fetcher.mock.calls.filter(([,options])=>options?.method==='POST')).toHaveLength(1);expect(refreshed).toHaveBeenCalledTimes(1);expect(text(view.toJSON())).toContain('Fetched 12 verified ad entries');
 });
+it('automatically reuses saved Page access and fetches data once without redirecting to Facebook',async()=>{
+ const assign=vi.fn();vi.stubGlobal('window',{location:{search:'',assign}});const refreshed=vi.fn();let connected=false;
+ const fetcher=vi.fn(async(_url:string,options?:any)=>{if(options?.method==='POST'){const action=JSON.parse(options.body).action;if(action==='discover'){connected=true;return Response.json({connected:true,credential_origin:'connected_page',accounts:27});}return Response.json({complete:true,inventory_ads:20,accounts:27});}return Response.json(status({status:connected?'connected':'connect_required',can_reuse_page_access:!connected}));});vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Connection,{onRefreshed:refreshed}));});
+ expect(fetcher.mock.calls.filter(([,o])=>o?.method==='POST').map(([,o])=>JSON.parse(o.body).action)).toEqual(['discover','refresh']);expect(refreshed).toHaveBeenCalledOnce();expect(assign).not.toHaveBeenCalled();
+});
 it('consumes the authorization-return flag so reopening the report does not repeat the initial source fetch',async()=>{
  const location={search:'?view=budget&ads_connected=1',href:'https://veo.test/dashboard/workspace?view=budget&ads_connected=1',assign:vi.fn()},replaceState=vi.fn((_state:any,_title:any,url:string)=>{location.href=url;location.search=new URL(url).search;});
  vi.stubGlobal('window',{location,history:{replaceState}});const fetcher=vi.fn(async(_url:string,options?:any)=>Response.json(options?.method==='POST'?{complete:true,inventory_ads:12,accounts:2,coverage_days:105}:status({status:'connected'})));vi.stubGlobal('fetch',fetcher);

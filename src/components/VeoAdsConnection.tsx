@@ -4,7 +4,7 @@ import { useHourlyReportRefresh } from '@/lib/use-hourly-report-refresh';
 const date = (offset = 0) => new Date(Date.now() + 8 * 3600000 + offset * 86400000).toISOString().slice(0, 10);
 export default function VeoAdsConnection({ onRefreshed }: { onRefreshed?: () => void }) {
     const [state, setState] = useState<any>(null), [error, setError] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
-    const [from, setFrom] = useState(() => date(-14)), [to, setTo] = useState(() => date());
+    const [from, setFrom] = useState(() => date(-92)), [to, setTo] = useState(() => date());
     const mounted = useRef(true), auto = useRef(false), readId = useRef(0);
     const refreshCallback = useRef(onRefreshed); refreshCallback.current = onRefreshed;
     const load = useCallback(async (signal?: AbortSignal) => {
@@ -34,15 +34,15 @@ export default function VeoAdsConnection({ onRefreshed }: { onRefreshed?: () => 
         else if (code === 'ADS_TOKEN_INVALID' || code === 'FACEBOOK_AUTHORIZATION_REQUIRED') setError('Meta requires renewed permission. Connect Meta Ads again.');
         else if (code) setError('The connection did not finish. Recheck connection or start Connect Meta Ads again.');
     }, []);
-    async function action(kind: 'authorize' | 'refresh' | 'recover') {
+    async function action(kind: 'authorize' | 'refresh' | 'recover' | 'discover') {
         if (busy) return; setBusy(true); setError(''); setMessage('');
         try {
             const post = (action: string) => fetch('/api/workspace/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, from, to }) });
             let response = await post(kind), body = await response.json(); if (!response.ok) throw Error(body.errors?.join('; ') || body.error || 'Advertising fetch is incomplete; recheck and retry to resume.');
             if (!mounted.current) return;
             if (kind === 'authorize') { const url = new URL(body.authorizationUrl); if (url.protocol !== 'https:' || url.hostname !== 'www.facebook.com') throw Error('Invalid Meta authorization address'); window.location.assign(url.toString()); return; }
-            if (kind === 'recover') {
-                if (body.connected !== true) throw Error('Advertising authorization is incomplete.');
+            if (kind === 'recover' || kind === 'discover') {
+                if (body.connected !== true) throw Error(body.reason || 'Advertising authorization is incomplete.');
                 auto.current = true;
                 if (window.location.href && typeof window.history?.replaceState === 'function') { const url = new URL(window.location.href); url.searchParams.delete('connection_error'); url.searchParams.delete('ads_connected'); window.history.replaceState(null, '', url.toString()); }
                 await load(); response = await post('refresh');body = await response.json();if (!response.ok) throw Error(body.errors?.join('; ') || body.error || 'Advertising fetch will retry automatically.');
@@ -56,6 +56,7 @@ export default function VeoAdsConnection({ onRefreshed }: { onRefreshed?: () => 
         if (auto.current || !state?.can_manage) return;
         const params = new URLSearchParams(window.location.search), code = params.get('connection_error');
         if (state.pending_authorization && ['ADS_AUTHORIZATION_FAILED','ADS_TOKEN_EXCHANGE_FAILED','ADS_TOKEN_EXPIRY_UNAVAILABLE','ADS_CREDENTIAL_SAVE_FAILED','ADS_VERIFICATION_UNAVAILABLE','FACEBOOK_UNAVAILABLE'].includes(code || '')) { auto.current = true;void action('recover');return; }
+        if (state.status === 'connect_required' && state.can_reuse_page_access) { auto.current = true; void action('discover'); return; }
         if (state.status !== 'connected' || params.get('ads_connected') !== '1') return;
         auto.current = true;
         if (window.location.href && typeof window.history?.replaceState === 'function') {

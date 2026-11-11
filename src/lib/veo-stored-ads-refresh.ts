@@ -11,7 +11,7 @@ export async function refreshStoredWorkspaceAds({ db, user, from, to, authorize,
     if (!credential || credential.token_expires_at && Date.parse(credential.token_expires_at) <= Date.now()) throw Object.assign(Error('Connect Meta Ads with ad-account read access first.'), { status: 409, requiresReconnect: true });
     let token: string; try { token = decryptMetaAdsToken(credential); } catch { throw Object.assign(Error('Reconnect Meta Ads to renew the saved advertising credential.'), { status: 409, requiresReconnect: true }); }
     const ids = await authorize(); if (!ids.length) throw Object.assign(Error('No authorized Pages are available for advertising reports.'), { status: 403 });
-    let pageQuery = db.from('pages').select('id,fb_page_id').in('id', ids); if (workspaceOnly) pageQuery = pageQuery.eq('veo_enabled', true);
+    let pageQuery = db.from('pages').select('id,fb_page_id,access_token').in('id', ids); if (workspaceOnly) pageQuery = pageQuery.eq('veo_enabled', true);
     const pages = await pageQuery;
     if (pages.error || !pages.data?.length) throw Error('Authorized advertising Pages could not be verified');
     const lease = randomUUID(), claim = await db.rpc('veo_claim_meta_ads_refresh', { p_user: user, p_token: lease });

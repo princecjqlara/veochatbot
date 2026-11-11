@@ -22,6 +22,13 @@ beforeAll(async()=>{
  await db.query("INSERT INTO contacts(id,page_id,psid,name) VALUES($1,$3,'a','Client A'),($2,$3,'b','Client B')",[client,clientB,page]);await db.exec('COMMIT');
 },60000);
 afterAll(async()=>{await db?.close();});beforeEach(async()=>{await db.exec('BEGIN');});afterEach(async()=>{await db.exec('ROLLBACK');});
+it('coordinates saved Page advertising discovery hourly and keeps source credentials service-only',async()=>{
+ expect((await db.query<any>('SELECT veo_page_ads_discovery_candidates() owner')).rows.map(r=>r.owner)).toEqual([owner]);
+ await expect(rpc('veo_claim_page_ads_discovery',[manager])).rejects.toThrow('Owner access');expect(await rpc('veo_claim_page_ads_discovery',[owner])).toBe(true);expect(await rpc('veo_claim_page_ads_discovery',[owner])).toBe(false);
+ expect((await db.query('SELECT veo_page_ads_discovery_candidates()')).rows).toHaveLength(0);
+ await db.query("UPDATE veo_ad_source_discovery SET next_attempt_at=now()-interval '1 second' WHERE user_id=$1",[owner]);expect(await rpc('veo_claim_page_ads_discovery',[owner])).toBe(true);
+ for(const signature of ['veo_claim_page_ads_discovery(uuid)','veo_page_ads_discovery_candidates()'])expect((await db.query<any>("SELECT has_function_privilege('authenticated',$1,'EXECUTE') exposed",[signature])).rows[0].exposed).toBe(false);
+});
 async function evidence(kind='closed',extra:any={},actor=member){
  const data={request_id:id(seq++),contact_id:client,seller_id:member,receipt_kind:kind,currency:'PHP',total_price_minor:100000,closed_amount_minor:kind==='closed'?30000:0,received_now_minor:kind==='done'?70000:0,tip_minor:0,occurred_at:new Date().toISOString(),description:'Test deal',notes:'',...extra};const photos:string[]=[];
  for(const slot of ['stage','payment','order']){const p=id(seq++),path='test/'+p;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)',[path]);await db.query('INSERT INTO veo_deal_review_photos(id,request_id,tenant_id,page_id,contact_id,seller_id,uploaded_by,receipt_kind,slot,object_path,photo_sha256) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[p,data.request_id,tenant,page,data.contact_id,data.seller_id,actor,kind,slot,path,seq.toString(16).padStart(64,'0')]);photos.push(p);}return {data,photos};

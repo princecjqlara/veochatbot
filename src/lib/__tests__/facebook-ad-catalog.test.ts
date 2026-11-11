@@ -1,9 +1,23 @@
 import{beforeEach,afterEach,describe,it,expect,vi}from'vitest';
-import{creativePageId,catalogMetadata,resolveAdCreative,marketingConnection,readMetaAds,META_MARKETING_API_VERSION}from'../facebook-ad-catalog';
+import{creativePageId,catalogMetadata,resolveAdCreative,marketingConnection,readMetaAds,inspectPageAdGrant,META_MARKETING_API_VERSION}from'../facebook-ad-catalog';
 const fetcher=vi.fn(),json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 const input={pageId:'owned-page',facebookPageId:'111',pageToken:'page-token',ad:{ad_id:'123',post_id:'456'}};
 describe('verified ad metadata and Page preview fallback',()=>{
- beforeEach(()=>{vi.clearAllMocks();vi.stubGlobal('fetch',fetcher);});afterEach(()=>{vi.unstubAllGlobals();});
+ beforeEach(()=>{vi.clearAllMocks();vi.stubGlobal('fetch',fetcher);});afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
+ it('resolves a verified saved Page grant to its issuing user directory and preserves complete account pagination',async()=>{
+  vi.stubEnv('FACEBOOK_CLIENT_ID','app');vi.stubEnv('FACEBOOK_CLIENT_SECRET','private-app-secret');
+  fetcher.mockImplementation(async(url:URL)=>{const path=url.pathname.replace('/v26.0/','');if(path==='me/permissions'||path==='me/adaccounts')return json({error:{code:100}},400);if(path==='debug_token')return json({data:{is_valid:true,app_id:'app',type:'PAGE',user_id:'555',scopes:['ads_read'],expires_at:0}});if(path==='me')return json({id:'111'});if(path==='555/adaccounts')return url.searchParams.has('after')?json({data:[{id:'act_2'}]}):json({data:[{id:'act_1'}],paging:{next:'private-url',cursors:{after:'more'}}});throw Error('Unexpected source read');});
+  const result=await marketingConnection('saved-page-token');expect(result.status).toBe('ready');expect(result.accounts.map(a=>a.id)).toEqual(['act_1','act_2']);expect(result.permissions).toEqual(['ads_read']);expect(JSON.stringify(result)).not.toContain('saved-page-token');expect(JSON.stringify(result)).not.toContain('555');
+ });
+ it.each([{is_valid:false,app_id:'app',type:'PAGE',user_id:'555',scopes:['ads_read']},{is_valid:true,app_id:'other',type:'PAGE',user_id:'555',scopes:['ads_read']},{is_valid:true,app_id:'app',type:'PAGE',user_id:'555',scopes:['pages_show_list']}])('does not infer ad access from invalid, foreign-app or unpermitted Page grants',async metadata=>{
+  vi.stubEnv('FACEBOOK_CLIENT_ID','app');vi.stubEnv('FACEBOOK_CLIENT_SECRET','secret');fetcher.mockImplementation(async(url:URL)=>url.pathname.endsWith('/debug_token')?json({data:metadata}):json({error:{code:100}},400));
+  expect((await marketingConnection('page-token')).status).not.toBe('ready');expect(fetcher.mock.calls.some(([url])=>String(url).includes('/555/adaccounts'))).toBe(false);
+ });
+ it('binds a reusable Page grant to the actual connected Page and rejects expired data access',async()=>{
+  vi.stubEnv('FACEBOOK_CLIENT_ID','app');vi.stubEnv('FACEBOOK_CLIENT_SECRET','secret');const metadata={is_valid:true,app_id:'app',type:'PAGE',user_id:'555',scopes:['ads_read'],data_access_expires_at:Math.floor(Date.now()/1000)+3600};
+  fetcher.mockImplementation(async(url:URL)=>url.pathname.endsWith('/debug_token')?json({data:metadata}):json({id:'222'}));
+  await expect(inspectPageAdGrant('token','111')).rejects.toMatchObject({code:'PAGE_GRANT_MISMATCH'});metadata.data_access_expires_at=1;await expect(inspectPageAdGrant('token','222')).rejects.toMatchObject({code:'PAGE_GRANT_INVALID'});
+ });
  it('maps inventory only from authoritative creative Page IDs and rejects conflicts',()=>{expect(creativePageId({creative:{object_story_spec:{page_id:'111'},effective_object_story_id:'111_456'}})).toBe('111');expect(creativePageId({name:'Azshinari'})).toBeNull();expect(creativePageId({creative:{object_story_spec:{page_id:'111'},effective_object_story_id:'222_456'}})).toBeNull();});
  it('loads a real Page preview without ad-account permission or fabricating an ad name',async()=>{fetcher.mockResolvedValue(json({id:'111_456',from:{id:'111'},full_picture:'https://cdn.example/preview.jpg',permalink_url:'https://www.facebook.com/111/posts/456'}));const result=await resolveAdCreative(input);expect(result.resolved).toBe(true);expect(result.source).toBe('page_post');expect(result.patch.photo_url).toBe('https://cdn.example/preview.jpg');expect(result.patch.ad_name).toBeUndefined();expect(fetcher).toHaveBeenCalledTimes(1);});
  it('falls back after Marketing API denial and preserves the Page creative',async()=>{fetcher.mockResolvedValueOnce(json({error:{code:200,message:'Permission denied'}},403)).mockResolvedValueOnce(json({id:'111_456',from:{id:'111'},full_picture:'https://cdn.example/preview.jpg'}));const result=await resolveAdCreative({...input,userToken:'user-token'});expect(result.resolved).toBe(true);expect(result.source).toBe('page_post');expect(result.patch.metadata_error_code).toBeNull();});

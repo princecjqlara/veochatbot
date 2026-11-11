@@ -2,11 +2,18 @@ import { getSupabaseAdmin } from './supabase';
 import { getUserPageIds } from './page-access';
 import { refreshStoredWorkspaceAds } from './veo-stored-ads-refresh';
 import { workspaceEnabled } from './veo-workspace';
+import { bootstrapPageAds } from './veo-page-ads-bootstrap';
 
 /** Shared by the existing external cron route and the authenticated ads worker.
  * PostgreSQL claims enforce the hour across processes, routes and retries. */
 export async function runScheduledMetaAds(db: any = getSupabaseAdmin()) {
     const deadline = Date.now() + 245000;
+    const candidates = await db.rpc('veo_page_ads_discovery_candidates');
+    if (!candidates.error && Array.isArray(candidates.data)) for (const owner of candidates.data) {
+        if (Date.now() >= deadline - 45000) break;
+        try { await bootstrapPageAds({ db, user: owner, authorize: () => getUserPageIds(owner) }); }
+        catch { /* Discovery remains hourly; valid existing ad sources still run. */ }
+    }
     const credentials = await db.from('meta_ads_credentials').select('user_id,token_expires_at,sync_checkpoint').limit(100);
     if (credentials.error) return { complete: false, errors: ['Scheduled Meta credentials are unavailable'], reports: [] };
     if (!credentials.data?.length) return { complete: false, skipped: true, reason: 'connect_meta_ads_required', reports: [] };

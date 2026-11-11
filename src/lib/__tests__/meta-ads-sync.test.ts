@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-const m = vi.hoisted(() => ({ read: vi.fn(), connection: vi.fn() }));
-vi.mock('../facebook-ad-catalog', () => ({ marketingConnection: m.connection, readMetaAds: m.read,
-    creativePageId: (ad: any) => ad.creative?.page, catalogMetadata: (ad: any, page: string) => ({ page_id: page, ad_id: ad.id }) }));
+const m = vi.hoisted(() => ({ read: vi.fn(), connection: vi.fn(), preview: vi.fn() }));
+vi.mock('../facebook-ad-catalog', () => ({ marketingConnection: m.connection, readMetaAds: m.read, resolveAdCreative: m.preview,
+    creativePageId: (ad: any) => ad.creative?.page, catalogMetadata: (ad: any, page: string) => ({ page_id: page, ad_id: ad.id, ...(ad.creative?.post_id ? {post_id:ad.creative.post_id,metadata_source:'marketing_api'} : {}) }) }));
 import { adSpendWindows, refreshMetaAdSpend } from '../meta-ads-sync';
 const pages = [{ id: 'veo', fb_page_id: '111' }, { id: 'quiet', fb_page_id: '222' }];
 let db: any, saved: Record<string, any[]>, cached: any[];
@@ -26,6 +26,15 @@ it('checks every account and saves real daily spend plus proven zero-spend Pages
     expect(saved.ad_daily_spend).toHaveLength(2); expect(saved.ad_daily_spend[0]).toMatchObject({ amount: 123.45, page_id: 'veo' });
     expect(saved.veo_ad_spend_coverage).toHaveLength(4);
     expect(saved.veo_ad_spend_coverage.find(r => r.page_id === 'quiet')).toMatchObject({ amount_minor: 0, accounts_checked: 2, ad_count: 0, report_complete: true });
+});
+it('fills missing creative previews with the verified Page grant without exposing its token or blocking spend',async()=>{
+ m.preview.mockResolvedValue({patch:{photo_url:'https://cdn.example/verified.jpg'}});const original=m.read.getMockImplementation()!;
+ m.read.mockImplementation(async(path,token,params)=>{const r=await original(path,token,params);return path==='act_99/ads'?{...r,data:r.data.map((ad:any)=>({...ad,creative:{...ad.creative,post_id:'111_456'}}))}:r;});
+ const options={pages:[{id:'veo',fb_page_id:'111',access_token:'private-page-token'},{id:'quiet',fb_page_id:'222'}]};
+ const result=await run(options);expect(result.complete).toBe(true);expect(JSON.stringify(result)).not.toContain('private-page-token');
+ expect(m.preview).toHaveBeenCalledWith(expect.objectContaining({pageId:'veo',facebookPageId:'111',pageToken:'private-page-token',ad:{ad_id:'1',post_id:'111_456'}}));
+ expect(db.rpc.mock.calls.find(([name]:any)=>name==='save_ad_catalog_metadata')[1].p_records[0]).toMatchObject({photo_url:'https://cdn.example/verified.jpg',metadata_source:'marketing_api'});
+ m.preview.mockRejectedValue(Error('Meta preview unavailable'));expect((await run(options)).complete).toBe(true);
 });
 it('retains spend, impressions, clicks, frequency, messaging and video metrics from the hourly import',async()=>{
  const original=m.read.getMockImplementation()!;

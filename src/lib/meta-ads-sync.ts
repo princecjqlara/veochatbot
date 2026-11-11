@@ -1,5 +1,5 @@
 import { alignedWithPht, DAILY_INSIGHT_FIELDS, dailyDeliveryMetrics, normalizeDailySpend } from './ad-daily-spend';
-import { catalogMetadata, creativePageId, marketingConnection, readMetaAds } from './facebook-ad-catalog';
+import { catalogMetadata, creativePageId, marketingConnection, readMetaAds, resolveAdCreative } from './facebook-ad-catalog';
 import { pageAdPlanning } from './veo-ad-planning';
 
 const DAY = 86400000;
@@ -13,7 +13,7 @@ export function adSpendWindows(from: string, to: string) {
     }
     return windows;
 }
-type Options = { db: any; token: string; pages: Array<{ id: string; fb_page_id: string }>; from: string; to: string;
+type Options = { db: any; token: string; pages: Array<{ id: string; fb_page_id: string; access_token?: string }>; from: string; to: string;
     deadline?: number; authorize: () => Promise<string[]>; onProgress?: (value: any) => void; completed?: string[]; completedPages?: string[]; completedAccounts?: string[] };
 /** A coverage record is written only after every connected account's unfiltered
  * daily report and creative ownership checks finish. No budgets or messages change. */
@@ -25,6 +25,7 @@ export async function refreshMetaAdSpend(options: Options) {
     const report = { started_at: new Date().toISOString(), complete: false, accounts: 0, pages: pages.length, inventory_ads: 0, saved_spend_rows: 0,
         coverage_days: 0, completed_windows: [...(options.completed || [])], page_ids: ids.slice().sort(), account_ids: [] as string[], from: options.from, to: options.to, errors: [] as string[] };
     const deadline = options.deadline || Date.now() + 30 * 60000;
+    let previewBudget = 25000;
     const progress = () => options.onProgress?.({ ...report });
     async function guard() {
         if (Date.now() >= deadline) throw Error('Ad refresh deadline reached; completed windows are retained for retry');
@@ -46,6 +47,20 @@ export async function refreshMetaAdSpend(options: Options) {
             seen.add(after);
         }
         throw Error('Meta report exceeded its pagination limit');
+    }
+    async function previews(records: any[]) {
+        const started = Date.now();
+        const missing = records.filter(row => !row.photo_url && row.post_id && pages.some(p => p.id === row.page_id && p.access_token));
+        for (let i = 0; i < missing.length && Date.now() - started < previewBudget && Date.now() < deadline - 12000; i += 3) {
+            await Promise.all(missing.slice(i, i + 3).map(async row => {
+                const page = pages.find(p => p.id === row.page_id)!;
+                try {
+                    const preview = await resolveAdCreative({ pageId: page.id, facebookPageId: page.fb_page_id, pageToken: page.access_token!, ad: { ad_id: row.ad_id, post_id: row.post_id } });
+                    for (const key of ['photo_url', 'video_url', 'post_permalink_url']) if (preview.patch[key]) row[key] = preview.patch[key];
+                } catch { /* Optional media availability never discards spend or names. */ }
+            }));
+        }
+        previewBudget = Math.max(0, previewBudget - (Date.now() - started));
     }
     try {
         await guard(); const connection = await marketingConnection(token);
@@ -70,6 +85,8 @@ export async function refreshMetaAdSpend(options: Options) {
                     if (page) records.push(catalogMetadata(ad, page));
                 }
             });
+            await guard();
+            await previews(records);
             await guard();
             for (let offset = 0; offset < records.length; offset += 500) {
                 const saved = await db.rpc('save_ad_catalog_metadata', { p_records: records.slice(offset, offset + 500) });
@@ -110,7 +127,7 @@ export async function refreshMetaAdSpend(options: Options) {
         const planned = await db.from('veo_ad_planning_state').upsert(planningRows, { onConflict: 'page_id,account_id' });
         if (planned.error) throw Error('Could not save verified daily ad-budget planning');
         const currencies = [...new Set(accounts.map(a => a.currency))];
-        for (const window of windows) {
+        for (const window of windows.slice().reverse()) {
             const key = window.from + ':' + window.to;
             if (report.completed_windows.includes(key)) continue;
             const checkedAt = new Date().toISOString(), rows = new Map<string, any>();
@@ -132,7 +149,7 @@ export async function refreshMetaAdSpend(options: Options) {
                     const facebookPage = creativePageId(ad);
                     if (ad.id !== id || String(ad.account_id) !== account.id.slice(4) || !facebookPage) throw Error('A historical ad has unverified Page ownership; spend coverage remains incomplete');
                     const page = pageByFacebook.get(facebookPage) || null; account.ads.set(id, page);
-                    if (page) { await guard(); const saved = await db.rpc('save_ad_catalog_metadata', { p_records: [catalogMetadata(ad, page)] }); if (saved.error) throw Error('Could not save historical ad ownership'); }
+                    if (page) { await guard(); const record = catalogMetadata(ad, page); await previews([record]); const saved = await db.rpc('save_ad_catalog_metadata', { p_records: [record] }); if (saved.error) throw Error('Could not save historical ad ownership'); }
                 }
             }
             const records: any[] = [], totals = new Map<string, { amount: number; ads: Set<string> }>();

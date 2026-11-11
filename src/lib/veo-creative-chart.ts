@@ -32,7 +32,9 @@ export const CREATIVE_CHART_METRICS: CreativeChartMetric[] = [
     { key: 'profit_roi', label: 'Profit ROI by inquiry cohort', format: 'percent', finance: true }
 ];
 export function creativeChartValue(row: any, metric: CreativeChartMetric, currency: string): number | null {
-    const value = metric.finance ? row.finance?.find((f: any) => f.currency === currency)?.[metric.key] : row[metric.key];
+    const finance = row.finance?.find((f: any) => f.currency === currency);
+    const provisionalCost = row.delivery_provisional && ['cpc_minor', 'cost_per_link_click_minor', 'cpm_minor', 'cost_per_message_minor', 'cost_per_thruplay_minor', 'cost_per_video_play_minor'].includes(metric.key) ? finance?.provisional_delivery_costs?.[metric.key] : null;
+    const value = metric.finance ? finance?.[metric.key] ?? provisionalCost : row[metric.key];
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 export function formatCreativeChartValue(value: number | null, metric: CreativeChartMetric, currency: string): string {
