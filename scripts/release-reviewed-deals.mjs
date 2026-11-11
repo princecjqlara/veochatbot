@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 import {assertProjectCredentials,VEO_RECOVERY_PROJECT,schemaMigrationPlan,migrationFingerprintMatches} from './lib/database-migration-safety.mjs';
 import {migrationConnectionOptions} from './lib/migration-retry.mjs';
-const mode=process.argv[2];assert(['--preflight','--apply','--activate'].includes(mode),'Choose --preflight, --apply or --activate');
+const mode=process.argv[2];assert(['--preflight','--apply','--activate','--enable-supervisor-submissions'].includes(mode),'Choose --preflight, --apply, --activate or --enable-supervisor-submissions');
 const owner=fs.readFileSync('src/config/veo-owner.ts','utf8').match(/CJ_OWNER_USER_ID\s*=\s*'([^']+)'/)[1];
-const filenames=['202611110008_veo_reviewed_deal_evidence.sql','202611110009_veo_reviewed_delivery_totals.sql','202611110010_veo_deal_review_attribution.sql'],plan=schemaMigrationPlan(),migrations=filenames.map(name=>plan.find(m=>m.name===name));
+const filenames=['202611110008_veo_reviewed_deal_evidence.sql','202611110009_veo_reviewed_delivery_totals.sql','202611110010_veo_deal_review_attribution.sql','202611120001_veo_supervisor_receipt_submission.sql'],plan=schemaMigrationPlan(),migrations=filenames.map(name=>plan.find(m=>m.name===name));
 assert(migrations.every(Boolean));const db=new pg.Client({...await migrationConnectionOptions(assertProjectCredentials(process.env,VEO_RECOVERY_PROJECT).connectionString),connectionTimeoutMillis:30000,query_timeout:60000});db.on('error',()=>{});
 const directory='.vercel/deal-review-release';fs.mkdirSync(directory,{recursive:true});
 async function retained(){return (await db.query(`SELECT (SELECT count(*) FROM users)::int users,(SELECT count(*) FROM veo_accounts)::int accounts,(SELECT count(*) FROM veo_teams)::int teams,(SELECT count(*) FROM user_pages)::int page_grants,(SELECT count(*) FROM contacts)::int contacts,(SELECT count(*) FROM veo_orders)::int orders,(SELECT count(*) FROM veo_payments)::int payments,(SELECT count(*) FROM veo_closed_deals)::int closed_deals,(SELECT count(*) FROM chatbot_knowledge_documents)::int knowledge,(SELECT count(*) FROM chatbot_drive_files)::int files,(SELECT count(*) FROM pages)::int pages`)).rows[0];}
@@ -15,7 +15,16 @@ try{
  const installed=(await db.query('SELECT filename,sha256,project_ref FROM app_private.veobot_project_migrations')).rows;
  for(const previous of plan.filter(m=>m.name<filenames[0])){assert(migrationFingerprintMatches(installed.find(r=>r.filename===previous.name),previous,VEO_RECOVERY_PROJECT),'Missing or changed baseline: '+previous.name);}
  const before=await retained();
- if(mode==='--activate'){
+ if(mode==='--enable-supervisor-submissions'){
+  for(const migration of migrations)assert(migrationFingerprintMatches(installed.find(r=>r.filename===migration.name),migration,VEO_RECOVERY_PROJECT),'Apply reviewed deal migrations first');
+  const botUrl=new URL('/api/veo/workspace?tenant_id='+tenant.id,process.env.VEO_JAUCIAN_URL);assert.equal(botUrl.protocol,'https:');assert(process.env.VEO_JAUCIAN_SECRET,'Bot authentication is required');
+  const bot=await fetch(botUrl,{headers:{Authorization:'Bearer '+process.env.VEO_JAUCIAN_SECRET},signal:AbortSignal.timeout(30000)}),capabilities=await bot.json();assert(bot.ok&&capabilities.tenant_id===tenant.id&&capabilities.receipt_submissions?.supervisor_direct_submission===true&&capabilities.receipt_submissions?.staff_review_required===true,'Deploy the compatible bot before enabling supervisor submissions');
+  const settings=(await db.query('SELECT * FROM veo_deal_review_settings WHERE tenant_id=$1 FOR UPDATE',[tenant.id])).rows[0];assert(settings?.enabled,'Reviewed deals must already be enabled');
+  if(!settings.supervisor_submissions_enabled){
+   await db.query('UPDATE veo_deal_review_settings SET supervisor_submissions_enabled=true,updated_at=clock_timestamp() WHERE tenant_id=$1',[tenant.id]);
+   await db.query("INSERT INTO veo_audit(tenant_id,actor_id,action,entity_id,after_value,reason) VALUES($1,$2,'supervisor_receipt_submission_enabled',$1,$3,'User requested supervisor receipts send without review; staff receipts still require independent supervisor approval')",[tenant.id,owner,JSON.stringify({supervisor_submissions_enabled:true,staff_review_required:true})]);
+  }
+ }else if(mode==='--activate'){
   for(const migration of migrations)assert(migrationFingerprintMatches(installed.find(r=>r.filename===migration.name),migration,VEO_RECOVERY_PROJECT),'Apply reviewed deal migrations first');
   const previous=(await db.query('SELECT * FROM veo_deal_review_settings WHERE tenant_id=$1',[tenant.id])).rows[0];
   if(!previous?.enabled){

@@ -5,6 +5,17 @@ import Inbox from './VeoDealEvidenceInbox';
 let view:ReactTestRenderer;
 const text=(v:any):string=>typeof v==='string'?v:(v?.children||[]).map(text).join('');
 afterEach(async()=>{if(view)await act(async()=>view.unmount());vi.unstubAllGlobals();});
+it.each(['manager','team_leader','owner','member'])('shows the correct submission action for %s while retaining the contact selector',async role=>{
+ const fetcher=vi.fn(async()=>new Response(JSON.stringify({items:[],total:0})));vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'actor',role,supervisor_submissions_enabled:true},accounts:[]}));});
+ expect(text(view.toJSON())).toContain(role==='member'?'Submit for review':'Submit & send');
+ expect(view.root.findAllByType('label').find(l=>text(l).startsWith('Client'))!.findByType('select')).toBeTruthy();
+});
+it('labels manager receipts as submitted without inventing a separate reviewer',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({items:[{id:'direct',status:'approved',approval_mode:'supervisor_submission',client_name:'Client',page_name:'Page',seller_name:'Staff',reviewer_name:'Manager',occurred_at:'2026-11-12',receipt_kind:'closed',currency:'PHP',delivery_status:'queued'}],total:1}))));
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'manager',role:'manager',supervisor_submissions_enabled:true},accounts:[],compact:true}));});
+ expect(text(view.toJSON())).toContain('recorded — no review required');expect(text(view.toJSON())).toContain('Submitted by Manager');expect(text(view.toJSON())).not.toContain('Reviewed by Manager');
+});
 it('keeps Salary compact with the approval list and a link to the full receipt form',async()=>{
  const fetcher=vi.fn(async()=>new Response(JSON.stringify({items:[],total:0})));vi.stubGlobal('fetch',fetcher);
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[],compact:true}));});

@@ -22,9 +22,9 @@ beforeAll(async()=>{
  await db.query("INSERT INTO contacts(id,page_id,psid,name) VALUES($1,$3,'a','Client A'),($2,$3,'b','Client B')",[client,clientB,page]);await db.exec('COMMIT');
 },60000);
 afterAll(async()=>{await db?.close();});beforeEach(async()=>{await db.exec('BEGIN');});afterEach(async()=>{await db.exec('ROLLBACK');});
-async function evidence(kind='closed',extra:any={}){
+async function evidence(kind='closed',extra:any={},actor=member){
  const data={request_id:id(seq++),contact_id:client,seller_id:member,receipt_kind:kind,currency:'PHP',total_price_minor:100000,closed_amount_minor:kind==='closed'?30000:0,received_now_minor:kind==='done'?70000:0,tip_minor:0,occurred_at:new Date().toISOString(),description:'Test deal',notes:'',...extra};const photos:string[]=[];
- for(const slot of ['stage','payment','order']){const p=id(seq++),path='test/'+p;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)',[path]);await db.query('INSERT INTO veo_deal_review_photos(id,request_id,tenant_id,page_id,contact_id,seller_id,uploaded_by,receipt_kind,slot,object_path,photo_sha256) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10)',[p,data.request_id,tenant,page,data.contact_id,member,kind,slot,path,seq.toString(16).padStart(64,'0')]);photos.push(p);}return {data,photos};
+ for(const slot of ['stage','payment','order']){const p=id(seq++),path='test/'+p;await db.query('INSERT INTO veo_photo_objects(object_path) VALUES($1)',[path]);await db.query('INSERT INTO veo_deal_review_photos(id,request_id,tenant_id,page_id,contact_id,seller_id,uploaded_by,receipt_kind,slot,object_path,photo_sha256) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[p,data.request_id,tenant,page,data.contact_id,data.seller_id,actor,kind,slot,path,seq.toString(16).padStart(64,'0')]);photos.push(p);}return {data,photos};
 }
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
@@ -96,4 +96,39 @@ it('allows the original seller to finish an existing Close Deal after client ser
  const cd=await approve(await submit(await evidence()));await db.query('INSERT INTO veo_client_claims(contact_id,tenant_id,page_id,user_id,claimed_at) VALUES($1,$2,$3,$4,now())',[client,tenant,page,other]);
  const dd=await approve(await submit(await evidence('done',{order_id:cd.order_id,closed_deal_id:cd.closed_deal_id})));expect(dd.status).toBe('approved');expect(dd.seller_id).toBe(member);
  expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1',[client])).rows[0].user_id).toBe(other);
+});
+const directMode=()=>db.query('UPDATE veo_deal_review_settings SET supervisor_submissions_enabled=true WHERE tenant_id=$1',[tenant]);
+const submitAs=(actor:string,e:any)=>rpc('veo_submit_deal_review',[actor,JSON.stringify(e.data),e.photos]);
+it('records a manager own Close and Done Deal automatically, preserves separate tips and produces an attested handoff',async()=>{
+ await directMode();const e=await evidence('closed',{seller_id:manager},manager),cd=await submitAs(manager,e);
+ expect(cd.status).toBe('approved');expect(cd.approval_mode).toBe('supervisor_submission');expect(cd.reviewed_by).toBe(manager);expect(cd.submitted_by_role).toBe('manager');expect(cd.can_review).toBe(false);expect((await submitAs(manager,e)).duplicate).toBe(true);
+ expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
+ const dd=await submitAs(manager,await evidence('done',{seller_id:manager,order_id:cd.order_id,closed_deal_id:cd.closed_deal_id,tip_minor:5000},manager));expect(dd.status).toBe('approved');
+ expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(1);expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(2);expect((await db.query('SELECT * FROM veo_deal_tips')).rows).toHaveLength(1);
+ await rpc('veo_sync_telegram_groups',[owner,JSON.stringify([{chat_id:-123,name:'Sales',pages:[{id:page,matched:true}],topics:{},identities:[]}])]);
+ const team=(await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1',[manager])).rows[0].id;
+ await rpc('veo_telegram_group_action',[manager,'group',JSON.stringify({team_id:team,chat_id:-123,page_ids:[page]})]);await rpc('veo_telegram_group_action',[manager,'membership',JSON.stringify({user_id:manager,chat_id:-123,telegram_user_id:55})]);
+ expect(await rpc('veo_enqueue_approved_deal_reviews',[20])).toBe(2);
+ for(const s of (await db.query<any>('SELECT id FROM veo_submissions')).rows){const h=await rpc('veo_handoff',[s.id]);expect(h.direct_submission_authorized).toBe(true);expect(h.submitted_by).toBe(manager);expect(h.submitted_by_role).toBe('manager');expect(h.approval_mode).toBe('supervisor_submission');expect(h.evidence_photos).toHaveLength(3);}
+});
+it('uses the sending account role: a manager may submit for staff, while staff cannot spoof the bypass',async()=>{
+ await directMode();const staff=await submit(await evidence('closed',{approval_mode:'supervisor_submission',submitted_by_role:'manager',direct_submission_authorized:true}));
+ expect(staff.status).toBe('pending');expect(staff.approval_mode).toBe('supervisor_review');expect(staff.submitted_by_role).toBe('member');await expect(approve(staff,member)).rejects.toThrow('different authorized');
+ const direct=await submitAs(manager,await evidence('closed',{contact_id:clientB},manager));expect(direct.status).toBe('approved');expect(direct.seller_id).toBe(member);expect(direct.submitted_by).toBe(manager);
+ const checked=await approve(staff,manager);expect(checked.status).toBe('approved');expect(checked.approval_mode).toBe('supervisor_review');
+});
+it('keeps amount, photo and branch validation atomic for automatic manager submissions',async()=>{
+ await directMode();const e=await evidence('closed',{seller_id:manager},manager);
+ await expect(submitAs(manager,{...e,photos:e.photos.slice(0,2)})).rejects.toThrow('Three different');expect((await db.query('SELECT * FROM veo_deal_reviews')).rows).toHaveLength(0);
+ const cd=await submitAs(manager,e),bad=await evidence('done',{seller_id:manager,order_id:cd.order_id,closed_deal_id:cd.closed_deal_id,received_now_minor:100000},manager);
+ await expect(submitAs(manager,bad)).rejects.toThrow('settle the price');expect((await db.query('SELECT * FROM veo_deal_reviews')).rows).toHaveLength(1);expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
+ expect((await submitAs(manager,{...bad,data:{...bad.data,received_now_minor:70000}})).status).toBe('approved');
+ await expect(submitAs(other,await evidence('closed',{},other))).rejects.toThrow('permitted contact');
+});
+it.each([owner,leader])('allows an authorized supervisor %s to submit for staff without separate review',async actor=>{
+ await directMode();expect((await submitAs(actor,await evidence('closed',{},actor))).status).toBe('approved');
+});
+it('retains the old manager review requirement until the new submission policy is enabled',async()=>{
+ const pending=await submitAs(manager,await evidence('closed',{seller_id:manager},manager));expect(pending.status).toBe('pending');expect((await rpc('veo_scope',[manager])).supervisor_submissions_enabled).toBe(false);
+ await expect(approve(pending,manager)).rejects.toThrow('different authorized');
 });
