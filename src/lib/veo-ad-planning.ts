@@ -12,7 +12,7 @@ export function pageAdPlanning(ads: any[], pageIds: string[], currency: string, 
     const shares = new Map<string, number>(), unknownPages = new Set<string>(), lifetimePages = new Set<string>();
     for (const [key, rows] of groups) {
         const holder = key.startsWith('campaign:') ? rows[0].campaign : key.startsWith('adset:') ? rows[0].adset : null;
-        const daily = minor(holder?.daily_budget), weights = new Map<string, number>();
+        const daily = Number(holder?.lifetime_budget) > 0 ? null : minor(holder?.daily_budget), weights = new Map<string, number>();
         const consistent = rows.every(ad => {
             const value = key.startsWith('campaign:') ? ad.campaign : ad.adset;
             return minor(value?.daily_budget) === daily && String(value?.lifetime_budget || '0') === String(holder?.lifetime_budget || '0');

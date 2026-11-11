@@ -26,6 +26,10 @@ checkpoints. A credential-level lease prevents overlapping manual and hourly
 scheduled refreshes. Source status shows missing access, expiry, last complete
 fetch, errors, verified inventory count and running refreshes.
 
+Known referral-only creatives are resolved even when neither current inventory
+nor recent spend includes them. An unconnected known advertising account keeps
+the fetch incomplete before a no-ads budget or zero-spend result can be certified.
+
 Actual detected campaign/ad-set settings appear for all permitted Pages even
 before a selling team exists. The latest detected settings have their own
 timestamps and stale indicators, independent of a historical VEO planning date.

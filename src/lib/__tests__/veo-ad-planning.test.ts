@@ -6,7 +6,7 @@ it('conserves shared campaign daily budgets across Pages and non-VEO placements'
     expect(plans.map(p => p.allocated_daily_budget_minor)).toEqual([5000, 2500, 0]); expect(plans[0].active_ads).toBe(2);
 });
 it('never treats lifetime or unavailable budget as zero funded ads and ignores paused ads', () => {
-    const ads = [{ effective_status: 'ACTIVE', verified_page_id: 'a', adset: { id: 'set', lifetime_budget: '100000' } }, { effective_status: 'PAUSED', verified_page_id: 'b', adset: { id: 'paused', daily_budget: '2000' } }];
+    const ads = [{ effective_status: 'ACTIVE', verified_page_id: 'a', adset: { id: 'set', daily_budget:'0', lifetime_budget: '100000' } }, { effective_status: 'PAUSED', verified_page_id: 'b', adset: { id: 'paused', daily_budget: '2000' } }];
     expect(pageAdPlanning(ads, ['a', 'b'], 'PHP', '2026-11-07')).toMatchObject([{ active_ads: 1, allocated_daily_budget_minor: null, budget_mode: 'lifetime_or_mixed' }, { active_ads: 0, allocated_daily_budget_minor: 0 }]);
 });
 it('conserves remainder cents across shared budgets and prefers funded ad sets to an empty campaign budget',()=>{

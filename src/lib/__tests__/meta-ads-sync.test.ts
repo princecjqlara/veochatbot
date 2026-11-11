@@ -27,6 +27,17 @@ it('checks every account and saves real daily spend plus proven zero-spend Pages
     expect(saved.veo_ad_spend_coverage).toHaveLength(4);
     expect(saved.veo_ad_spend_coverage.find(r => r.page_id === 'quiet')).toMatchObject({ amount_minor: 0, accounts_checked: 2, ad_count: 0, report_complete: true });
 });
+it('resolves old referral-only creatives even when current inventory and recent spend do not include them',async()=>{
+    cached=[{page_id:'veo',ad_id:'7',ad_account_id:null}];
+    m.read.mockImplementation(async path=>path==='act_99'||path==='act_88'?{id:path,currency:'PHP',timezone_name:'Asia/Manila'}:path==='7'?{id:'7',account_id:'99',effective_status:'PAUSED',creative:{page:'111'}}:{data:[]});
+    const result=await run();expect(result.complete).toBe(true);expect(db.rpc).toHaveBeenCalledWith('save_ad_catalog_metadata',{p_records:[{page_id:'veo',ad_id:'7'}]});
+    expect(saved.ad_daily_spend.filter(row=>row.ad_id==='7')).toHaveLength(2);
+});
+it('does not certify no-ads budgets or zero spend when a known referral creative is outside connected account scope',async()=>{
+    cached=[{page_id:'veo',ad_id:'7',ad_account_id:null}];
+    m.read.mockImplementation(async path=>path==='act_99'||path==='act_88'?{id:path,currency:'PHP',timezone_name:'Asia/Manila'}:path==='7'?{id:'7',account_id:'777',creative:{page:'111'}}:{data:[]});
+    const result=await run();expect(result.complete).toBe(false);expect(saved.veo_ad_planning_state).toBeUndefined();expect(saved.veo_ad_spend_coverage).toBeUndefined();
+});
 it('does not certify partial account reports or guess ownership of deleted ads', async () => {
     m.read.mockImplementation(async path => path.startsWith('act_') && !path.includes('/') ? { id: path, currency: 'PHP', timezone_name: 'Asia/Manila' }
         : path.endsWith('/ads') ? { data: [] } : path.endsWith('/insights') ? { data: [{ ad_id: '9' }] } : { id: '9', account_id: '99', creative: {} });

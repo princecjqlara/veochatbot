@@ -80,9 +80,6 @@ export async function refreshMetaAdSpend(options: Options) {
             planningRows.push(...planning);
             accounts.push({ ...metadata, ads }); progress();
         }
-        await guard();
-        const planned = await db.from('veo_ad_planning_state').upsert(planningRows, { onConflict: 'page_id,account_id' });
-        if (planned.error) throw Error('Could not save verified daily ad-budget planning');
         // Previously resolved historical creatives must stay in future refreshes.
         // Otherwise a later current-inventory refresh would omit their verified
         // zero rows and make its coverage disagree with retained historical rows.
@@ -91,13 +88,27 @@ export async function refreshMetaAdSpend(options: Options) {
             const cached = await db.from('ad_source_catalog').select('page_id,ad_id,ad_account_id').in('page_id', ids).order('page_id').order('ad_id').range(offset, offset + 999);
             if (cached.error) throw Error('Could not load retained verified ad ownership');
             for (const ad of cached.data || []) {
-                const account = byAccount.get(ad.ad_account_id); if (!account) continue;
+                let account = byAccount.get(ad.ad_account_id);
+                if (!account) {
+                    const metadata = await read(ad.ad_id, { fields: 'id,name,account_id,effective_status,campaign{id,name},adset{id,name},creative{id,name,thumbnail_url,effective_object_story_id,object_story_id,object_story_spec}' });
+                    const facebookPage = creativePageId(metadata);
+                    account = byAccount.get(String(metadata.account_id));
+                    if (metadata.id !== ad.ad_id || !account || !facebookPage || pageByFacebook.get(facebookPage) !== ad.page_id) throw Error('A saved referral creative belongs to an unverified or unconnected ad account. Reconnect the appropriate advertising accounts before certifying complete data.');
+                    if (metadata.effective_status === 'ACTIVE' && !account.ads.has(ad.ad_id)) throw Error('Ad inventory changed during fetching. Retry to verify the active creative before detecting budgets.');
+                    await guard();
+                    const saved = await db.rpc('save_ad_catalog_metadata', { p_records: [catalogMetadata(metadata, ad.page_id)] });
+                    if (saved.error) throw Error('Could not complete saved referral creative metadata');
+                    report.inventory_ads++;
+                }
                 if (account.ads.has(ad.ad_id) && account.ads.get(ad.ad_id) !== ad.page_id) throw Error('A retained ad has conflicting Page ownership');
                 account.ads.set(ad.ad_id, ad.page_id);
             }
             if ((cached.data || []).length < 1000) break;
             if (offset === 99000) throw Error('The retained ad inventory exceeds the bounded refresh limit');
         }
+        await guard();
+        const planned = await db.from('veo_ad_planning_state').upsert(planningRows, { onConflict: 'page_id,account_id' });
+        if (planned.error) throw Error('Could not save verified daily ad-budget planning');
         const currencies = [...new Set(accounts.map(a => a.currency))];
         for (const window of windows) {
             const key = window.from + ':' + window.to;
