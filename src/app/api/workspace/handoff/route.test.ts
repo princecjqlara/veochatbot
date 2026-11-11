@@ -7,6 +7,15 @@ vi.mock('@/lib/veo-jaucian', () => ({ connectedVeoTenant: m.connected, veoDirect
 import { GET, POST } from './route';
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 describe('temporary photo access for Jaucian', () => {
+    it('provides all three reviewed evidence photos as temporary links without exposing object paths', async () => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET','test-key');
+        const photos=['stage','payment','order'].map(slot=>({slot,object_path:'private/'+slot}));
+        m.rpc.mockResolvedValue({data:{deal_review_id:'review',review_status:'approved',evidence_photos:photos},error:null});
+        m.from.mockReturnValue({select:()=>({eq:()=>({single:async()=>({data:{object_path:'private/payment',status:'queued'},error:null})})})});
+        m.storage.from.mockReturnValue({createSignedUrl:async(path:string)=>({data:{signedUrl:'https://storage.test/signed/'+path.split('/').at(-1)},error:null})});
+        const response=await GET(new NextRequest('https://veo.test/api/workspace/handoff?submission_id=00000000-0000-4000-8000-000000000001',{headers:{Authorization:'Bearer test-key'}}));
+        expect(response.status).toBe(200);const body=await response.json();expect(body.evidence_photos).toEqual(photos.map(p=>({slot:p.slot,photo_url:'https://storage.test/signed/'+p.slot})));expect(JSON.stringify(body)).not.toContain('object_path');
+    });
     it.each(['submission_id=00000000-0000-4000-8000-000000000001', 'resource=directory&tenant_id=00000000-0000-4000-8000-000000000001'])('cancels a stalled handoff before the bot times out: %s', async query => {
         vi.useFakeTimers(); vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');
         m.rpc.mockImplementation(() => new Promise(() => {}));

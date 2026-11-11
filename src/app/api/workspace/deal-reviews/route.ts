@@ -3,8 +3,9 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { readVeoRpc } from '@/lib/veo-report-read';
 import { uuid } from '@/lib/veo-workspace';
 import { dealChecked, dealEvidenceBucket, dealReviewScope, dealSubmission } from '@/lib/veo-deal-review';
+import { queueReviewedDelivery } from '@/lib/veo-reviewed-delivery';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 90;
 const reply = (body: any, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 export async function GET(request: NextRequest) {
     try {
@@ -32,10 +33,12 @@ export async function POST(request: NextRequest) {
         const scope = await dealReviewScope(request), body = await request.json(), db = getSupabaseAdmin();
         if (body.action === 'submit') {
             const data = dealSubmission(body);
-            return reply({ review: dealChecked(await db.rpc('veo_submit_deal_review', { p_actor: scope.user_id, p_data: data, p_photos: body.photo_ids })) }, 202);
+            const review = dealChecked(await db.rpc('veo_submit_deal_review', { p_actor: scope.user_id, p_data: data, p_photos: body.photo_ids }));
+            return reply({ review, delivery_dispatch: await queueReviewedDelivery(db, review) }, 202);
         }
         if (body.action !== 'review' || !uuid(body.review_id) || !['approve', 'reject'].includes(body.decision) || typeof body.note !== 'string' || body.note.length > 2000) throw Error('Choose an approve/reject decision and a valid review note');
         if (!['owner', 'team_leader', 'manager'].includes(scope.role)) return reply({ error: 'Supervisor review access required' }, 403);
-        return reply({ review: dealChecked(await db.rpc('veo_review_deal', { p_actor: scope.user_id, p_review: body.review_id, p_decision: body.decision, p_confirm_stage: body.confirm_stage === true, p_confirm_receipt: body.confirm_receipt === true, p_confirm_order: body.confirm_order === true, p_note: body.note })) });
+        const review = dealChecked(await db.rpc('veo_review_deal', { p_actor: scope.user_id, p_review: body.review_id, p_decision: body.decision, p_confirm_stage: body.confirm_stage === true, p_confirm_receipt: body.confirm_receipt === true, p_confirm_order: body.confirm_order === true, p_note: body.note }));
+        return reply({ review, delivery_dispatch: await queueReviewedDelivery(db, review) });
     } catch (e: any) { return reply({ error: e.message || 'Review could not be saved' }, e.status || 400); }
 }

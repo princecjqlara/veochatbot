@@ -37,7 +37,7 @@ it('keeps pending evidence out of the ledger and returns idempotent retries',asy
 it('binds three distinct live photo slots to the selected contact and submitting staff',async()=>{
  const e=await evidence();await expect(submit({...e,data:{...e.data,contact_id:clientB}})).rejects.toThrow('selected contact');
  await expect(submit({...e,photos:[e.photos[0],e.photos[0],e.photos[2]]})).rejects.toThrow('different evidence');
- await db.query('UPDATE veo_deal_review_photos SET photo_sha256=repeat(\'a\',64) WHERE id=ANY($1)',[e.photos]);await expect(submit(e)).rejects.toThrow('selected contact');
+ await db.query("UPDATE veo_photo_objects SET expires_at=now()-interval '1 second' WHERE object_path=(SELECT object_path FROM veo_deal_review_photos WHERE id=$1)",[e.photos[0]]);await expect(submit(e)).rejects.toThrow('selected contact');
 });
 it('requires independent in-branch supervision and all three confirmations',async()=>{
  const r=await submit(await evidence());await expect(approve(r,member)).rejects.toThrow('different authorized');await expect(approve(r,other)).rejects.toThrow('outside your branch');
@@ -131,4 +131,18 @@ it.each([owner,leader])('allows an authorized supervisor %s to submit for staff 
 it('retains the old manager review requirement until the new submission policy is enabled',async()=>{
  const pending=await submitAs(manager,await evidence('closed',{seller_id:manager},manager));expect(pending.status).toBe('pending');expect((await rpc('veo_scope',[manager])).supervisor_submissions_enabled).toBe(false);
  await expect(approve(pending,manager)).rejects.toThrow('different authorized');
+});
+it.each(['closed','done'])('accepts a shared stage/order screenshot for %s while requiring three separate evidence slots',async kind=>{
+ await directMode();
+ await rpc('veo_sync_telegram_groups',[owner,JSON.stringify([{chat_id:-123,name:'Sales',pages:[{id:page,matched:true}],topics:{},identities:[]}])]);
+ const team=(await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1',[manager])).rows[0].id;
+ await rpc('veo_telegram_group_action',[manager,'group',JSON.stringify({team_id:team,chat_id:-123,page_ids:[page]})]);await rpc('veo_telegram_group_action',[manager,'membership',JSON.stringify({user_id:manager,chat_id:-123,telegram_user_id:55})]);
+ const e=await evidence(kind,{seller_id:manager,...(kind==='done'?{received_now_minor:100000}:{})},manager);
+ await db.query("UPDATE veo_deal_review_photos target SET photo_sha256=source.photo_sha256 FROM veo_deal_review_photos source WHERE target.id=$1 AND source.id=$2",[e.photos[2],e.photos[0]]);
+ const saved=await submitAs(manager,e);expect(saved.status).toBe('approved');expect(saved.delivery_submission).toBeTruthy();
+ const h=await rpc('veo_handoff',[saved.delivery_submission]);expect(h.evidence_photos).toHaveLength(3);expect(h.receipt_kind).toBe(kind);expect(h.direct_submission_authorized).toBe(true);
+ expect((await submitAs(manager,e)).duplicate).toBe(true);expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(1);
+ const again=await evidence(kind,{seller_id:manager,...(kind==='done'?{received_now_minor:100000}:{})},manager);
+ await db.query('UPDATE veo_deal_review_photos incoming SET photo_sha256=prior.photo_sha256 FROM veo_deal_review_photos prior WHERE prior.review_id=$1 AND incoming.id=ANY($2) AND incoming.slot=prior.slot',[saved.id,again.photos]);
+ await expect(submitAs(manager,again)).rejects.toThrow('already submitted');
 });
