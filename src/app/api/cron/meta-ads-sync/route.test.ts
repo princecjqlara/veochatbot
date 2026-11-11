@@ -31,3 +31,10 @@ it('reports a failed source fetch instead of declaring successful synchronizatio
     m.refresh.mockResolvedValue({ complete: false, errors: ['Incomplete account report'] });
     const r = await GET(request()); expect(r.status).toBe(503); expect((await r.json()).complete).toBe(false);
 });
+it('automatically resumes the persisted initial or historical window before recent-date maintenance',async()=>{
+ const checkpoint={from:'2026-11-01',to:'2026-11-10',completed_windows:['one']};m.db.mockReturnValue({from:()=>({select:()=>({limit:async()=>({data:[{user_id:'owner',sync_checkpoint:checkpoint}]})})})});
+ expect((await GET(request())).status).toBe(200);expect(m.refresh.mock.calls[0][0]).toMatchObject({from:checkpoint.from,to:checkpoint.to,preserveOtherCheckpoint:true});
+});
+it('returns an honest skipped state before any ad consent exists',async()=>{
+ m.db.mockReturnValue({from:()=>({select:()=>({limit:async()=>({data:[]})})})});const response=await GET(request());expect(response.status).toBe(200);expect(await response.json()).toMatchObject({complete:false,skipped:true,reason:'connect_meta_ads_required'});expect(m.refresh).not.toHaveBeenCalled();
+});

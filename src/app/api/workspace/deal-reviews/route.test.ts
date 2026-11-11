@@ -9,7 +9,7 @@ const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const request=(body:any)=>new NextRequest('https://veo.test/api/workspace/deal-reviews',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify(body)});
 const submission=()=>({action:'submit',request_id:id(1),contact_id:id(2),seller_id:id(3),receipt_kind:'closed',photo_ids:[id(4),id(5),id(6)],total_price:'1000',closed_amount:'300',currency:'PHP',occurred_at:'2026-11-12T00:00:00+08:00'});
 beforeEach(()=>{m.scope.mockResolvedValue({user_id:id(3),role:'manager',launch_at:'2026-11-09'});});
-afterEach(()=>vi.resetAllMocks());
+afterEach(()=>{vi.resetAllMocks();});
 it('saves a manager receipt without an invoice reference and immediately queues its authorized result',async()=>{
  const review={id:id(7),status:'approved',approval_mode:'supervisor_submission',delivery_submission:id(8)};m.rpc.mockResolvedValue({data:review});m.queue.mockResolvedValue({state:'queued'});
  const response=await POST(request(submission()));expect(response.status).toBe(202);expect(await response.json()).toEqual({review,delivery_dispatch:{state:'queued'}});

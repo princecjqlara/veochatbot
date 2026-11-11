@@ -28,3 +28,8 @@ it('polls an existing refresh until completion and then stops without duplicate 
  await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});expect(refreshed).toHaveBeenCalledTimes(1);const calls=fetcher.mock.calls.length;
  await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});expect(fetcher).toHaveBeenCalledTimes(calls);
 });
+it('recovers a transient failed callback once and starts fetching without replaying OAuth or losing browser identity',async()=>{
+ vi.stubGlobal('window',{location:{search:'?view=budget&connection_error=ADS_TOKEN_EXCHANGE_FAILED',assign:vi.fn()}});
+ const fetcher=vi.fn(async(_url:string,options?:any)=>{if(options?.method==='POST')return Response.json(JSON.parse(options.body).action==='recover'?{connected:true}:{complete:true,inventory_ads:10,accounts:1});return Response.json(status({pending_authorization:true}));});vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Connection));});expect(fetcher.mock.calls.filter(([,options])=>options?.method==='POST').map(([,options])=>JSON.parse(options.body).action)).toEqual(['recover','refresh']);expect(text(view.toJSON())).toContain('Fetched 10 verified ad entries');
+});
