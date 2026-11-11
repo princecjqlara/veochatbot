@@ -1,3 +1,4 @@
+import { buildStaffPerformance } from './veo-staff-performance';
 const ratio = (n: number, d: number) => d > 0 ? n / d : null;
 const sum = (rows: any[], key: string) => rows.reduce((n, row) => n + Number(row[key] || 0), 0);
 
@@ -5,6 +6,7 @@ const sum = (rows: any[], key: string) => rows.reduce((n, row) => n + Number(row
  * dates. Today is reported separately; currencies and Page commission shares stay
  * separate. No personal attribution is inferred from shared Page access. */
 export function buildEmployeeProfile(input: any) {
+    const { performance_inputs: _performanceInputs, ...publicInput } = input;
     const today = new Date(Date.parse(input.as_of) + 8 * 3600000).toISOString().slice(0, 10);
     const days: any[] = input.days || [], completed = days.filter(d => d.work_date < today);
     const active = completed.filter(d => d.attendance?.active === true);
@@ -28,7 +30,7 @@ export function buildEmployeeProfile(input: any) {
     const replyCoverageComplete = pages.length > 0 && pages.every(p => p.capture_from && Date.parse(p.capture_from) <= start);
     const best = (input.capacity.best_days || []).map((d: any) => Number(d.n));
     return {
-        ...input, totals, completed_days: completed.length, active_completed_days: active.length,
+        ...publicInput, totals, performance: buildStaffPerformance(input), completed_days: completed.length, active_completed_days: active.length,
         attendance: { active: days.filter(d => d.attendance?.active === true).length, inactive: days.filter(d => d.attendance?.active === false).length, unknown: days.filter(d => d.attendance == null).length },
         capacity: { ...input.capacity, best_day_average: best.length ? best.reduce((a: number, b: number) => a + b, 0) / best.length : null },
         summary: { ...s, cd_to_dd_rate: ratio(Number(s.cd_cohort_done), Number(s.cd_cohort)),

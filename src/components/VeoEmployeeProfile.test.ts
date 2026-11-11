@@ -41,6 +41,16 @@ it('shows a denied or failed profile as an error', async () => {
     await act(async () => { view = create(createElement(Profile, { worker: 'A', from: '2026-11-05', to: '2026-11-07', page: '' })); });
     expect(view.root.findByProps({ role: 'alert' }).children.join('')).toBe('Employee access denied');
 });
+it('opens the selected staff shortcut and sends custom dates to that same employee profile',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-07T01:00:00Z'));
+    const fetcher=vi.fn(async(url:string)=>Response.json(url.includes('employee-profile')?fixture():{summary:{},employees:[{id:'A',name:'Employee A',active:true}],orders:[],finance:{days:[]},page_rankings:[],order_page:{total:0},client_assignments:[]}));vi.stubGlobal('fetch',fetcher);
+    await act(async()=>{view=create(createElement(Operations,{scope:{role:'owner',user_id:'owner',launch_at:'2026-11-05T00:00:00Z'},pages:[],busy:false,submit:vi.fn(),initialWorkerId:'A'}));await vi.advanceTimersByTimeAsync(300);});
+    expect(view.root.findByProps({'aria-label':'Unified employee profile'})).toBeTruthy();
+    await act(async()=>{view.root.findByProps({'aria-label':'Salary and performance to date'}).props.onChange({target:{value:'2026-11-06'}});});
+    await act(async()=>{view.root.findByProps({'aria-label':'Salary and performance from date'}).props.onChange({target:{value:'2026-11-06'}});});
+    const latest=fetcher.mock.calls.map(([url])=>url).filter(url=>url.includes('employee-profile')).at(-1)!;
+    expect(latest).toContain('worker_id=A');expect(latest).toContain('from=2026-11-06');expect(latest).toContain('to=2026-11-06');
+});
 it('shows zero daily averages explicitly when completed dates have no sales', async () => {
     await act(async () => { view = create(createElement(EmployeeProfileDetails, { data: { ...fixture(), totals: [] } })); });
     expect(flatten(view.toJSON())).toContain('Average daily salary: 0');
@@ -52,7 +62,7 @@ it('opens the unified profile from the employee ranking and keeps client filters
         summary: {}, employees: [{ id: 'A', name: 'Employee A', closed: 3, done: 2, active: true, rank: 2 }], page_rankings: [], finance: { days: [] }, orders: [], order_page: { total: 0 }, client_assignments: []
     }))); vi.stubGlobal('fetch', fetcher);
     await act(async () => { view = create(createElement(Operations, { scope: { role: 'owner', user_id: 'owner', launch_at: '2026-11-05T00:00:00Z' }, pages: [{ id: 'page', name: 'VEO Page' }], busy: false, submit: vi.fn() })); await vi.advanceTimersByTimeAsync(300); });
-    await act(async () => { view.root.findAllByType('button').find(b => flatten(b) === 'Employee A')!.props.onClick(); });
+    await act(async () => { view.root.findAllByType('button').find(b => flatten(b) === 'Employee A')!.props.onClick(); await vi.advanceTimersByTimeAsync(300); });
     expect(view.root.findByProps({ 'aria-label': 'Unified employee profile' })).toBeTruthy();
     await act(async () => { view.root.findAllByType('button').find(b => flatten(b) === 'Closed Deals')!.props.onClick(); await vi.advanceTimersByTimeAsync(300); });
     const lastOperations = fetcher.mock.calls.map(c => c[0]).filter(u => u.startsWith('/api/workspace/operations')).at(-1)!;

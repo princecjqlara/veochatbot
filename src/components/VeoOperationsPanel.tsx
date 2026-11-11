@@ -10,20 +10,21 @@ const button = 'rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40';
 const today = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
 const money = (n: number, c: string) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: c }).format(Number(n) / 100);
 const stamp = (v: string | null) => v ? new Date(v).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'Not recorded';
-type Props = { scope: any; pages: any[]; submit: (body: any) => Promise<any>; busy: boolean; mode?: string; refreshToken?: any; workDate?: string; initialSearch?: string };
-export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 'performance', refreshToken, workDate, initialSearch = '' }: Props) {
+type Props = { scope: any; pages: any[]; submit: (body: any) => Promise<any>; busy: boolean; mode?: string; refreshToken?: any; workDate?: string; initialSearch?: string; initialWorkerId?: string };
+export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 'performance', refreshToken, workDate, initialSearch = '', initialWorkerId = '' }: Props) {
     const launch = new Date(new Date(scope.launch_at).getTime() + 8 * 3600000).toISOString().slice(0, 10);
     const recentStart = new Date(Date.now() - 29 * 86400000 + 8 * 3600000).toISOString().slice(0, 10);
     const [from, setFrom] = useState(['clients', 'performance', 'rankings', 'salary'].includes(mode) ? launch > recentStart ? launch : recentStart : today()), [to, setTo] = useState(today());
-    const [page, setPage] = useState(''), [worker, setWorker] = useState(mode === 'clients' || scope.role === 'member' ? scope.user_id : '');
+    const [page, setPage] = useState(''), [worker, setWorker] = useState(mode === 'clients' || scope.role === 'member' ? scope.user_id : initialWorkerId);
     const [status, setStatus] = useState(['closed', 'done'].includes(mode) ? mode : 'all'), [search, setSearch] = useState(initialSearch), [offset, setOffset] = useState(0);
     const [data, setData] = useState<any>(null), [employees, setEmployees] = useState<any[]>([]), [error, setError] = useState(''), [loading, setLoading] = useState(true), [version, setVersion] = useState(0);
     const [selected, setSelected] = useState<any>(null), [workStatus, setWorkStatus] = useState('working'), [ranking, setRanking] = useState('deals');
     const searchSchedule = useRef(createSearchSchedule(initialSearch));
+    useEffect(() => { if (initialWorkerId && scope.role !== 'member') { setWorker(initialWorkerId); setOffset(0); } }, [initialWorkerId, scope.role]);
     useEffect(() => { if (['closed', 'done'].includes(mode)) { setStatus(mode); setOffset(0); } }, [mode]);
     useEffect(() => { if (mode === 'dashboard' && workDate) { setFrom(workDate); setTo(workDate); setOffset(0); } }, [workDate, mode]);
     useEffect(() => {
-        const controller = new AbortController(); setLoading(true); setError(''); if (mode === 'salary') setData(null);
+        const controller = new AbortController(); setLoading(true); setError(''); if (['salary', 'performance', 'rankings'].includes(mode)) setData(null);
         const delay = searchSchedule.current(search);
         const timer = setTimeout(async () => {
             try {
@@ -49,7 +50,7 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
             <label className="text-sm">Page<select className={field} value={page} onChange={e => { setPage(e.target.value); setOffset(0); }}><option value="">All assigned Pages</option>{pages.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
             {supervisor && <label className="text-sm">Employee<select className={field} value={worker} onChange={e => { setWorker(e.target.value); setOffset(0); }}><option value="">All staff in your branch</option>{employees.map(e => <option key={e.id} value={e.id}>{e.name}{!e.active ? ' (former staff)' : ''}</option>)}</select></label>}
         </div>
-        {mode === 'salary' && <div className="flex flex-wrap gap-3 text-sm"><button type="button" className="underline" onClick={() => { const start = new Date(Date.now() - 6 * 86400000 + 8 * 3600000).toISOString().slice(0, 10); setFrom(start < launch ? launch : start); setTo(today()); setOffset(0); }}>Last 7 days</button><button type="button" className="underline" onClick={() => { const start = today().slice(0, 7) + '-01'; setFrom(start < launch ? launch : start); setTo(today()); setOffset(0); }}>This month</button><p className="text-xs text-slate-500">Dates include both endpoints. Choose up to 93 days per report.</p></div>}
+        {['salary', 'performance', 'rankings'].includes(mode) && <div className="flex flex-wrap gap-3 text-sm"><button type="button" className="underline" onClick={() => { const start = new Date(Date.now() - 6 * 86400000 + 8 * 3600000).toISOString().slice(0, 10); setFrom(start < launch ? launch : start); setTo(today()); setOffset(0); }}>Last 7 days</button><button type="button" className="underline" onClick={() => { const start = today().slice(0, 7) + '-01'; setFrom(start < launch ? launch : start); setTo(today()); setOffset(0); }}>This month</button><p className="text-xs text-slate-500">Dates include both endpoints. Choose up to 93 days per report.</p></div>}
         <div className="flex gap-3 text-sm"><button type="button" className="underline" onClick={() => { setFrom(today()); setTo(today()); setOffset(0); }}>Today</button><button type="button" className="underline" onClick={() => { setFrom(launch > new Date(Date.now() - 29 * 86400000 + 8 * 3600000).toISOString().slice(0, 10) ? launch : new Date(Date.now() - 29 * 86400000 + 8 * 3600000).toISOString().slice(0, 10)); setTo(today()); setOffset(0); }}>Recent history</button></div>
         {['performance', 'rankings', 'salary'].includes(mode) && (worker ? <><VeoEmployeeProfile worker={worker} from={from} to={to} page={page} refreshToken={refreshToken} version={version} />{supervisor && <button className="underline text-sm" onClick={() => { setWorker(''); setOffset(0); }}>Back to all employees</button>}</> : <p className="text-sm text-slate-600">Select an employee, or click their name in the ranking, to open their complete performance profile.</p>)}
         {loading && <p role="status" className="text-sm">Loading verified performance…</p>}{error && <p role="alert" className="text-red-700">{error}</p>}
@@ -71,7 +72,7 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
                 <form key={`payment:${selected.id}`} className="space-y-3" onSubmit={async e => {
                     e.preventDefault(); const f = Object.fromEntries(new FormData(e.currentTarget));
                     await save({ ...f, action: 'payment', order_id: selected.id, confirmed: f.confirmed === 'on', confirm_converted: f.confirm_converted === 'on', occurred_at: new Date(String(f.occurred_at) + '+08:00').toISOString() });
-                }}><h4 className="font-semibold">Record verified payment / mark fully paid</h4><p className="text-xs">Done Deals require a saved order, a Qualified or Converted lead and verified settlement. Submit Closed Deal receipts in Receipts; they do not require an order. Stage changes and images alone do not verify payment.</p>
+                }}><h4 className="font-semibold">Record verified payment / mark fully paid</h4><p className="text-xs">Done Deals require a saved order, a Qualified or Converted lead and verified settlement. Submit Closed Deal receipts in Receipts after creating and linking their order. Stage changes and images alone do not verify payment.</p>
                     <label className="block text-sm">Payment type<select name="kind" className={field} defaultValue={Number(selected.paid_minor) ? 'balance' : 'full'}><option value="full">Immediate full payment</option><option value="balance">Balance payment</option><option value="deposit">Down payment</option>{supervisor && <option value="refund">Refund / correction</option>}</select></label>
                     <label className="block text-sm">Verified amount ({selected.currency})<input name="amount" required className={field} inputMode="decimal" defaultValue={(Number(selected.balance_minor) / 100).toFixed(2)} /></label>
                     <label className="block text-sm">Payment time (PHT)<input name="occurred_at" type="datetime-local" required className={field} defaultValue={new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 16)} /></label>

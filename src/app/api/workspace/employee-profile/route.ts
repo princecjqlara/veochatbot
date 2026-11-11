@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
         const q = request.nextUrl.searchParams, worker = q.get('worker_id') || (scope.role === 'member' ? scope.user_id : '');
         const page = q.get('page_id') || null, from = q.get('from') || philippineDate(), to = q.get('to') || philippineDate();
         if (!uuid(worker) || !validDay(from) || !validDay(to) || from > to || (Date.parse(to) - Date.parse(from)) / 86400000 > 92) return json({ error: 'Choose an employee and up to 93 valid Philippine dates' }, 400);
+        if (from < philippineDate(new Date(scope.launch_at)) || to > philippineDate()) return json({ error: 'Choose Philippine dates from launch through today' }, 400);
         if ((scope.role === 'member' && worker !== scope.user_id) || (page && (!uuid(page) || !scope.page_ids.includes(page)))) return json({ error: 'Employee or Page access denied' }, 403);
         const result = await readVeoReport(signal => {
             const query = getSupabaseAdmin().rpc('veo_employee_profile', { p_actor: scope.user_id, p_worker: worker, p_from: from, p_to: to, p_page: page });

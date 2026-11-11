@@ -61,6 +61,50 @@ beforeAll(async () => {
 }, 60000);
 afterAll(async () => { await db?.close(); });
 
+it('adds first-assignment client counts and payment versus production turnaround without changing salary',async()=>{
+    await db.exec('BEGIN');try{
+        const first=(await db.query<any>('SELECT id FROM veo_orders WHERE request_id=$1',[id(100)])).rows[0].id;
+        const second=(await db.query<any>('SELECT id FROM veo_orders WHERE request_id=$1',[id(103)])).rows[0].id;
+        await db.query(`INSERT INTO veo_order_work(order_id,assignee_id,status,completed_work_at,updated_by) VALUES($1,$3,'ready_waiting_payment',$4,$5),($2,$3,'ready_waiting_payment',$6,$5)
+          ON CONFLICT(order_id) DO UPDATE SET assignee_id=EXCLUDED.assignee_id,status=EXCLUDED.status,completed_work_at=EXCLUDED.completed_work_at`,[first,second,worker,`${d5}T01:59:00+08:00`,owner,`${d5}T18:00:00+08:00`]);
+        const raw=await read(owner,worker,from,to,page),p=buildEmployeeProfile(raw).performance!;
+        expect(p.current_clients).toBe(2);expect(p.ever_assigned_clients).toBe(3);expect(p.new_clients).toBe(3);
+        expect(p.days.find((day:any)=>day.work_date===from).new_clients).toBe(3);
+        expect(p.cd_turnaround).toMatchObject({count:2,fastest:{hours:0},slowest:{hours:2/60}});
+        expect(p.video_turnaround).toMatchObject({count:2,mean_hours:4,fastest:{hours:2},slowest:{hours:6}});
+        expect(p.completed_days).toBe(6);expect(p.average_done).toBe(2/6);
+        const narrower=buildEmployeeProfile(await read(owner,worker,d5,to,page)).performance!;expect(narrower.new_clients).toBe(0);
+        const before=p.ever_assigned_clients;
+        await db.query("INSERT INTO veo_audit(tenant_id,actor_id,action,entity_id,after_value,created_at) VALUES($1,$2,'client_assignment',$3,$4,$5)",[tenant,owner,id(20),JSON.stringify({user_id:worker,claimed_at:`${to}T09:00:00+08:00`}),`${to}T09:00:00+08:00`]);
+        expect(buildEmployeeProfile(await read()).performance!.ever_assigned_clients).toBe(before);
+    }finally{await db.exec('ROLLBACK');}
+});
+
+it('conserves allocated ad-cost cents between sellers and rejects stale, missing and unallocatable costs',async()=>{
+    await db.exec('BEGIN');try{
+        await db.query("INSERT INTO ad_daily_spend(page_id,ad_id,account_id,spend_date,currency,account_timezone,pht_aligned,amount,checked_at) VALUES($1,'91','92',$2,'PHP','Asia/Manila',true,10.01,now())",[page,d5]);
+        await db.query("INSERT INTO veo_ad_spend_coverage VALUES($1,$2,'PHP',1001,1,1,now(),true,true)",[page,d5]);
+        const a=buildEmployeeProfile(await read(owner,worker,d5,d5,page)).performance!,b=buildEmployeeProfile(await read(owner,peer,d5,d5,page)).performance!;
+        expect(a.completed_totals[0].ad_cost_minor+b.completed_totals[0].ad_cost_minor).toBe(1001);
+        expect(a.completed_totals[0].net_profit_minor).toBe(a.completed_totals[0].gross_profit_minor-a.completed_totals[0].ad_cost_minor);
+        await db.query("UPDATE ad_daily_spend SET checked_at=now()+interval '1 second' WHERE page_id=$1",[page]);
+        expect(buildEmployeeProfile(await read(owner,worker,d5,d5,page)).performance!.completed_totals[0].net_profit_minor).toBeNull();
+        await db.query("INSERT INTO ad_daily_spend(page_id,ad_id,account_id,spend_date,currency,account_timezone,pht_aligned,amount,checked_at) VALUES($1,'93','92',$2,'PHP','Asia/Manila',true,5,now())",[page,d4]);
+        await db.query("INSERT INTO veo_ad_spend_coverage VALUES($1,$2,'PHP',500,1,1,now(),true,true)",[page,d4]);
+        expect(buildEmployeeProfile(await read(owner,worker,d4,d4,page)).performance!.completed_totals[0].net_profit_minor).toBeNull();
+        await db.query("UPDATE veo_ad_spend_coverage SET amount_minor=0 WHERE page_id=$1 AND spend_date=$2",[page,d4]);
+        await db.query("UPDATE ad_daily_spend SET amount=0 WHERE page_id=$1 AND spend_date=$2",[page,d4]);
+        expect(buildEmployeeProfile(await read(owner,worker,d4,d4,page)).performance!.completed_totals[0].ad_cost_minor).toBe(0);
+    }finally{await db.exec('ROLLBACK');}
+});
+
+it('keeps overall ranking independent of the selected Page and never reveals peer ranks to members',async()=>{
+    const full=await read(),filtered=await read(owner,worker,from,to,page);
+    expect(filtered.performance_inputs.overall_ranking).toEqual(full.performance_inputs.overall_ranking);
+    expect(filtered.performance_inputs.page_rankings.find((row:any)=>row.page_id===page).rank).toBe(2);
+    const personal=await read(worker);expect(personal.performance_inputs.overall_ranking.rank).toBeNull();expect(personal.performance_inputs.page_rankings.every((row:any)=>row.rank===null&&row.peers===null)).toBe(true);
+});
+
 it('combines salary, zero-sales employment dates, capacity, attendance and full-peer ranking', async () => {
     const r = buildEmployeeProfile(await read());
     expect(r.employee.name).toBe('Employee A'); expect(r.days).toHaveLength(6);
