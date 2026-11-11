@@ -29,12 +29,30 @@ beforeAll(async()=>{
  await db.query("INSERT INTO veo_attendance(user_id,work_date,active,updated_by) SELECT user_id,veo_today(),true,$1 FROM veo_accounts WHERE role IN('manager','member')",[owner]);
  const capacity=(await db.query<any>('SELECT veo_team_capacity($1,veo_today()) p',[owner])).rows[0].p;expect(capacity.combined.quota.closed).toBeGreaterThan(0);
  await db.exec(plan.find(m=>m.name.startsWith('202611110005_'))!.sql);
+ await db.exec(plan.find(m=>m.name.startsWith('202611110006_'))!.sql);
  expect((await db.query('SELECT * FROM veo_teams WHERE manager_id<>$1 ORDER BY id',[leader])).rows).toEqual(teams);expect((await db.query('SELECT * FROM user_pages ORDER BY user_id,page_id')).rows).toEqual(grants);
  expect((await db.query('SELECT * FROM veo_teams WHERE manager_id=$1',[leader])).rows).toHaveLength(1);
  const afterCapacity=(await db.query<any>('SELECT veo_team_capacity($1,veo_today()) p',[owner])).rows[0].p;
  expect(afterCapacity.combined.quota).toEqual(capacity.combined.quota);expect(afterCapacity.combined.workers).toEqual(capacity.combined.workers);
 },60000);
 afterAll(async()=>{await db?.close();});beforeEach(async()=>{await db.exec('BEGIN');});afterEach(async()=>{await db.exec('ROLLBACK');});
+it('moves an existing member directly under their Team Leader without changing any login, Page assignment or recorded financial row',async()=>{
+ const before=(await db.query('SELECT id,email,password_hash,is_active FROM users ORDER BY id')).rows,grants=(await db.query('SELECT * FROM user_pages ORDER BY user_id,page_id')).rows;
+ const changed=await rpc('veo_change_member_supervisor',[leader,member,leader,manager]);expect(changed).toMatchObject({id:member,parent_id:leader,credentials_unchanged:true,page_assignments_unchanged:true});
+ expect((await db.query<any>('SELECT parent_id FROM veo_accounts WHERE user_id=$1',[member])).rows[0].parent_id).toBe(leader);
+ expect((await db.query('SELECT id,email,password_hash,is_active FROM users ORDER BY id')).rows).toEqual(before);expect((await db.query('SELECT * FROM user_pages ORDER BY user_id,page_id')).rows).toEqual(grants);
+ const login=(await db.query<any>('SELECT password_hash FROM users WHERE id=$1',[member])).rows[0];expect(compareSync(createHash('sha256').update('test password').digest('base64'),login.password_hash.slice(11))).toBe(true);
+ await expect(rpc('veo_change_member_supervisor',[owner,member,manager,manager])).rejects.toThrow('Supervisor changed');
+ expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(0);expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
+});
+it('rejects out-of-branch, lower-role and Page-losing supervisor changes',async()=>{
+ await expect(rpc('veo_change_member_supervisor',[other,member,other,manager])).rejects.toThrow('Owner or Team Leader');
+ await expect(rpc('veo_change_member_supervisor',[leader,member,other,manager])).rejects.toThrow('within your branch');
+ await expect(rpc('veo_change_member_supervisor',[owner,member,member,manager])).rejects.toThrow('within your branch');
+ await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2',[other,pageB]);await expect(rpc('veo_change_member_supervisor',[owner,member,other,manager])).rejects.toThrow('assigned Pages');
+ expect((await db.query<any>('SELECT parent_id FROM veo_accounts WHERE user_id=$1',[member])).rows[0].parent_id).toBe(manager);
+ expect((await db.query<any>("SELECT has_function_privilege('authenticated','veo_change_member_supervisor(uuid,uuid,uuid,uuid)','EXECUTE') allowed")).rows[0].allowed).toBe(false);
+});
 it('reports real setup and cooldown states only to the Owner without returning hashes',async()=>{
  await db.query('UPDATE users SET email=NULL,password_hash=NULL,is_active=false WHERE id=$1',[leader]);await db.query('UPDATE users SET password_hash=NULL WHERE id=$1',[manager]);
  const key=createHash('sha256').update(member+'@example.com').digest('hex');await db.query('INSERT INTO veo_login_limits VALUES($1,now(),11)',[key]);

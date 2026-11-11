@@ -9,6 +9,13 @@ import { GET, POST } from './route';
 import { philippineDate } from '@/lib/veo-workspace';
 afterEach(() => { vi.clearAllMocks(); });
 describe('workspace work-date boundaries', () => {
+    it('scopes existing-member supervisor changes and reports stale edits as conflicts',async()=>{
+        const user='00000000-0000-4000-8000-000000000002',parent='00000000-0000-4000-8000-000000000003',old='00000000-0000-4000-8000-000000000004';
+        const request=()=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify({action:'member_supervisor',user_id:user,parent_id:parent,expected_parent_id:old,actor:'foreign'})});
+        m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'team_leader',launch_at:'launched'}:{saved:true}}));expect((await POST(request())).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_change_member_supervisor',{p_actor:'owner',p_user:user,p_parent:parent,p_expected_parent:old});
+        m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'40001',message:'Refresh Accounts'}});expect((await POST(request())).status).toBe(409);
+        m.rpc.mockResolvedValue({data:{user_id:'owner',role:'manager',launch_at:'launched'}});expect((await POST(request())).status).toBe(403);
+    });
     it('uses the atomic password reset and cooldown cleanup without trusting a browser actor', async () => {
         const user='00000000-0000-4000-8000-000000000002';m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'owner',launch_at:'launched'}:{password_changed:true}}));
         const request=()=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify({action:'password',user_id:user,password:'test password',actor:'foreign'})});

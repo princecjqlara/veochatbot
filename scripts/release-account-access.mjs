@@ -7,7 +7,8 @@ const mode=process.argv.includes('--apply')?'apply':process.argv.includes('--pre
 assert(mode&&!(process.argv.includes('--apply')&&process.argv.includes('--preflight')),'Choose --preflight or --apply');
 const project=new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname.split('.')[0];assertSchemaDestination(project);
 assert.equal(project,VEO_RECOVERY_PROJECT,'This repair targets only the fresh recovery project');
-const migration=schemaMigrationPlan().find(m=>m.name==='202611110005_veo_account_access_and_supervisor_teams.sql');assert(migration,'Reviewed account access schema missing');
+const direct=process.argv.includes('--direct-members'),name=direct?'202611110006_veo_direct_member_supervision.sql':'202611110005_veo_account_access_and_supervisor_teams.sql';
+const migration=schemaMigrationPlan().find(m=>m.name===name);assert(migration,'Reviewed account access schema missing');
 const db=new pg.Client({...await migrationConnectionOptions(assertProjectCredentials(process.env,project).connectionString),connectionTimeoutMillis:30000,query_timeout:45000});db.on('error',()=>{});
 const report={at:new Date().toISOString(),mode,project,migration:migration.name,applied:false,messagesSent:0,passwordsChanged:0};
 const snapshot=async()=>(await db.query(`SELECT
@@ -28,14 +29,16 @@ try{
  else{
   await db.query(migration.sql);await db.query('INSERT INTO app_private.veobot_project_migrations(filename,sha256,project_ref) VALUES($1,$2,$3)',[migration.name,migration.sha256,project]);
   const tracking=(await db.query("SELECT to_regclass('app_private.schema_migrations') IS NOT NULL app,to_regclass('supabase_migrations.schema_migrations') IS NOT NULL supabase")).rows[0];
-  if(tracking.app)await db.query('INSERT INTO app_private.schema_migrations(version,description) VALUES($1,$2) ON CONFLICT(version) DO NOTHING',['202611110005',migration.name]);
-  if(tracking.supabase)await db.query('INSERT INTO supabase_migrations.schema_migrations(version,name,statements) VALUES($1,$2,$3::text[]) ON CONFLICT(version) DO NOTHING',['202611110005','veo_account_access_and_supervisor_teams',[migration.sql]]);
+  const version=direct?'202611110006':'202611110005';
+  if(tracking.app)await db.query('INSERT INTO app_private.schema_migrations(version,description) VALUES($1,$2) ON CONFLICT(version) DO NOTHING',[version,migration.name]);
+  if(tracking.supabase)await db.query('INSERT INTO supabase_migrations.schema_migrations(version,name,statements) VALUES($1,$2,$3::text[]) ON CONFLICT(version) DO NOTHING',[version,direct?'veo_direct_member_supervision':'veo_account_access_and_supervisor_teams',[migration.sql]]);
  }
  assert(JSON.stringify(await snapshot())===JSON.stringify(before),'Existing account, grant or retained business data changed');
  const afterTeams=(await db.query('SELECT * FROM veo_teams ORDER BY id')).rows;
  assert(JSON.stringify(afterTeams.filter(t=>teams.some(o=>o.id===t.id)))===JSON.stringify(teams),'Existing team changed');
  assert.equal(afterTeams.length,teams.length+missing.length);
  for(const fn of ['veo_account_access(uuid)','veo_recover_account_login(uuid,uuid,text,text)','veo_set_account_password(uuid,uuid,text)'])assert.equal((await db.query("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed",[fn])).rows[0].exposed,false);
+ if(direct)assert.equal((await db.query("SELECT has_function_privilege('anon','veo_change_member_supervisor(uuid,uuid,uuid,uuid)','EXECUTE') OR has_function_privilege('authenticated','veo_change_member_supervisor(uuid,uuid,uuid,uuid)','EXECUTE') exposed")).rows[0].exposed,false);
  await db.query(mode==='apply'?'COMMIT':'ROLLBACK');Object.assign(report,{applied:mode==='apply'&&!recorded,missingSupervisorTeams:missing.length,existingDataPreserved:true,passed:true});
 }catch(error){await db.query('ROLLBACK').catch(()=>{});report.passed=false;report.error=error.message;process.exitCode=1;}
-finally{await db.end();fs.mkdirSync('.vercel',{recursive:true});fs.writeFileSync('.vercel/account-access-schema-'+mode+'.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}
+finally{await db.end();fs.mkdirSync('.vercel',{recursive:true});fs.writeFileSync('.vercel/'+(direct?'direct-member-schema-':'account-access-schema-')+mode+'.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}

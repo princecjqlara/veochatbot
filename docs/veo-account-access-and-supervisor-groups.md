@@ -27,6 +27,12 @@ recovery also ensures a supervisor's missing team exists. Creating a direct
 team does not add workers or duplicate the child managers' capacity or salary.
 Team Leaders can create members directly under themselves, with no Manager
 account, and use their direct-member team for Telegram groups and multiple Pages.
+Accounts also lets the Owner or a Team Leader move an existing member to a
+permitted Team Leader/Manager within their branch. The same user ID, email,
+password, Page assignments and financial records remain. The new supervisor
+must already have every assigned Page, and stale edits are rejected. Earlier
+orders keep their recorded teams; Telegram membership is checked against the
+new reporting line on the ordinary scheduled sync.
 
 Telegram setup already stores multiple groups per supervisor and multiple Page
 routes. The new assignment summary lists every supervisor's granted Pages and

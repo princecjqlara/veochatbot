@@ -73,6 +73,13 @@ export async function POST(request: NextRequest) {
         const scope = await actor(request), db = getSupabaseAdmin();
         if (request.headers.get('content-type')?.includes('multipart/form-data')) throw new Error('Submit through Receipts after checking the Facebook requirements');
         const body = await request.json(), action = body.action;
+        if (action === 'member_supervisor') {
+            if (!['owner', 'team_leader'].includes(scope.role)) return NextResponse.json({ error: 'Owner or Team Leader access required' }, { status: 403 });
+            if (![body.user_id, body.parent_id, body.expected_parent_id].every(uuid)) throw new Error('Choose the member and current and new supervisors');
+            const result = await db.rpc('veo_change_member_supervisor', { p_actor: scope.user_id, p_user: body.user_id, p_parent: body.parent_id, p_expected_parent: body.expected_parent_id });
+            if (result.error) throw Object.assign(new Error(result.error.message || 'Could not change supervisor'), { status: result.error.code === '42501' ? 403 : result.error.code === '40001' ? 409 : 400 });
+            return NextResponse.json({ saved: result.data }, { headers: { 'Cache-Control': 'no-store' } });
+        }
         if (action === 'recover_account_login') {
             if (scope.role !== 'owner') return NextResponse.json({ error: 'Owner access required' }, { status: 403 });
             if (!uuid(body.user_id) || typeof body.email !== 'string' || body.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim()) || typeof body.password !== 'string' || !body.password) throw new Error('Account, email and new password are required');

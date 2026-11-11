@@ -21,6 +21,7 @@ const VeoReceiptInbox = dynamic(() => import('@/components/VeoReceiptInbox'), { 
 const VeoStaffWarnings = dynamic(() => import('@/components/VeoStaffWarnings'), { loading: PanelLoading });
 const VeoContactIdentitySync = dynamic(() => import('@/components/VeoContactIdentitySync'), { loading: PanelLoading });
 const VeoAccountAccess = dynamic(() => import('@/components/VeoAccountAccess'), { loading: PanelLoading });
+const VeoMemberSupervisors = dynamic(() => import('@/components/VeoMemberSupervisors'), { loading: PanelLoading });
 const VeoNewClients = dynamic(() => import('@/components/VeoNewClients'), { loading: PanelLoading });
 const VeoTelegramGroups = dynamic(() => import('@/components/VeoTelegramGroups'), { loading: PanelLoading });
 const VeoClientDrawer = dynamic(() => import('@/components/VeoClientDrawer'), { loading: PanelLoading });
@@ -167,6 +168,7 @@ function Workspace() {
         {data.scope.role === 'owner' && <><Link className="underline" href="/dashboard/workspace?view=telegram">Open Telegram groups, Pages and people</Link><VeoJaucianIntegration submit={submit} busy={busy} editable={false} /></>}
         </section>}
         {activeView === 'accounts' && isOwner && <VeoAccountAccess onSaved={refresh} />}
+        {activeView === 'accounts' && <VeoMemberSupervisors accounts={data.accounts} scope={data.scope} busy={busy} submit={submit} />}
         {activeView === 'sync' && isOwner && <VeoContactIdentitySync pages={pages} />}
         {activeView === 'sync' && <section className="rounded border bg-white p-5"><h2 className="font-bold text-xl">Collection health</h2>{data.sync.map((s: any) => <article className="py-4 border-t" key={s.page_id}><h3 className="font-semibold">{pages.find(p => p.id === s.page_id)?.name || 'Unknown page'}</h3><p>Last recorded event: {s.last_event_at ? new Date(s.last_event_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'Unavailable'} · pending {s.pending} · errors {s.errors}</p><p className="text-sm text-slate-500">{s.coverage}</p></article>)}</section>}
         {activeView === 'profile' && <VeoTelegramProfile />}
