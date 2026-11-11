@@ -5,6 +5,12 @@ import Inbox from './VeoDealEvidenceInbox';
 let view:ReactTestRenderer;
 const text=(v:any):string=>typeof v==='string'?v:(v?.children||[]).map(text).join('');
 afterEach(async()=>{if(view)await act(async()=>view.unmount());vi.unstubAllGlobals();});
+it('keeps Salary compact with the approval list and a link to the full receipt form',async()=>{
+ const fetcher=vi.fn(async()=>new Response(JSON.stringify({items:[],total:0})));vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[],compact:true}));});
+ expect(view.root.findAllByType('form')).toHaveLength(0);expect(view.root.findByProps({href:'/dashboard/workspace?view=receipts'})).toBeTruthy();expect(text(view.toJSON())).toContain('Review inbox');
+ expect(fetcher.mock.calls).toHaveLength(1);
+});
 it('keeps client and Page selection and links the existing order with the right remaining amount',async()=>{
  const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.includes('/api/workspace?contact_id=client')?{contact:{id:'client',page_id:'page',name:'Selected Client'},orders:[{id:'order',seller_id:'worker',total_minor:100000,paid_minor:0,currency:'PHP',description:'Earlier order'},{id:'other-order',seller_id:'other',total_minor:900000,currency:'PHP'}],closed_deals:[{id:'cd',seller_id:'worker',order_id:'order',amount_minor:30000}]}:{items:[],total:0,pages:[{id:'page',name:'Page A'}]})));vi.stubGlobal('fetch',fetcher);
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[{id:'worker',role:'member',name:'Worker'}],initialContactId:'client',initialKind:'done'}));});
@@ -24,4 +30,21 @@ it('requires checking every photo before an independent supervisor can approve',
  for(const input of view.root.findAllByProps({type:'checkbox'}))await act(async()=>input.props.onChange({target:{checked:true}}));
  expect(approve().props.disabled).toBe(false);await act(async()=>approve().props.onClick());
  const post=fetcher.mock.calls.find(([,o])=>o?.method==='POST')!;expect(JSON.parse(post[1].body)).toMatchObject({action:'review',review_id:'review',decision:'approve',confirm_stage:true,confirm_receipt:true,confirm_order:true});
+});
+it('allows correcting a confirmed validation failure while reusing its already uploaded photos',async()=>{
+ const saves:any[]=[];let uploads=0;
+ vi.stubGlobal('FormData',class{data=new Map();constructor(_form?:any){}set(k:string,v:any){this.data.set(k,v);}get(k:string){return this.data.get(k)||(k==='description'?'Video deal':'');}});
+ const fetcher=vi.fn(async(url:string,options?:any)=>{
+  if(url.endsWith('/upload')){uploads++;return new Response(JSON.stringify({photo:{id:'photo-'+uploads}}));}
+  if(options?.method==='POST'){saves.push(JSON.parse(options.body));return saves.length===1?new Response(JSON.stringify({error:'Check the payment date'}),{status:422}):new Response(JSON.stringify({review:{duplicate:false}}));}
+  return new Response(JSON.stringify(url.includes('/api/workspace?contact_id=client')?{contact:{id:'client',page_id:'page',name:'Client'},orders:[],closed_deals:[]}:{items:[],total:0}));
+ });vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[{id:'worker',role:'member'}],initialContactId:'client'}));});
+ const label=(prefix:string)=>view.root.findAllByType('label').find(l=>text(l).startsWith(prefix))!;
+ await act(async()=>{label('Total deal price').findByType('input').props.onChange({target:{value:'1000'}});label('Close Deal amount').findByType('input').props.onChange({target:{value:'300'}});});
+ for(const input of view.root.findAllByProps({type:'file'}))await act(async()=>input.props.onChange({target:{files:[{size:1}]}}));
+ const submit=()=>view.root.findByType('form').props.onSubmit({preventDefault(){},currentTarget:{reset(){}}});
+ await act(async()=>{await submit();});expect(text(view.toJSON())).toContain('Check the payment date');
+ await act(async()=>label('Total deal price').findByType('input').props.onChange({target:{value:'1200'}}));
+ await act(async()=>{await submit();});expect(saves.map(s=>s.total_price)).toEqual(['1000','1200']);expect(uploads).toBe(3);expect(text(view.toJSON())).toContain('Submitted for supervisor review');
 });
