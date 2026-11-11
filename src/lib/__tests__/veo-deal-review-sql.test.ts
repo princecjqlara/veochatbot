@@ -80,3 +80,20 @@ it('excludes old inquiries from the pool and rejects old acceptance buttons whil
  await expect(rpc('veo_intake_action',[member,'accept',JSON.stringify({contact_id:client,request_id:id(seq++)})])).rejects.toThrow('predates the new-client cutoff');
  expect((await db.query('SELECT * FROM contacts WHERE id=$1',[client])).rows).toHaveLength(1);expect((await submit(await evidence())).status).toBe('pending');
 });
+it('rejects reused photo bundles under a new request while allowing a corrected rejected submission',async()=>{
+ const first=await evidence(),r=await submit(first),second=await evidence();
+ await db.query('UPDATE veo_deal_review_photos incoming SET photo_sha256=prior.photo_sha256 FROM veo_deal_review_photos prior WHERE prior.review_id=$1 AND incoming.id=ANY($2) AND incoming.slot=prior.slot',[r.id,second.photos]);
+ await expect(submit(second)).rejects.toThrow('already submitted');await rpc('veo_review_deal',[owner,r.id,'reject',false,false,false,'Please correct the details']);
+ expect((await submit(second)).status).toBe('pending');
+});
+it('preserves accepted client ownership on new sales and rechecks reassignment before approval',async()=>{
+ await db.query('INSERT INTO veo_client_claims(contact_id,tenant_id,page_id,user_id,claimed_at) VALUES($1,$2,$3,$4,now())',[client,tenant,page,other]);
+ await expect(submit(await evidence())).rejects.toThrow('assigned seller');await db.query('UPDATE veo_client_claims SET user_id=$1 WHERE contact_id=$2',[member,client]);
+ const pending=await submit(await evidence());await db.query('UPDATE veo_client_claims SET user_id=$1 WHERE contact_id=$2',[other,client]);
+ await expect(approve(pending)).rejects.toThrow('assigned seller changed');expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(0);
+});
+it('allows the original seller to finish an existing Close Deal after client service is reassigned',async()=>{
+ const cd=await approve(await submit(await evidence()));await db.query('INSERT INTO veo_client_claims(contact_id,tenant_id,page_id,user_id,claimed_at) VALUES($1,$2,$3,$4,now())',[client,tenant,page,other]);
+ const dd=await approve(await submit(await evidence('done',{order_id:cd.order_id,closed_deal_id:cd.closed_deal_id})));expect(dd.status).toBe('approved');expect(dd.seller_id).toBe(member);
+ expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1',[client])).rows[0].user_id).toBe(other);
+});
