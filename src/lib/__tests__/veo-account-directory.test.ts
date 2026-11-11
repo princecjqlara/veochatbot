@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { loadVeoAccountDirectory } from '../veo-account-directory';
+import { loadVeoAccountDirectory, planningLoginReadiness, staffLoginReadiness } from '../veo-account-directory';
 const scope = { user_id: 'self', tenant_id: 'tenant', role: 'owner' as const, page_ids: ['allowed'], worker_ids: ['self', 'worker'], launch_at: '2026-11-09' };
 function database(rows: Record<string, any[]>, failTable?: string) {
     const reads: any[] = [];
@@ -26,4 +26,16 @@ it('fails the complete directory when identities or any source are unavailable',
 it('keeps personal profile reads restricted to the actor', async () => {
     const db = database({ veo_accounts: [{ user_id: 'self', tenant_id: 'tenant' }, { user_id: 'worker', tenant_id: 'tenant' }], users: [{ id: 'self' }, { id: 'worker' }] });
     expect((await loadVeoAccountDirectory(db, scope, true)).map(a => a.id)).toEqual(['self']);
+});
+it('keeps missing login evidence unknown and excludes the Owner and departed accounts from staff setup counts', () => {
+    expect(staffLoginReadiness([{ role: 'owner', is_active: true }, { role: 'member', active: false, is_active: false },
+        { role: 'manager', active: true, is_active: true }, { role: 'member', active: true, is_active: false }, { role: 'team_leader', active: true }]))
+        .toEqual({ workers: 3, enabled: 1, disabled: 1, unknown: 1 });
+});
+it('deduplicates the authorized planning roster across Pages and never counts an unrelated user', async () => {
+    const db = database({ users: [{ id: 'one', is_active: true }, { id: 'two', is_active: false }, { id: 'unrelated', is_active: true }] });
+    const plans = [{ workers: [{ user_id: 'one' }, { user_id: 'two' }] }, { workers: [{ user_id: 'one' }, { user_id: 'missing' }] }];
+    expect(await planningLoginReadiness(db, plans)).toEqual({ workers: 3, enabled: 1, disabled: 1, unknown: 1 });
+    await expect(planningLoginReadiness(database({}, 'users'), plans)).rejects.toThrow();
+    const empty = database({});expect(await planningLoginReadiness(empty, [])).toEqual({ workers: 0, enabled: 0, disabled: 0, unknown: 0 });expect(empty.reads).toHaveLength(0);
 });

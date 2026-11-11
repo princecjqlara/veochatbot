@@ -2,6 +2,7 @@ import model from './veo-budget-model';
 import { getSupabaseAdmin } from './supabase';
 import { readVeoRpc } from './veo-report-read';
 import { getUserPageIds } from './page-access';
+import { planningLoginReadiness } from './veo-account-directory';
 
 export function calculateVeoBudget(inputs: Record<string, any>, plan: any) {
     const profile = inputs.profile || 'aggressive';
@@ -39,7 +40,8 @@ export async function pageBudgetData(actor: string, day: string) {
     const ads = pages.length ? await db.from('veo_ad_planning_state').select('*').in('page_id', pages) : { data: [], error: null };
     const directory = pages.length ? await db.from('pages').select('id,name').in('id', pages) : { data: [], error: null };
     if (directory.error) throw new Error('Advertising Page names are unavailable');
-    return { ...plan.data, ad_pages: directory.data, live_ads: ads.error ? null : ads.data, saved: records, presets: model.profiles, defaults: { ...model.defaults, profile: 'aggressive', startingBudget: null, currentBudget: null, yesterdayCPA: null, activePeople: null, maxPerPerson: null } };
+    const workforce = await planningLoginReadiness(db, plan.data.plans || []);
+    return { ...plan.data, workforce_readiness: workforce, ad_pages: directory.data, live_ads: ads.error ? null : ads.data, saved: records, presets: model.profiles, defaults: { ...model.defaults, profile: 'aggressive', startingBudget: null, currentBudget: null, yesterdayCPA: null, activePeople: null, maxPerPerson: null } };
 }
 
 export async function savePageBudget(actor: string, body: any) {

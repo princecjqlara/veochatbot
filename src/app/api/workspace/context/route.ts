@@ -3,7 +3,7 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, philippineDate } from '@/lib/veo-workspace';
 import { readVeoRpc } from '@/lib/veo-report-read';
-import { loadVeoAccountDirectory } from '@/lib/veo-account-directory';
+import { loadVeoAccountDirectory, staffLoginReadiness } from '@/lib/veo-account-directory';
 
 export const dynamic = 'force-dynamic';
 const reply = (data: any, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -18,12 +18,13 @@ export async function GET(request: NextRequest) {
         const data: any = { scope, accounts: [], tomorrow: [], orders: [], salary: [], submissions: [], sync: [], teams: [], capacity: null };
         const db = getSupabaseAdmin();
         if (view === 'capacity') {
-            const [capacity, salary] = await Promise.all([
+            const [capacity, salary, roster] = await Promise.all([
                 readVeoRpc(db, 'veo_team_capacity', { p_actor: scope.user_id, p_day: day }),
-                readVeoRpc(db, 'veo_salary', { p_actor: scope.user_id, p_day: day })
+                readVeoRpc(db, 'veo_salary', { p_user: scope.user_id, p_day: day }),
+                loadVeoAccountDirectory(db, scope)
             ]);
             if (capacity.error || salary.error) return reply({ error: 'Capacity is temporarily unavailable' }, 503);
-            data.capacity = capacity.data;data.salary = [salary.data];
+            data.capacity = { ...capacity.data, workforce_readiness: staffLoginReadiness(roster) };data.salary = [salary.data];
         }
         const accounts = q.get('accounts') === '1';
         if (accounts) {

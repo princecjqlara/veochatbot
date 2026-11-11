@@ -2,6 +2,22 @@ import { fetchAllSupabaseRows, SUPABASE_IN_FILTER_BATCH_SIZE } from './supabase-
 import { requestDeadline } from './request-deadline';
 import type { WorkspaceScope } from './veo-workspace';
 
+export function staffLoginReadiness(accounts: any[]) {
+    const staff = accounts.filter(a => a.active !== false && a.role !== 'owner');
+    return { workers: staff.length, enabled: staff.filter(a => a.is_active === true).length,
+        disabled: staff.filter(a => a.is_active === false).length, unknown: staff.filter(a => a.is_active == null).length };
+}
+
+/** Only the already-authorized planning roster is queried; no credentials leave storage. */
+export async function planningLoginReadiness(db: any, plans: any[]) {
+    const ids = [...new Set<string>(plans.flatMap(plan => (plan.workers || []).map((worker: any) => worker.user_id)))];
+    const rows: any[] = [];
+    for (let i = 0; i < ids.length; i += SUPABASE_IN_FILTER_BATCH_SIZE) rows.push(...await fetchAllSupabaseRows<any>(
+        db.from('users').select('id,is_active').in('id', ids.slice(i, i + SUPABASE_IN_FILTER_BATCH_SIZE)).order('id')));
+    const states = new Map(rows.map(row => [row.id, row.is_active]));
+    return staffLoginReadiness(ids.map(id => ({ role: 'member', is_active: states.get(id) ?? null })));
+}
+
 /** Complete, live branch directory. Do not calculate unrelated financial reports. */
 export async function loadVeoAccountDirectory(db: any, scope: WorkspaceScope, personal = false) {
     const ids = personal ? [scope.user_id] : [...new Set([scope.user_id, ...scope.worker_ids])];
@@ -16,7 +32,7 @@ export async function loadVeoAccountDirectory(db: any, scope: WorkspaceScope, pe
         if (!accounts.length) throw Error('Workspace staff list unavailable');
         const returned = accounts.map(a => a.user_id);
         const [users, pages] = await Promise.all([
-            batches(returned, batch => db.from('users').select('id,name,email').in('id', batch).order('id')),
+            batches(returned, batch => db.from('users').select('id,name,email,is_active').in('id', batch).order('id')),
             scope.page_ids.length ? batches(returned, batch => db.from('user_pages').select('user_id,page_id').in('user_id', batch).order('user_id').order('page_id')) : Promise.resolve([])
         ]);
         const identities = new Map(users.map(u => [u.id, u]));
