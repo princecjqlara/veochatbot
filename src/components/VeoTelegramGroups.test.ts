@@ -14,7 +14,8 @@ afterEach(async () => { if (view) await act(async () => view.unmount());vi.unstu
 async function mount(body = data) { vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body))));await act(async () => { view = create(createElement(Groups)); }); }
 it('shows fetched groups, their Pages and a manager’s multiple memberships without choosing a single replacement group', async () => {
     await mount();expect(text(view.toJSON())).toContain('Page One');expect(text(view.toJSON())).toContain('Page Two');
-    expect(view.root.findAllByType('tbody')[0].findAllByType('tr')).toHaveLength(2);
+    const memberships = view.root.findAllByType('table').find(table => table.findAllByType('caption').some(caption => text(caption) === 'People and their Telegram groups'))!;
+    expect(memberships.findByType('tbody').findAllByType('tr')).toHaveLength(2);
     expect(text(view.toJSON())).toContain('Adding a group keeps this person’s other memberships');
     expect(view.root.findAllByType('button').some(b => text(b) === 'Fetch teams and Pages from Jaucian')).toBe(true);
 });

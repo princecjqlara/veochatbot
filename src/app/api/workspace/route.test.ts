@@ -9,6 +9,13 @@ import { GET, POST } from './route';
 import { philippineDate } from '@/lib/veo-workspace';
 afterEach(() => { vi.clearAllMocks(); });
 describe('workspace work-date boundaries', () => {
+    it('uses the atomic password reset and cooldown cleanup without trusting a browser actor', async () => {
+        const user='00000000-0000-4000-8000-000000000002';m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'owner',launch_at:'launched'}:{password_changed:true}}));
+        const request=()=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify({action:'password',user_id:user,password:'test password',actor:'foreign'})});
+        expect((await POST(request())).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_set_account_password',{p_actor:'owner',p_user:user,p_password_hash:expect.stringMatching(/^veo-sha256:/)});
+        expect(m.rpc.mock.calls.some(([name])=>name==='veo_action')).toBe(false);
+        m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'42501',message:'Forbidden'}});expect((await POST(request())).status).toBe(403);
+    });
     it('returns the complete directory without calculating finances, orders or capacity for Accounts', async () => {
         m.rpc.mockResolvedValue({ data: { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } });
         m.directory.mockResolvedValue(Array.from({ length: 601 }, (_, i) => ({ id: String(i) })));

@@ -9,7 +9,7 @@ export default function VeoAccountLoginSetup({ account, onSaved }: { account: { 
         }catch(error){setMessage(error instanceof Error?error.message:'Could not save sign-in');}finally{setBusy(false);}
     }}><h3 className="font-bold">Set up sign-in: {account.name}</h3>
         <label className="block">Email<input className="block rounded border p-2 w-full" name="email" type="email" autoComplete="off" defaultValue={account.email||''} required /></label>
-        <label className="block">New password<input className="block rounded border p-2 w-full" name="password" type="password" autoComplete="new-password" required /></label>
+        <label className="block">Password to use<input className="block rounded border p-2 w-full" name="password" type="password" autoComplete="new-password" required /></label>
         <button disabled={busy} className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40">{busy?'Saving…':'Save sign-in'}</button>{message&&<p role="status" className="text-sm">{message}</p>}
     </form>;
 }

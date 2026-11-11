@@ -78,11 +78,17 @@ export async function POST(request: NextRequest) {
             if (!uuid(body.user_id) || typeof body.email !== 'string' || body.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim()) || typeof body.password !== 'string' || !body.password) throw new Error('Account, email and new password are required');
             const result = await db.rpc('veo_recover_account_login', { p_actor: scope.user_id, p_user: body.user_id, p_email: body.email.trim().toLowerCase(), p_password_hash: await passwordHash(body.password) });
             if (result.error) throw Object.assign(new Error(result.error.code === '23505' ? 'This email belongs to another account' : 'Could not configure account sign-in'), { status: result.error.code === '42501' ? 403 : 400 });
-            return NextResponse.json({ saved: result.data });
+            return NextResponse.json({ saved: result.data }, { headers: { 'Cache-Control': 'no-store' } });
         }
         if (action === 'attendance') throw new Error('Answer Jaucian’s Telegram poll for active tomorrow. The workspace reads verified poll votes.');
         if (action === 'create_account') return NextResponse.json({ saved: await createWorkspaceAccount(scope.user_id, body) }, { status: 201 });
-        if (action === 'password') return NextResponse.json({ saved: await workspaceAction(scope.user_id, 'password', { user_id: body.user_id || scope.user_id, password_hash: await passwordHash(body.password) }) });
+        if (action === 'password') {
+            const target = body.user_id || scope.user_id;
+            if (!uuid(target)) throw new Error('Choose an account');
+            const result = await db.rpc('veo_set_account_password', { p_actor: scope.user_id, p_user: target, p_password_hash: await passwordHash(body.password) });
+            if (result.error) throw Object.assign(new Error(result.error.message || 'Could not change password'), { status: result.error.code === '42501' ? 403 : 400 });
+            return NextResponse.json({ saved: result.data }, { headers: { 'Cache-Control': 'no-store' } });
+        }
         if (action === 'mapping' && scope.role !== 'owner') throw Object.assign(new Error('Owner access required'), { status: 403 });
         if (action === 'mapping' && body.team_id) {
             if (body.thread_id === '') body.thread_id = null;
