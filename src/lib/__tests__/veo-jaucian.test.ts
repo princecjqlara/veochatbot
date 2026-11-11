@@ -37,6 +37,17 @@ it('fails closed when a directory source is unavailable', async () => {
     database({ veo_tenants: [{ id: tenant, owner_id: CJ_OWNER_USER_ID, launch_at: '2026-11-05T00:00:00Z' }] }, 'veo_accounts');
     await expect(veoDirectory(tenant)).rejects.toThrow('Workspace directory unavailable');
 });
+it('reports missing automatic scheduling and excludes disabled logins without claiming the workforce is configured', async () => {
+    const tables = { veo_tenants: [{ id: tenant, owner_id: CJ_OWNER_USER_ID, launch_at: '2026-11-05T00:00:00Z' }],
+        veo_accounts: [{ user_id: member, tenant_id: tenant, role: 'member', active: true }, { user_id: CJ_OWNER_USER_ID, tenant_id: tenant, role: 'owner', active: true }],
+        users: [{ id: member, is_active: false }, { id: CJ_OWNER_USER_ID, is_active: true }],
+        veo_telegram_sync_state: [] as any[] };
+    database(tables);
+    const missing = await veoDirectory(tenant);
+    expect(missing.accounts).toHaveLength(1); expect(missing.account_coverage).toEqual({ enabled_accounts: 1, disabled_login_accounts: 1 }); expect(missing.telegram_sync.configured).toBe(false);
+    tables.veo_telegram_sync_state.push({ tenant_id: tenant, last_sync_at: '2026-11-11T00:00:00Z', next_sync_at: '2026-11-11T00:05:00Z', last_error: null });
+    expect((await veoDirectory(tenant)).telegram_sync).toMatchObject({ configured: true, last_sync_at: '2026-11-11T00:00:00Z' });
+});
 it('withholds a leader’s obsolete primary group after the branch team is remapped', async () => {
     const accounts = [{ user_id: 'leader', tenant_id: tenant, role: 'team_leader', active: true, parent_id: CJ_OWNER_USER_ID },
         { user_id: 'manager', tenant_id: tenant, role: 'manager', active: true, parent_id: 'leader' }];

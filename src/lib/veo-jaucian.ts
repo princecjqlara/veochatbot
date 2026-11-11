@@ -27,13 +27,14 @@ export async function veoDirectory(tenant: string, db = getSupabaseAdmin()) {
         }
         throw unavailable('Workspace directory exceeds its safe read limit');
     }
-    const [accounts, teams, pages, ancestry, groupLinks, catalog] = await Promise.all([
+    const [accounts, teams, pages, ancestry, groupLinks, catalog, sync] = await Promise.all([
         read(() => db.from('veo_accounts').select('user_id,role,parent_id,telegram_username,telegram_profile_completed_at').eq('tenant_id', tenant).eq('active', true).order('user_id')),
         read(() => db.from('veo_teams').select('id,name,manager_id,telegram_chat_id,telegram_thread_id,telegram_groups_managed').eq('tenant_id', tenant).order('id')),
         read(() => db.from('pages').select('id,name').eq('veo_tenant_id', tenant).eq('veo_enabled', true).order('id')),
         read(() => db.from('veo_accounts').select('user_id,parent_id').eq('tenant_id', tenant).order('user_id')),
         read(() => db.from('veo_team_telegram_groups').select('team_id,chat_id,thread_id').eq('tenant_id', tenant).order('team_id').order('chat_id')),
-        read(() => db.from('veo_telegram_groups').select('chat_id,active').eq('tenant_id', tenant).order('chat_id'))
+        read(() => db.from('veo_telegram_groups').select('chat_id,active').eq('tenant_id', tenant).order('chat_id')),
+        read(() => db.from('veo_telegram_sync_state').select('last_sync_at,next_sync_at,last_error,auto_checked_at,auto_last_error').eq('tenant_id', tenant).order('tenant_id'))
     ]);
     const users: any[] = [], mappings: any[] = [], attendance: any[] = [], grants: any[] = [], groups: any[] = [];
     const memberships: any[] = [], routes: any[] = [];
@@ -84,6 +85,8 @@ export async function veoDirectory(tenant: string, db = getSupabaseAdmin()) {
     }
     return { ok: true, tenant_id: tenant, name: connection.name, launch_at: connection.launch_at,
         checked_at: new Date().toISOString(), source: 'VEO database', read_only: true, commission_rule: commissionRule, telegram_workflow_version: 3,
+        account_coverage: { enabled_accounts: active.length, disabled_login_accounts: accounts.length - active.length },
+        telegram_sync: { configured: sync.length === 1, ...(sync[0] || {}) },
         accounts: active.map(a => ({ ...a, name: names.get(a.user_id)?.name || 'Unknown name',
             telegram_user_id: tg.get(a.user_id) || null, telegram_username_verified: false,
             telegram_chat_id: currentGroup(a),

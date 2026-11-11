@@ -47,3 +47,11 @@ it('distinguishes Closed and Done confirmations from availability polls in the d
     try { const text = flatten(view.toJSON()); expect(text).toContain('Closed Deal confirmation'); expect(text).toContain('Done Deal confirmation'); expect(text).toContain('Active-tomorrow poll 2026-11-08'); }
     finally { await act(async () => view.unmount()); }
 });
+it('shows disabled retained accounts and pending or missing sync separately from a working server connection', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...data, workspace: { ...data.workspace,
+        account_coverage: { disabled_login_accounts: 6 }, telegram_sync: { configured: false } } })));
+    let view: any;
+    await act(async () => { view = create(createElement(Integration, { submit: vi.fn(), busy: false })); });
+    try { const text = flatten(view.toJSON()); expect(text).toContain('6 retained accounts have disabled logins'); expect(text).toContain('Setup required; scheduling is unavailable'); expect(text).toContain('Jaucian can read VEO'); }
+    finally { await act(async () => view.unmount()); }
+});
