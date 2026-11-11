@@ -132,6 +132,17 @@ it('retains the old manager review requirement until the new submission policy i
  const pending=await submitAs(manager,await evidence('closed',{seller_id:manager},manager));expect(pending.status).toBe('pending');expect((await rpc('veo_scope',[manager])).supervisor_submissions_enabled).toBe(false);
  await expect(approve(pending,manager)).rejects.toThrow('different authorized');
 });
+it.each([manager,member])('creates and settles a direct Done Deal for seller %s without creating a Close Deal',async seller=>{
+ await directMode();
+ const e=await evidence('done',{seller_id:seller,received_now_minor:100000,tip_minor:12550},seller);
+ await db.query('UPDATE veo_deal_review_photos SET photo_sha256=$1 WHERE id=ANY($2)',['a'.repeat(64),e.photos]);
+ const saved=await submitAs(seller,e);const done=seller===manager?saved:await approve(saved,manager);
+ expect(done.status).toBe('approved');expect(done.closed_deal_id).toBeNull();
+ expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(1);expect((await db.query('SELECT * FROM veo_closed_deals')).rows).toHaveLength(0);
+ const payments=(await db.query<any>('SELECT kind,amount_minor FROM veo_payments')).rows;expect(payments).toHaveLength(1);expect(payments[0].kind).toBe('full');expect(Number(payments[0].amount_minor)).toBe(100000);
+ const order=(await db.query<any>('SELECT paid_minor,done_at FROM veo_order_facts')).rows[0];expect(Number(order.paid_minor)).toBe(100000);expect(order.done_at).not.toBeNull();expect(Number((await db.query<any>('SELECT amount_minor FROM veo_deal_tips')).rows[0].amount_minor)).toBe(12550);
+ expect((await submitAs(seller,e)).duplicate).toBe(true);expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(1);
+});
 it.each(['closed','done'])('accepts a shared stage/order screenshot for %s while requiring three separate evidence slots',async kind=>{
  await directMode();
  await rpc('veo_sync_telegram_groups',[owner,JSON.stringify([{chat_id:-123,name:'Sales',pages:[{id:page,matched:true}],topics:{},identities:[]}])]);

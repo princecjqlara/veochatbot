@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getSessionFromRequest } from './get-session';
 import { workspaceScope, uuid } from './veo-workspace';
-import { parseMoneyMinor } from './contact-profile-evidence';
+import { dealAmounts } from './veo-deal-amounts';
 import { isSupabaseUnavailable } from './supabase-errors';
 export const dealEvidenceBucket = 'veo-conversation-submissions';
 export const evidenceSlots = ['stage', 'payment', 'order'] as const;
@@ -20,18 +20,15 @@ export function dealChecked(result: any) {
     }
     return result.data;
 }
-const nonnegativeMoney = (value: unknown) => /^0(?:\.0{1,2})?$/.test(String(value ?? '0').trim()) ? 0 : parseMoneyMinor(value);
 export function dealSubmission(body: any) {
     if (![body.request_id, body.contact_id, body.seller_id].every(uuid) || !['closed', 'done'].includes(body.receipt_kind) || !Array.isArray(body.photo_ids) || body.photo_ids.length !== 3 || new Set(body.photo_ids).size !== 3 || !body.photo_ids.every(uuid)) throw Error('Select a contact, seller and three different evidence photos');
     for (const key of ['order_id', 'closed_deal_id', 'existing_closed_payment_id']) if (body[key] && !uuid(body[key])) throw Error('Choose a valid existing deal or order');
     const at = Date.parse(body.occurred_at), currency = String(body.currency || 'PHP').toUpperCase();
     if (!Number.isFinite(at) || !/^[A-Z]{3}$/.test(currency)) throw Error('Enter the currency and payment time');
     for (const [key, max] of [['description', 500], ['invoice_reference', 160], ['notes', 2000]] as const) if (body[key] != null && (typeof body[key] !== 'string' || body[key].length > max)) throw Error('Check the description, invoice reference and notes');
-    const closed = body.receipt_kind === 'closed';
     return {
         request_id: body.request_id, contact_id: body.contact_id, seller_id: body.seller_id, receipt_kind: body.receipt_kind,
-        currency, total_price_minor: parseMoneyMinor(body.total_price), closed_amount_minor: closed ? parseMoneyMinor(body.closed_amount) : 0,
-        received_now_minor: closed ? 0 : nonnegativeMoney(body.done_amount), tip_minor: closed ? 0 : nonnegativeMoney(body.tip),
+        currency, ...dealAmounts(body),
         occurred_at: new Date(at).toISOString(), description: body.description?.trim() || 'Reviewed video deal', invoice_reference: body.invoice_reference?.trim() || '', notes: body.notes || '',
         order_id: body.order_id || null, closed_deal_id: body.closed_deal_id || null, existing_closed_payment_id: body.existing_closed_payment_id || null
     };

@@ -16,6 +16,15 @@ it('saves a manager receipt without an invoice reference and immediately queues 
  expect(m.rpc).toHaveBeenCalledWith('veo_submit_deal_review',expect.objectContaining({p_actor:id(3),p_data:expect.objectContaining({closed_amount_minor:30000,total_price_minor:100000,invoice_reference:''})}));
  expect(m.queue).toHaveBeenCalledOnce();expect(m.queue.mock.calls[0][1]).toBe(review);
 });
+it('submits a fully paid direct Done Deal without a Close Deal, existing order or optional tip',async()=>{
+ m.rpc.mockResolvedValue({data:{id:id(7),status:'approved',approval_mode:'supervisor_submission',order_id:id(8)}});m.queue.mockResolvedValue({state:'queued'});
+ const body={...submission(),receipt_kind:'done',closed_amount:'',done_amount:'1000',tip:'',order_id:null,closed_deal_id:null};
+ const response=await POST(request(body));expect(response.status).toBe(202);
+ expect(m.rpc.mock.calls[0][1].p_data).toMatchObject({order_id:null,closed_deal_id:null,total_price_minor:100000,closed_amount_minor:0,received_now_minor:100000,tip_minor:0});expect(m.queue).toHaveBeenCalledOnce();
+});
+it('explains an incomplete direct payment without writing a review or queuing Telegram',async()=>{
+ const response=await POST(request({...submission(),receipt_kind:'done',done_amount:'700',tip:'0'}));expect(response.status).toBe(422);expect((await response.json()).error).toContain('PHP 1000.00');expect(m.rpc).not.toHaveBeenCalled();expect(m.queue).not.toHaveBeenCalled();
+});
 it('preserves the staff pending decision and ignores client-supplied role overrides',async()=>{
  m.scope.mockResolvedValue({user_id:id(3),role:'member',launch_at:'2026-11-09'});m.rpc.mockResolvedValue({data:{status:'pending'}});m.queue.mockResolvedValue({state:'awaiting_review'});
  const response=await POST(request({...submission(),approval_mode:'supervisor_submission',submitted_by_role:'manager'}));expect(response.status).toBe(202);expect((await response.json()).review.status).toBe('pending');
