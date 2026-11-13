@@ -38,19 +38,19 @@ export function EmployeeProfileDetails({ data: d }: { data: any }) {
 
 export default function VeoEmployeeProfile({ worker, from, to, page, refreshToken, version = 0 }: { worker: string; from: string; to: string; page: string; refreshToken?: any; version?: number }) {
     const [state, setState] = useState<{ key: string; data?: any; error?: string } | null>(null);
-    const key = [worker, from, to, page, version].join(':');
+    const key = [worker, from, to, page].join(':');
     useEffect(() => {
         const controller = new AbortController();
         const q = new URLSearchParams({ worker_id: worker, from, to, ...(page ? { page_id: page } : {}) });
         fetch('/api/workspace/employee-profile?' + q, { signal: controller.signal, cache: 'no-store' }).then(async response => {
             const body = await response.json();
-            if (!response.ok) throw new Error(body.error || 'Employee profile unavailable');
+            if (!response.ok) throw Object.assign(new Error(body.error || 'Employee profile unavailable'), { status: response.status });
             if (!body.employee || !Array.isArray(body.days) || !Array.isArray(body.totals)) throw new Error('Employee profile data is unavailable');
             if (!controller.signal.aborted) setState({ key, data: body });
-        }).catch(error => { if (!controller.signal.aborted) setState({ key, error: error.message }); });
+        }).catch(error => { if (!controller.signal.aborted) setState(previous => ({ key, ...(previous?.key === key && ![401, 403].includes(error.status) ? { data: previous.data } : {}), error: error.message })); });
         return () => controller.abort();
     }, [worker, from, to, page, refreshToken, version, key]);
     if (state?.key !== key) return <p role="status" className="text-sm">Loading employee profile…</p>;
-    if (state.error) return <p role="alert" className="text-red-700">{state.error}</p>;
-    return <EmployeeProfileDetails data={state.data} />;
+    if (!state.data) return <p role="alert" className="text-red-700">{state.error}</p>;
+    return <>{state.error && <p role="alert" className="text-red-700">{state.error} Showing the last loaded profile.</p>}<EmployeeProfileDetails data={state.data} /></>;
 }

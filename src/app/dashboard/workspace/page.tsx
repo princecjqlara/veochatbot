@@ -67,7 +67,9 @@ function Workspace() {
             if (!fallback.ok) throw new Error(result.error);body = result;
         }
         if (generation !== refreshGeneration.current) return;
-        setData(lightweight ? { scope: body.scope, accounts: [], tomorrow: [] } : body);
+        const next = lightweight ? { scope: body.scope, accounts: [], tomorrow: [] } : body;
+        setData((previous: any) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+        setLoadError('');
         setLoadedArea(view);
     }
     useEffect(() => {

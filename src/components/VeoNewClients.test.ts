@@ -86,3 +86,14 @@ it('sends a handover offer and keeps the current worker shown until the recipien
     expect(text(view.toJSON())).toContain('Offered to Next Worker');
     expect(text(view.toJSON())).toContain('does not create a Closed Deal, Done Deal or commission');
 });
+
+it('polls without replacing visible clients or flashing readiness and keeps last data on temporary failure',async()=>{
+ let finish:(r:Response)=>void=()=>{};
+ const fetcher=vi.fn().mockResolvedValueOnce(Response.json({items:[item],roster:[],readiness:{ready:true},total:1})).mockImplementationOnce(()=>new Promise<Response>(resolve=>{finish=resolve;}));vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Clients,{scope,pages:[]}));});await tick();
+ await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});await tick();
+ expect(text(view.toJSON())).toContain('New client');expect(text(view.toJSON())).not.toContain('Checking current assignments');expect(text(view.toJSON())).toContain('Your status: Ready');
+ await act(async()=>{finish(Response.json({error:'Temporarily unavailable'},{status:503}));});
+ expect(text(view.toJSON())).toContain('New client');expect(text(view.toJSON())).toContain('Temporarily unavailable');
+ const accept=view.root.findAllByType('button').find(b=>b.children.join('')==='Accept client');expect(accept?.props.disabled).toBe(true);
+});

@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('next/link', () => ({ default: ({ href, children }: any) => createElement('a', { href }, children) }));
 import Profile, { EmployeeProfileDetails } from './VeoEmployeeProfile';
 import Operations from './VeoOperationsPanel';
-const flatten = (v: any): string => typeof v === 'string' || typeof v === 'number' ? String(v) : (v?.children || []).map(flatten).join('');
+const flatten = (v: any): string => Array.isArray(v) ? v.map(flatten).join('') : typeof v === 'string' || typeof v === 'number' ? String(v) : (v?.children || []).map(flatten).join('');
 let view: ReactTestRenderer;
 afterEach(async () => { if (view) await act(async () => view.unmount()); vi.unstubAllGlobals(); vi.useRealTimers(); });
 const fixture = (name = 'Employee A') => ({
@@ -69,4 +69,28 @@ it('opens the unified profile from the employee ranking and keeps client filters
     expect(lastOperations).toContain('worker_id=A'); expect(lastOperations).toContain('status=closed');
     await act(async () => { view.root.findAllByType('select').find(s => s.props.children?.[0]?.props?.children === 'All assigned Pages')!.props.onChange({ target: { value: 'page' } }); });
     expect(fetcher.mock.calls.some(([url]) => url.includes('employee-profile') && url.includes('worker_id=A') && url.includes('page_id=page'))).toBe(true);
+});
+
+it('retains the mounted profile during refresh and temporary failure, but clears it when access is denied', async()=>{
+ let finish:(r:Response)=>void=()=>{};
+ const fetcher=vi.fn().mockResolvedValueOnce(Response.json(fixture())).mockImplementationOnce(()=>new Promise<Response>(resolve=>{finish=resolve;})).mockResolvedValueOnce(Response.json({error:'Access denied'},{status:403}));vi.stubGlobal('fetch',fetcher);
+ const props={worker:'A',from:'2026-11-05',to:'2026-11-07',page:''};
+ await act(async()=>{view=create(createElement(Profile,{...props,version:0}));});
+ const article=view.root.findByProps({'aria-label':'Unified employee profile'});
+ await act(async()=>{view.update(createElement(Profile,{...props,version:1}));});
+ expect(view.root.findByProps({'aria-label':'Unified employee profile'})).toBe(article);expect(flatten(view.toJSON())).not.toContain('Loading employee');
+ await act(async()=>{finish(Response.json({error:'Temporary failure'},{status:503}));});
+ expect(flatten(view.toJSON())).toContain('Employee A');expect(flatten(view.toJSON())).toContain('last loaded profile');
+ await act(async()=>{view.update(createElement(Profile,{...props,version:2}));});
+ expect(flatten(view.toJSON())).not.toContain('Employee A');expect(flatten(view.toJSON())).toContain('Access denied');
+});
+it('keeps the salary panel and nested profile mounted while reloading the same report',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-07T01:00:00Z'));
+ let pending=false;
+ vi.stubGlobal('fetch',vi.fn((url:string)=>url.includes('employee-profile')?Promise.resolve(Response.json(fixture())):pending?new Promise<Response>(()=>{}):Promise.resolve(Response.json({summary:{},employees:[{id:'A',name:'Employee A',active:true}],orders:[],finance:{days:[]},page_rankings:[],order_page:{total:0},client_assignments:[]}))));
+ const props={scope:{role:'owner',user_id:'owner',launch_at:'2026-11-05T00:00:00Z'},pages:[],busy:false,submit:vi.fn(),initialWorkerId:'A',mode:'salary'};
+ await act(async()=>{view=create(createElement(Operations,{...props,refreshToken:0}));await vi.advanceTimersByTimeAsync(300);});
+ const article=view.root.findByProps({'aria-label':'Unified employee profile'});pending=true;
+ await act(async()=>{view.update(createElement(Operations,{...props,refreshToken:1}));await vi.advanceTimersByTimeAsync(300);});
+ expect(view.root.findByProps({'aria-label':'Unified employee profile'})).toBe(article);expect(flatten(view.toJSON())).not.toContain('Loading verified performance');
 });

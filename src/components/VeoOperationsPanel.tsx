@@ -19,12 +19,16 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
     const [status, setStatus] = useState(['closed', 'done'].includes(mode) ? mode : 'all'), [search, setSearch] = useState(initialSearch), [offset, setOffset] = useState(0);
     const [data, setData] = useState<any>(null), [employees, setEmployees] = useState<any[]>([]), [error, setError] = useState(''), [loading, setLoading] = useState(true), [version, setVersion] = useState(0);
     const [selected, setSelected] = useState<any>(null), [workStatus, setWorkStatus] = useState('working'), [ranking, setRanking] = useState('deals');
+    const loadedQuery = useRef('');
     const searchSchedule = useRef(createSearchSchedule(initialSearch));
     useEffect(() => { if (initialWorkerId && scope.role !== 'member') { setWorker(initialWorkerId); setOffset(0); } }, [initialWorkerId, scope.role]);
     useEffect(() => { if (['closed', 'done'].includes(mode)) { setStatus(mode); setOffset(0); } }, [mode]);
     useEffect(() => { if (mode === 'dashboard' && workDate) { setFrom(workDate); setTo(workDate); setOffset(0); } }, [workDate, mode]);
     useEffect(() => {
-        const controller = new AbortController(); setLoading(true); setError(''); if (['salary', 'performance', 'rankings'].includes(mode)) setData(null);
+        const controller = new AbortController();
+        const queryKey = JSON.stringify([scope.user_id, mode, from, to, page, worker, status, search, offset]);
+        const sameQuery = loadedQuery.current === queryKey;
+        setLoading(true); if (!sameQuery) { setData(null); setError(''); }
         const delay = searchSchedule.current(search);
         const timer = setTimeout(async () => {
             try {
@@ -32,7 +36,7 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
                 const r = await fetch('/api/workspace/operations?' + q, { signal: controller.signal, cache: 'no-store' });
                 const b = await r.json(); if (!r.ok) throw new Error(b.error); if (!b.summary || !Array.isArray(b.orders) || !Array.isArray(b.finance?.days)) throw new Error('Performance data is unavailable; refresh to retry');
                 if (controller.signal.aborted) return;
-                setData(b); if (!worker || !employees.length) setEmployees(b.employees || []);
+                loadedQuery.current = queryKey;setData(b);setError(''); if (!worker || !employees.length) setEmployees(b.employees || []);
             } catch (e: any) { if (!controller.signal.aborted && e.name !== 'AbortError') setError(e.message); }
             finally { if (!controller.signal.aborted) setLoading(false); }
         }, delay);
@@ -53,7 +57,7 @@ export default function VeoOperationsPanel({ scope, pages, submit, busy, mode = 
         {['salary', 'performance', 'rankings'].includes(mode) && <div className="flex flex-wrap gap-3 text-sm"><button type="button" className="underline" onClick={() => { const start = new Date(Date.now() - 6 * 86400000 + 8 * 3600000).toISOString().slice(0, 10); setFrom(start < launch ? launch : start); setTo(today()); setOffset(0); }}>Last 7 days</button><button type="button" className="underline" onClick={() => { const start = today().slice(0, 7) + '-01'; setFrom(start < launch ? launch : start); setTo(today()); setOffset(0); }}>This month</button><p className="text-xs text-slate-500">Dates include both endpoints. Choose up to 93 days per report.</p></div>}
         <div className="flex gap-3 text-sm"><button type="button" className="underline" onClick={() => { setFrom(today()); setTo(today()); setOffset(0); }}>Today</button><button type="button" className="underline" onClick={() => { setFrom(launch > new Date(Date.now() - 29 * 86400000 + 8 * 3600000).toISOString().slice(0, 10) ? launch : new Date(Date.now() - 29 * 86400000 + 8 * 3600000).toISOString().slice(0, 10)); setTo(today()); setOffset(0); }}>Recent history</button></div>
         {['performance', 'rankings', 'salary'].includes(mode) && (worker ? <><VeoEmployeeProfile worker={worker} from={from} to={to} page={page} refreshToken={refreshToken} version={version} />{supervisor && <button className="underline text-sm" onClick={() => { setWorker(''); setOffset(0); }}>Back to all employees</button>}</> : <p className="text-sm text-slate-600">Select an employee, or click their name in the ranking, to open their complete performance profile.</p>)}
-        {loading && <p role="status" className="text-sm">Loading verified performance…</p>}{error && <p role="alert" className="text-red-700">{error}</p>}
+        {loading && !data && <p role="status" className="text-sm">Loading verified performance…</p>}{error && <p role="alert" className="text-red-700">{error}</p>}
         {data && <>
             {mode === 'salary' && <VeoSalaryStatement days={data.finance.days} from={from} to={to} role={scope.role} onEmployee={id => { setWorker(id); setOffset(0); }} />}
             {['performance', 'rankings', 'salary'].includes(mode) && <VeoStaffWarnings workerId={worker || undefined} compact refreshToken={refreshToken} />}
