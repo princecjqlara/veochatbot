@@ -271,3 +271,9 @@ it('marks a successfully checked zero-spend current day provisional without decl
  const day=(await db.query<any>('SELECT veo_today() d')).rows[0].d;
  const rows=await rpc('veo_calendar_spend',[[page],day,day]);expect(rows[0]).toMatchObject({amount_minor:0,complete:false,provisional:true});
 });
+
+it('refreshes current worker and team capacity without freezing tomorrow',async()=>{
+ const refreshed=await rpc('veo_refresh_spend_quotas',[]);expect(refreshed.workers).toBeGreaterThan(0);expect(refreshed.team_workspaces).toBe(1);
+ expect((await db.query('SELECT * FROM veo_team_daily_capacity WHERE work_date=veo_today()')).rows.length).toBeGreaterThan(0);
+ expect((await db.query('SELECT * FROM veo_operating_quotas WHERE work_date=veo_today()+1')).rows).toHaveLength(0);
+});

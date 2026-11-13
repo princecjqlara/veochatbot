@@ -57,7 +57,7 @@ function Workspace() {
         const filters = new URLSearchParams({ date: day, view: view === 'deals' ? dealStatus : view, search: query, offset: String(offset), ...(page ? { page_id: page } : {}) });
         const lightweight = ['new_clients', 'telegram'].includes(view);
         const contextual = !['dashboard', 'accounts', 'sync'].includes(view);
-        const accounts = ['profile', 'receipts', 'salary'].includes(view) ? '&accounts=1' : '';
+        const accounts = ['profile', 'receipts', 'salary', 'capacity'].includes(view) ? '&accounts=1' : '';
         const endpoint = lightweight ? '/api/workspace/new-clients?context=1' : contextual ? `/api/workspace/context?view=${encodeURIComponent(view)}&date=${encodeURIComponent(day)}${accounts}` : `/api/workspace?${filters}`;
         const r = await fetch(endpoint, { signal });
         let body = await r.json();
@@ -109,10 +109,10 @@ function Workspace() {
         return () => { clearTimeout(timer);stop?.(); };
     }, [page, query, contactOffset, view, data?.scope.role]);
     useEffect(() => {
-        if (view !== 'sync') return;
+        if (!['sync', 'capacity', 'dashboard'].includes(view)) return;
         return startAdaptivePolling(async signal => {
             try { await refresh(signal); }catch (e:any) { if (!signal.aborted) setLoadError(e.message);throw e; }
-        }, { intervalMs: 30000 });
+        }, { intervalMs: view === 'sync' ? 30000 : 60000 });
     }, [view, day]); // eslint-disable-line react-hooks/exhaustive-deps
     async function submit(body: any) {
         setBusy(true); setMessage('');
