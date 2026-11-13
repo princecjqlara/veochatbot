@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import fs from 'node:fs';
 const m = vi.hoisted(() => ({ refresh: vi.fn(), ids: vi.fn(), db: vi.fn(), decrypt: vi.fn(), claim:vi.fn(), bootstrap:vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: m.db }));
 vi.mock('@/lib/page-access', () => ({ getUserPageIds: m.ids }));
@@ -18,6 +19,11 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 const request = (authorized = true) => new NextRequest('https://veo.test/api/cron/meta-ads-sync', { headers: authorized ? { Authorization: 'Bearer test-only' } : {} });
+it('actually schedules the dedicated ads worker without depending on the external follow-up cron',()=>{
+ const config=JSON.parse(fs.readFileSync('vercel.json','utf8'));
+ expect(config.crons.filter((job:any)=>job.path==='/api/cron/meta-ads-sync')).toEqual([{path:'/api/cron/meta-ads-sync',schedule:'*/5 * * * *'}]);
+ expect(config.functions['src/app/api/cron/meta-ads-sync/route.ts'].maxDuration).toBe(300);
+});
 it('authenticates before any credential read', async () => { expect((await GET(request(false))).status).toBe(401); expect(m.db).not.toHaveBeenCalled(); });
 it('uses current Page scope, excludes disabled Pages and refreshes the newest dates every run', async () => {
     expect((await GET(request())).status).toBe(200);
@@ -32,6 +38,14 @@ it('does not overwrite connection health when a manual refresh owns the lease',a
 it('reports a failed source fetch instead of declaring successful synchronization', async () => {
     m.refresh.mockResolvedValue({ complete: false, errors: ['Incomplete account report'] });
     const r = await GET(request()); expect(r.status).toBe(503); expect((await r.json()).complete).toBe(false);
+});
+it.each([false,true])('retries incomplete or failed refreshes in five minutes instead of waiting a full hour: %s',async throws=>{
+ const updates:any[]=[];
+ m.db.mockReturnValue({rpc:m.claim,from:()=>({select:()=>({limit:async()=>({data:[{user_id:'owner'}]})}),update:(data:any)=>{updates.push(data);return{eq:async()=>({error:null})};}})});
+ if(throws)m.refresh.mockRejectedValue(Error('Source temporarily unavailable'));else m.refresh.mockResolvedValue({complete:false,errors:['Partial source']});
+ const before=Date.now();expect((await GET(request())).status).toBe(503);
+ const retry=updates.find(data=>data.next_scheduled_refresh_at);expect(retry).toBeTruthy();
+ expect(Date.parse(retry.next_scheduled_refresh_at)).toBeGreaterThanOrEqual(before+300000);expect(Date.parse(retry.next_scheduled_refresh_at)).toBeLessThanOrEqual(Date.now()+300000);
 });
 it('automatically resumes the persisted initial or historical window before recent-date maintenance',async()=>{
  const checkpoint={from:'2026-11-01',to:'2026-11-10',completed_windows:['one']};m.db.mockReturnValue({rpc:m.claim,from:()=>({select:()=>({limit:async()=>({data:[{user_id:'owner',sync_checkpoint:checkpoint}]})}),update:()=>({eq:async()=>({error:null})})})});

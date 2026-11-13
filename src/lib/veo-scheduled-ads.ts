@@ -34,13 +34,13 @@ export async function runScheduledMetaAds(db: any = getSupabaseAdmin()) {
             const result = await refreshStoredWorkspaceAds({ db, user: credential.user_id, from: resume?checkpoint.from:from, to: resume?checkpoint.to:today, deadline, workspaceOnly: workspaceEnabled(), preserveOtherCheckpoint: true,
                 authorize: () => getUserPageIds(credential.user_id) });
             reports.push({ user_id: credential.user_id, ...result });
-            const saved = await db.from('meta_ads_credentials').update({ scheduled_refresh_finished_at:new Date().toISOString(),scheduled_refresh_status:result.complete?'complete':'incomplete' }).eq('user_id',credential.user_id);
+            const saved = await db.from('meta_ads_credentials').update({ scheduled_refresh_finished_at:new Date().toISOString(),scheduled_refresh_status:result.complete?'complete':'incomplete',...(!result.complete?{next_scheduled_refresh_at:new Date(Date.now()+300000).toISOString()}:{} ) }).eq('user_id',credential.user_id);
             if (saved.error) throw Error('Scheduled advertising status could not be saved');
         } catch(error) {
             const busy = (error as any)?.status===409 && !(error as any)?.requiresReconnect;
             const message = error instanceof Error?error.message.slice(0,300):'Scheduled Meta Ads sync failed';
             reports.push({ user_id:credential.user_id,complete:busy,...(busy?{skipped:true,reason:'Refresh already running'}:{errors:[message]}) });
-            const saved = await db.from('meta_ads_credentials').update({ ...(!busy?{last_error:message}:{}),...(claimed?{scheduled_refresh_finished_at:new Date().toISOString(),scheduled_refresh_status:busy?'skipped':'failed'}:{}),updated_at:new Date().toISOString() }).eq('user_id',credential.user_id);
+            const saved = await db.from('meta_ads_credentials').update({ ...(!busy?{last_error:message}:{}),...(claimed?{scheduled_refresh_finished_at:new Date().toISOString(),scheduled_refresh_status:busy?'skipped':'failed',next_scheduled_refresh_at:new Date(Date.now()+300000).toISOString()}:{}),updated_at:new Date().toISOString() }).eq('user_id',credential.user_id);
             if (saved.error) console.warn('[META_ADS_SCHEDULE] Status save needs retry');
         }
     }

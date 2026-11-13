@@ -29,6 +29,21 @@ beforeAll(async () => {
     const dates = (await db.query<any>('SELECT veo_today()::text AS today,(veo_today()-2)::text AS earlier')).rows[0]; today = dates.today; earlier = dates.earlier;
 }, 180000);
 afterAll(async () => { await db?.close(); });
+it('enrolls recovered and newly enabled Pages without claiming historical message completeness',async()=>{
+    await db.exec('BEGIN');try{
+        const current=(await db.query<any>('SELECT capture_from FROM veo_calendar_message_coverage WHERE page_id=$1',[page])).rows[0];
+        expect(current).toBeTruthy();expect(Date.parse(current.capture_from)).toBeGreaterThan(Date.now()-120000);
+        await db.query("UPDATE pages SET name='Renamed Page' WHERE id=$1",[page]);
+        expect((await db.query<any>('SELECT capture_from FROM veo_calendar_message_coverage WHERE page_id=$1',[page])).rows[0].capture_from).toStrictEqual(current.capture_from);
+        await db.query('UPDATE pages SET veo_enabled=true,veo_tenant_id=(SELECT tenant_id FROM veo_accounts WHERE user_id=$1) WHERE id=$2',[owner,foreign]);
+        expect((await db.query('SELECT 1 FROM veo_calendar_message_coverage WHERE page_id=$1',[foreign])).rows).toHaveLength(1);
+        await db.query("UPDATE veo_calendar_message_coverage SET capture_from=now()-interval '3 days' WHERE page_id=$1",[foreign]);
+        await db.query('UPDATE pages SET veo_enabled=false WHERE id=$1',[foreign]);await db.query('UPDATE pages SET veo_enabled=true WHERE id=$1',[foreign]);
+        const restored=(await db.query<any>('SELECT capture_from FROM veo_calendar_message_coverage WHERE page_id=$1',[foreign])).rows[0];
+        expect(Date.parse(restored.capture_from)).toBeGreaterThan(Date.now()-120000);
+        expect((await db.query<any>("SELECT has_function_privilege('authenticated','veo_calendar_enroll_message_coverage()','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+    }finally{await db.exec('ROLLBACK');}
+});
 it('preserves first-inquiry cohorts while exact paid-order salary stays on the actual completion date', async () => {
     const o = await action(manager, 'order', { request_id: id(10), seller_id: manager, page_id: page, contact_id: client, description: 'Video', total_minor: 203, currency: 'PHP' });
     await action(manager, 'payment', { request_id: id(11), order_id: o.id, kind: 'deposit', confirmed: true, reference: 'deposit', amount_minor: 50, occurred_at: `${earlier}T12:00:00+08:00` });

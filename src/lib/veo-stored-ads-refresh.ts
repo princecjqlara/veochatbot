@@ -26,7 +26,7 @@ export async function refreshStoredWorkspaceAds({ db, user, from, to, authorize,
             ...(preserveOtherCheckpoint && credential.sync_checkpoint && !checkpoint ? {} : { sync_checkpoint: result.complete ? null : { from, to, completed_windows: result.completed_windows, page_ids: result.page_ids, account_ids: result.account_ids } }),
             updated_at: new Date().toISOString(), refresh_lease_token: null, refresh_lease_until: null
         }).eq('user_id', user).eq('refresh_lease_token', lease);
-        if (saved.error) throw Error('Advertising results were fetched but refresh progress could not be saved. Recheck before retrying.');
+        if (saved.error) throw Error('Advertising refresh progress could not be saved. ' + (result.errors.length ? 'Source: ' + result.errors.join('; ').slice(0, 180) + '. ' : '') + 'Recheck before retrying.');
         return result;
     } finally {
         await db.from('meta_ads_credentials').update({ refresh_lease_token: null, refresh_lease_until: null }).eq('user_id', user).eq('refresh_lease_token', lease);
