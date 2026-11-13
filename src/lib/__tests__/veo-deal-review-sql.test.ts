@@ -246,3 +246,28 @@ it('awards one optional incentive per order with branch guards, saved reasons, r
  expect(Number((await rpc('veo_salary',[member,today])).totals[0].incentive_minor)).toBe(0);
  expect((await db.query('SELECT * FROM veo_salary_reconciliation WHERE user_id=$1',[member])).rows.length).toBeGreaterThan(0);
 });
+
+it('uses actual spend, defers unfunded carryover and caps funded carryover without changing completed targets',async()=>{
+ await expect(rpc('veo_quota_policy',[member,member,JSON.stringify({carry_enabled:true,max_carry:10,capacity_multiplier:2,fallback_cpa_minor:10000})])).rejects.toThrow('Supervisor');
+ await expect(rpc('veo_quota_policy',[other,member,null])).rejects.toThrow('outside your branch');
+ await rpc('veo_quota_policy',[manager,member,JSON.stringify({carry_enabled:true,max_carry:10,capacity_multiplier:2,fallback_cpa_minor:10000})]);
+ await db.query('UPDATE veo_quota_policies SET effective_from=veo_today()-1 WHERE user_id=$1',[member]);
+ await db.query("INSERT INTO veo_operating_quotas(user_id,work_date,capacity,quota,basis) VALUES($1,veo_today()-1,2,2,'{}')",[member]);
+ const workers=Number((await db.query<any>("SELECT count(*) n FROM veo_accounts WHERE active AND role IN('member','manager') AND veo_can_page(user_id,$1)",[page])).rows[0].n);
+ await db.query("INSERT INTO veo_ad_spend_coverage VALUES($1,veo_today(),'PHP',0,0,1,now(),false,true)",[page]);
+ let q=await rpc('veo_supply_target',[member,(await db.query<any>('SELECT veo_today() d')).rows[0].d,2]);expect(q).toMatchObject({quota:0,carry_remaining:2,carry_applied:0,carry_deferred:2,ad_mode:'no_spend'});
+ await db.query("UPDATE veo_ad_spend_coverage SET amount_minor=$2,ad_count=1 WHERE page_id=$1",[page,40000*workers]);
+ const day=(await db.query<any>('SELECT veo_today() d')).rows[0].d;
+ await db.query("INSERT INTO ad_daily_spend(page_id,ad_id,account_id,spend_date,currency,account_timezone,pht_aligned,amount,checked_at) VALUES($1,'998' ,'999',veo_today(),'PHP','Asia/Manila',true,$2,now())",[page,400*workers]);
+ q=await rpc('veo_supply_target',[member,day,2]);expect(q).toMatchObject({quota:4,base_quota:2,carry_applied:2,carry_deferred:0});
+ await rpc('veo_target',[member,day]);await db.query('UPDATE veo_ad_spend_coverage SET amount_minor=0 WHERE page_id=$1',[page]);await db.query("UPDATE ad_daily_spend SET amount=0 WHERE ad_id='998' ");await rpc('veo_target',[member,day]);
+ expect(Number((await db.query<any>('SELECT quota FROM veo_operating_quotas WHERE user_id=$1 AND work_date=veo_today()',[member])).rows[0].quota)).toBe(0);
+ await db.query("UPDATE veo_ad_spend_coverage SET checked_at=now()-interval '4 hours' WHERE page_id=$1",[page]);
+ q=await rpc('veo_supply_target',[member,day,2]);expect(q).toMatchObject({quota:2,supply_known:false,carry_applied:0});
+ await expect(db.query('UPDATE veo_operating_quotas SET quota=0 WHERE user_id=$1 AND work_date=veo_today()-1',[member])).rejects.toThrow('read-only');
+});
+it('marks a successfully checked zero-spend current day provisional without declaring missing or stale data complete',async()=>{
+ await db.query("INSERT INTO veo_ad_spend_coverage VALUES($1,veo_today(),'PHP',0,0,1,now(),false,true)",[page]);
+ const day=(await db.query<any>('SELECT veo_today() d')).rows[0].d;
+ const rows=await rpc('veo_calendar_spend',[[page],day,day]);expect(rows[0]).toMatchObject({amount_minor:0,complete:false,provisional:true});
+});

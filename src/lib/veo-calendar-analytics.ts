@@ -60,19 +60,22 @@ function financials(orders: any[], cash: any[], spend: any[], pageCount: number,
         const amount = ads.length && ads.every(r => r.amount_minor != null) ? sum(ads, 'amount_minor') : null, salaryKnown = !beforeLaunch && !done.some(r => r.commission_minor == null) && !payments.some(r => r.source === 'retained');
         const salary = salaryKnown ? sum(done, 'commission_minor') : null, gross = sum(done, 'paid_minor'), received = sum(payments, 'amount_minor');
         const mixedRevenue = [...orders, ...cash].some(r => r.currency !== currency && Number(r.paid_minor || r.amount_minor || 0) !== 0);
-        const spendComplete = amount != null && ads.every(r => r.complete) && new Set(ads.map(r => r.page_id)).size === pageCount;
+        const allPages = new Set(ads.map(r => r.page_id)).size === pageCount;
+        const spendComplete = amount != null && allPages && ads.every(r => r.complete);
+        const spendUsable = amount != null && allPages && ads.every(r => r.complete || r.provisional);
+        const provisional = spendUsable && !spendComplete;
         return { currency, gross_minor: gross, received_minor: received,
             gross_before_refunds_minor: done.every(r => r.gross_before_refunds_minor != null) ? sum(done, 'gross_before_refunds_minor') : null,
             refunds_minor: done.every(r => r.refunds_minor != null) ? sum(done, 'refunds_minor') : null,
             salary_minor: salary, known_salary_minor: sum(done, 'commission_minor'), ad_spend_minor: amount,
-            spend_complete: spendComplete, spend_pages_covered: ads.filter(r => r.complete).length, spend_pages_expected: pageCount,
+            spend_complete: spendComplete, spend_usable: spendUsable, provisional, spend_pages_observed: ads.filter(r => r.complete || r.provisional).length, financial_blocker: mixedRevenue ? 'currency_mismatch' : !spendUsable ? 'spend_missing' : salary == null ? 'salary_missing' : amount === 0 ? 'zero_spend' : null, spend_pages_covered: ads.filter(r => r.complete).length, spend_pages_expected: pageCount,
             spend_accounts_checked: Math.max(0, ...ads.map(r => Number(r.accounts_checked || 0))),
             spend_checked_at: ads.map(r => r.checked_at).filter(Boolean).sort()[0] || null,
-            mean_order_minor: mean(values), median_order_minor: median(values), done_orders: done.length, net_minor: !mixedRevenue && spendComplete && salary != null ? gross - salary - amount! : null,
-            cash_net_minor: !mixedRevenue && spendComplete && salary != null ? received - salary - amount! : null, gross_roas: !mixedRevenue && spendComplete ? ratio(gross, amount!) : null,
-            cash_roas: !mixedRevenue && spendComplete ? ratio(received, amount!) : null,
-            net_roas: !mixedRevenue && spendComplete && salary != null ? ratio(gross - salary, amount!) : null,
-            cash_net_roas: !mixedRevenue && spendComplete && salary != null ? ratio(received - salary, amount!) : null,
+            mean_order_minor: mean(values), median_order_minor: median(values), done_orders: done.length, net_minor: !mixedRevenue && spendUsable && salary != null ? gross - salary - amount! : null,
+            cash_net_minor: !mixedRevenue && spendUsable && salary != null ? received - salary - amount! : null, gross_roas: !mixedRevenue && spendUsable ? ratio(gross, amount!) : null,
+            cash_roas: !mixedRevenue && spendUsable ? ratio(received, amount!) : null,
+            net_roas: !mixedRevenue && spendUsable && salary != null ? ratio(gross - salary, amount!) : null,
+            cash_net_roas: !mixedRevenue && spendUsable && salary != null ? ratio(received - salary, amount!) : null,
             legacy_salary_unknown: done.filter(r => r.commission_minor == null).length };
     });
 }
@@ -96,7 +99,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
             (p.source !== 'workspace' || convertedIds.has(p.contact_id)));
         const converted = clients.filter((c: any) => c.converted_at || c.stage === 'converted'), payers = new Set(co.filter((o: any) => o.closed_at && Number(o.paid_minor) > 0).map((o: any) => o.contact_id));
         const money = financials(co, cash, spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay && !co.some((o: any) => o.financial_source === 'workspace' && o.done_at)).map(f => ({ ...f,
-            acquisition_cost_minor: f.spend_complete ? ratio(f.ad_spend_minor!, payers.size) : null, cost_per_inquiry_minor: f.spend_complete ? ratio(f.ad_spend_minor!, clients.length) : null,
+            acquisition_cost_minor: f.spend_usable ? ratio(f.ad_spend_minor!, payers.size) : null, cost_per_inquiry_minor: f.spend_usable ? ratio(f.ad_spend_minor!, clients.length) : null,
             paid_customers: payers.size, net_minor: f.cash_net_minor, gross_roas: f.cash_roas, net_roas: f.cash_net_roas }));
         return { inquiries: clients.length, converted: converted.length, converted_later: converted.filter((c: any) => c.converted_at && dayOf(c.converted_at) > day).length,
             conversion_time_unknown: converted.filter((c: any) => !c.converted_at).length, conversion_rate: ratio(converted.length, clients.length), paid_customers: payers.size, paid_rate: ratio(payers.size, clients.length),

@@ -102,3 +102,9 @@ it('requires mature peer coverage for projections and never treats a closed wind
     expect(estimate.status).toBe('estimated'); expect(estimate.additional).toBeCloseTo(.2); expect(estimate.lower).toBeLessThan(.2); expect(estimate.upper).toBeGreaterThan(.2);
     expect(cohortProjection([lead('old', 'new')], peers, Date.parse('2026-12-30')).status).toBe('window_complete');
 });
+
+it('shows provisional net at zero spend without manufacturing a ROAS or treating missing costs as zero',()=>{
+ const data:any=inputs();data.spend.find((s:any)=>s.spend_date==='2026-11-05').complete=false;data.spend.find((s:any)=>s.spend_date==='2026-11-05').provisional=true;data.spend.find((s:any)=>s.spend_date==='2026-11-05').amount_minor=0;
+ let result=buildVeoCalendar(data,{salary_days:[]},'2026-11','2026-11-05');expect(result.selected.finance[0]).toMatchObject({net_minor:6500,provisional:true,spend_complete:false,gross_roas:null,financial_blocker:'zero_spend'});
+ data.spend.find((s:any)=>s.spend_date==='2026-11-05').provisional=false;result=buildVeoCalendar(data,{salary_days:[]},'2026-11','2026-11-05');expect(result.selected.finance[0]).toMatchObject({net_minor:null,spend_usable:false,financial_blocker:'spend_missing'});
+});

@@ -158,7 +158,7 @@ it('requires the complete matching ad-cost window before deriving an ad-supporte
           SELECT $1,d::date,'PHP',CASE WHEN d::date=$2::date THEN 1000 ELSE 0 END,CASE WHEN d::date=$2::date THEN 1 ELSE 0 END,1,now(),true,true
           FROM generate_series((SELECT(launch_at AT TIME ZONE 'Asia/Manila')::date FROM veo_tenants WHERE owner_id=$3),(veo_today()-1)::timestamp,interval '1 day') d`,[page,earlier,owner]);
         await db.query("INSERT INTO ad_daily_spend(page_id,ad_id,account_id,spend_date,currency,account_timezone,pht_aligned,amount,checked_at) VALUES($1,'91','93',$2,'PHP','Asia/Manila',true,10,now())",[page,earlier]);
-        const read=async()=>(await db.query<any>('SELECT veo_supply_target($1,$2,3) r',[manager,today])).rows[0].r;
+        const read=async()=>(await db.query<any>('SELECT veo_supply_target($1,veo_today()+1,3) r',[manager])).rows[0].r;
         expect((await read()).pages[0].observed_cpa_minor).toBe(1000);
         await db.query("UPDATE ad_daily_spend SET checked_at=now()+interval '1 second' WHERE page_id=$1 AND ad_id='91'",[page]);
         const partial=await read();expect(partial.pages[0].observed_cpa_minor).toBeNull();expect(partial.supply_known).toBe(false);expect(partial.quota).toBe(3);

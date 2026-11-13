@@ -22,7 +22,7 @@ it('shows team quotas separately from full capacity, historical average and an i
     } finally { await act(async () => view.unmount()); }
 });
 it('shows unavailable averages and undeclared participation without claiming a zero target was met', async () => {
-    let view: any; await act(async () => { view = create(createElement(VeoCapacityMetrics, { metrics: { ...metrics, capacity: 0, workers: 0, average_worker_capacity: null,
+    let view: any; await act(async () => { view = create(createElement(VeoCapacityMetrics, { metrics: { ...metrics, capacity: 0, workers: 0, participating: 0, average_worker_capacity: null,
         quota: { closed: 0, done: 0, met: false }, history: { ...metrics.history, average_done_per_day: null, completed_days: 0, best_three_average: null, best_days_count: 0 } }, title: 'Empty team' })); });
     try { const text = flatten(view.toJSON()); expect(text).toContain('Unavailable'); expect(text).toContain('Insufficient history'); expect(text).toContain('quota awaits active participation'); expect(view.root.findAllByType('progress')).toHaveLength(0); }
     finally { await act(async () => view.unmount()); }
