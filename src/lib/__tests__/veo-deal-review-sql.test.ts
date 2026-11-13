@@ -227,3 +227,22 @@ it.each(['closed','done'])('accepts a shared stage/order screenshot for %s while
  await db.query('UPDATE veo_deal_review_photos incoming SET photo_sha256=prior.photo_sha256 FROM veo_deal_review_photos prior WHERE prior.review_id=$1 AND incoming.id=ANY($2) AND incoming.slot=prior.slot',[saved.id,again.photos]);
  await expect(submitAs(manager,again)).rejects.toThrow('already submitted');
 });
+
+it('awards one optional incentive per order with branch guards, saved reasons, reconciliation and idempotent notices',async()=>{
+ const cd=await approve(await submit(await evidence()));
+ await expect(rpc('veo_incentive_save',[member,'review',cd.id,5,'Great service',0,id(seq++),true])).rejects.toThrow('Manager or Team Leader');
+ await expect(rpc('veo_incentive_save',[other,'review',cd.id,5,'Great service',0,id(seq++),true])).rejects.toThrow('outside your branch');
+ const request=id(seq++),args=[manager,'review',cd.id,5,'Great service',0,request,true];
+ const saved=await rpc('veo_incentive_save',args);expect(Number(saved.incentive.percent)).toBe(5);expect(saved.payable).toBe(false);expect(saved.saved_reasons).toEqual(['Great service']);
+ await rpc('veo_incentive_save',args);expect((await db.query('SELECT * FROM veo_incentive_notices')).rows).toHaveLength(1);
+ await expect(rpc('veo_incentive_save',[manager,'review',cd.id,10,'New award',0,id(seq++),false])).rejects.toThrow('Refresh');
+ const dd=await approve(await submit(await evidence('done',{order_id:cd.order_id,closed_deal_id:cd.closed_deal_id,tip_minor:10000})),leader);
+ const ctx=await rpc('veo_incentive_context',[manager,'review',dd.id]);expect(Number(ctx.estimated_minor)).toBe(5000);expect(ctx.payable).toBe(true);
+ const today=(await db.query<any>('SELECT veo_today() today')).rows[0].today;
+ const salary=await rpc('veo_salary',[member,today]);expect(Number(salary.totals[0].incentive_minor)).toBe(5000);expect(Number(salary.totals[0].commission_minor)).toBe(Number(salary.totals[0].base_commission_minor)+5000);
+ const finance=await rpc('veo_finance_days',[manager,today,today,null,member]);expect(Number(finance.days[0].totals[0].commission_minor)).toBe(Number(salary.totals[0].commission_minor));
+ const calendar=(await db.query<any>('SELECT commission_minor FROM veo_calendar_order_values WHERE id=$1',[cd.order_id])).rows[0];expect(Number(calendar.commission_minor)).toBe(Number(salary.totals[0].commission_minor));
+ await rpc('veo_incentive_save',[leader,'review',dd.id,0,'Award correction',1,id(seq++),false]);
+ expect(Number((await rpc('veo_salary',[member,today])).totals[0].incentive_minor)).toBe(0);
+ expect((await db.query('SELECT * FROM veo_salary_reconciliation WHERE user_id=$1',[member])).rows.length).toBeGreaterThan(0);
+});

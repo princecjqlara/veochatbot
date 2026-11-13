@@ -1,4 +1,5 @@
 'use client';
+import VeoDealIncentive from './VeoDealIncentive';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { receiptHoldLabels } from '@/lib/veo-receipts';
@@ -125,7 +126,7 @@ function LegacyVeoReceiptInbox({ scope, accounts, compact = false, initialContac
             {r.closed_amount_minor != null && <p className="text-sm">Down payment: {money(r.closed_amount_minor, r.currency)} · {r.closed_payment_verified ? 'Reconciled against verified payment records' : 'Pending financial verification / reconciliation'}</p>}
             {r.receipt_kind === 'done' && <p className="text-sm">Client sent: <strong>{money(r.done_balance_paid_minor, r.currency)}</strong> · Total price: <strong>{money(r.total_minor, r.currency)}</strong></p>}
             {r.receipt_kind === 'done' && r.settlement_difference_minor != null && <p className="text-sm">Payment difference from deal price: {money(r.settlement_difference_minor, r.currency)} · maximum allowed difference: {money(r.settlement_tolerance_minor, r.currency)}</p>}
-            <p className="text-sm whitespace-pre-wrap">Notes: {r.notes || 'None recorded'}</p>
+            <VeoDealIncentive kind="receipt" id={r.id} /><p className="text-sm whitespace-pre-wrap">Notes: {r.notes || 'None recorded'}</p>
             <details><summary className="cursor-pointer text-sm underline">Edit receipt notes</summary><form key={`${r.id}:${r.notes || ''}`} className="space-y-2 mt-2" onSubmit={async e => {
                 e.preventDefault(); const notes = String(new FormData(e.currentTarget).get('notes') || ''); setBusy(true); setMessage('');
                 try { const res = await fetch('/api/workspace/receipts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'notes', receipt_id: r.id, notes }) }), b = await res.json(); if (!res.ok) throw Error(b.error); setMessage('Receipt notes saved. Financial records are unchanged.'); setVersion(v => v + 1); } catch (err: any) { setMessage(err.message); } finally { setBusy(false); }

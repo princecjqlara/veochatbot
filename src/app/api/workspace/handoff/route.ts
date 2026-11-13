@@ -97,6 +97,13 @@ export async function GET(request: NextRequest) {
     return handleRequest(request, db => getHandoff(request, db));
 }
 async function getHandoff(request: NextRequest, db: HandoffDb) {
+    const notice = request.nextUrl.searchParams.get('incentive_notice');
+    if (notice) {
+        if (!uuid(notice)) return NextResponse.json({ error: 'Invalid notice' }, { status: 400 });
+        const result = await db.rpc('veo_incentive_notice', { p_id: notice });
+        if (result.error) return NextResponse.json({ error: 'Notice temporarily unavailable' }, { status: 503 });
+        return NextResponse.json(result.data || { error: 'Team Telegram route is not ready' }, { status: result.data ? 200 : 409, headers: { 'Cache-Control': 'no-store' } });
+    }
     const resource = request.nextUrl.searchParams.get('resource');
     if (resource) {
         if (resource !== 'directory') return NextResponse.json({ error: 'Invalid resource' }, { status: 400 });
