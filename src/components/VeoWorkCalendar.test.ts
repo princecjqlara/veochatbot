@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('next/link', () => ({ default: ({ children }: any) => children }));
 vi.mock('./VeoAdsConnection', () => ({ default: () => null }));
 vi.mock('@/lib/use-hourly-report-refresh', () => ({ useHourlyReportRefresh: () => {} }));
-import Calendar from './VeoWorkCalendar';
+import Calendar, { InquiryConversionSummary } from './VeoWorkCalendar';
 import { buildVeoCalendar } from '@/lib/veo-calendar-analytics';
 let view: ReactTestRenderer;
 const text = (v: any): string => Array.isArray(v) ? v.map(text).join('') : typeof v === 'string' || typeof v === 'number' ? String(v) : (v?.children || []).map(text).join('');
@@ -61,4 +61,14 @@ it('switches the complete daily report to actual money made and spent, with no i
 
  const inquiry=view.root.findAllByType('button').find(b=>text(b)==='Inquiry-date results')!;await act(async()=>inquiry.props.onClick());
  expect(view.root.findAllByProps({'aria-label':'Daily money made and spent'})).toHaveLength(0);expect(text(view.toJSON())).toContain('Clients acquired on');
+});
+
+it('displays same-day conversion percentages, counts, later outcomes and empty-date explanations',async()=>{
+ const outcome=(clients:number,rate:number|null)=>({clients,rate});
+ const stats={inquiries:10,same_day_closed:outcome(4,.4),same_day_done:outcome(2,.2),same_day_both:outcome(2,.2),eventually_closed:outcome(6,.6),eventually_done:outcome(5,.5),closed_later:outcome(2,.2),done_later:outcome(3,.3),history_checked:10,provisional:true};
+ await act(async()=>{view=create(createElement(InquiryConversionSummary,{day:{work_date:'2026-11-14',inquiry_conversion:stats}}));});
+ const result=text(view.toJSON());for(const value of ['40.0%','20.0%','4 of 10 inquiry clients','2 first closed on a later date','3 first completed on a later date','Today is still in progress'])expect(result).toContain(value);
+ const empty={...stats,inquiries:0,same_day_closed:outcome(0,null),same_day_done:outcome(0,null),same_day_both:outcome(0,null),eventually_closed:outcome(0,null),eventually_done:outcome(0,null)};
+ await act(async()=>view.update(createElement(InquiryConversionSummary,{day:{work_date:'2026-11-14',inquiry_conversion:empty}})));
+ expect(text(view.toJSON())).toContain('No inquiries');expect(text(view.toJSON())).not.toContain('NaN');
 });

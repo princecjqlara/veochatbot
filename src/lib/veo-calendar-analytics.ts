@@ -52,6 +52,33 @@ export function cohortProjection(leads: any[], peers: Array<number | null>, now:
     const center = (p + z * z / (2 * n)) / denominator, margin = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denominator;
     return { ...common, status: 'estimated', additional: remaining * p, lower: remaining * Math.max(0, center - margin), upper: remaining * Math.min(1, center + margin) };
 }
+export function inquiryDayConversions(clients: any[], orders: any[], day: string, now: number) {
+    const first = new Map(clients.filter(c => Number.isFinite(Date.parse(c.inquiry_at)) && dayOf(c.inquiry_at) === day && Date.parse(c.inquiry_at) <= now).map(c => [c.id, c]));
+    const closed = new Set<string>(), done = new Set<string>(), both = new Set<string>();
+    const sameClosed = new Set<string>(), sameDone = new Set<string>(), sameBoth = new Set<string>();
+    for (const order of orders) {
+        const client = first.get(order.contact_id); if (!client) continue;
+        const inquiry = Date.parse(client.inquiry_at), cd = Date.parse(order.closed_at), dd = Date.parse(order.done_at);
+        const hasClosed = Number.isFinite(cd) && cd >= inquiry && cd <= now;
+        const hasDone = Number.isFinite(dd) && dd >= inquiry && dd <= now;
+        const closedToday = hasClosed && dayOf(order.closed_at) === day;
+        const doneToday = hasDone && dayOf(order.done_at) === day;
+        if (hasClosed) closed.add(client.id);
+        if (hasDone) done.add(client.id);
+        if (hasClosed && hasDone && dd >= cd) both.add(client.id);
+        if (closedToday) sameClosed.add(client.id);
+        if (doneToday) sameDone.add(client.id);
+        if (closedToday && doneToday && dd >= cd) sameBoth.add(client.id);
+    }
+    const total = first.size;
+    const outcome = (count: number) => ({ clients: count, rate: ratio(count, total) });
+    return { inquiries: total, same_day_closed: outcome(sameClosed.size), same_day_done: outcome(sameDone.size), same_day_both: outcome(sameBoth.size),
+        eventually_closed: outcome(closed.size), eventually_done: outcome(done.size), eventually_both: outcome(both.size),
+        closed_later: outcome(closed.size - sameClosed.size), done_later: outcome(done.size - sameDone.size),
+        history_checked: [...first.values()].filter(c => c.inquiry_basis === 'verified_history').length,
+        provisional: day === dayOf(new Date(now).toISOString()) };
+}
+
 function financials(orders: any[], cash: any[], spend: any[], pageCount: number, beforeLaunch: boolean, reportCurrencies: string[] = []) {
     const currencies = [...new Set<string>([...reportCurrencies, ...[...orders, ...cash, ...spend].map(r => r.currency)])];
     return currencies.map(currency => {
@@ -120,7 +147,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
         const archivedClosed = closedOrders.filter((o: any) => o.financial_source === 'retained').length, archivedDone = dailyOrders.filter((o: any) => o.financial_source === 'retained').length;
         const salaryRates = (finance.salary_days || []).filter((d: any) => d.work_date === day && d.done > 0 && [35, 40].includes(d.rate));
         return { work_date: day, future: day > range.today, before_launch: day < launchDay, provisional: day === range.today, closed, done, archived_closed: archivedClosed, archived_done: archivedDone,
-            inquiries: summary.inquiries, cohort_converted: summary.converted, converted_later: summary.converted_later, cohort_finance: summary.finance, cohort_closed: summary.closed, cohort_done: summary.done, cohort_orders_created: summary.created_orders,
+            inquiries: summary.inquiries, inquiry_conversion: inquiryDayConversions(summary.clients, summary.orders, day, now), cohort_converted: summary.converted, converted_later: summary.converted_later, cohort_finance: summary.finance, cohort_closed: summary.closed, cohort_done: summary.done, cohort_orders_created: summary.created_orders,
             salary_rates: [...new Set<number>(salaryRates.map((d: any) => d.rate))].sort().map(rate => ({ rate, workers: salaryRates.filter((d: any) => d.rate === rate).length,
                 totals: salaryRates.filter((d: any) => d.rate === rate).flatMap((d: any) => d.totals.map((t: any) => ({ user_id: d.user_id, ...t }))) })),
             finance: financials(dailyOrders, cashByDay.get(day) || [], spendByDay.get(day) || [], input.pages.length, day < launchDay, currencies),
