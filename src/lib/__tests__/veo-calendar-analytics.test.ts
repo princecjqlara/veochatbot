@@ -108,3 +108,13 @@ it('shows provisional net at zero spend without manufacturing a ROAS or treating
  let result=buildVeoCalendar(data,{salary_days:[]},'2026-11','2026-11-05');expect(result.selected.finance[0]).toMatchObject({net_minor:6500,provisional:true,spend_complete:false,gross_roas:null,financial_blocker:'zero_spend'});
  data.spend.find((s:any)=>s.spend_date==='2026-11-05').provisional=false;result=buildVeoCalendar(data,{salary_days:[]},'2026-11','2026-11-05');expect(result.selected.finance[0]).toMatchObject({net_minor:null,spend_usable:false,financial_blocker:'spend_missing'});
 });
+
+it('updates acquisition-date color after later completions and preserves the separate daily result',()=>{
+ const data:any=inputs();const before=JSON.parse(JSON.stringify(data));before.orders=[];before.cash=[];
+ const early=buildVeoCalendar(before,{},'2026-11','2026-11-01');
+ const later=buildVeoCalendar(data,{},'2026-11','2026-11-01');
+ expect(veoCalendarShade(early.selected,'cohort_net','PHP')).toBe(-2000);
+ expect(veoCalendarShade(later.selected,'cohort_net','PHP')).toBe(4500);
+ expect(veoCalendarShade(later.selected,'net','PHP')).toBe(-2000);
+ expect(veoCalendarShade({...later.selected,future:true},'cohort_net','PHP')).toBeNull();
+});
