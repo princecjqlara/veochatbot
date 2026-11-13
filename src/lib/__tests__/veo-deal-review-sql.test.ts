@@ -277,3 +277,12 @@ it('refreshes current worker and team capacity without freezing tomorrow',async(
  expect((await db.query('SELECT * FROM veo_team_daily_capacity WHERE work_date=veo_today()')).rows.length).toBeGreaterThan(0);
  expect((await db.query('SELECT * FROM veo_operating_quotas WHERE work_date=veo_today()+1')).rows).toHaveLength(0);
 });
+
+it('reuses prepared quotas only inside calendar planning and restores normal recalculation afterward',async()=>{
+ await expect(rpc('veo_calendar_prepare',[member])).rejects.toThrow('Calendar access denied');
+ expect(await rpc('veo_calendar_prepare',[owner])).toBe(true);
+ expect((await db.query<any>("SELECT current_setting('veo.prepared_calendar',true) mode")).rows[0].mode).not.toBe('on');
+ await db.query("INSERT INTO veo_ad_spend_coverage VALUES($1,veo_today(),'PHP',0,0,1,now(),false,true)",[page]);
+ await rpc('veo_target',[member,(await db.query<any>('SELECT veo_today() d')).rows[0].d]);
+ expect(Number((await db.query<any>('SELECT quota FROM veo_operating_quotas WHERE user_id=$1 AND work_date=veo_today()',[member])).rows[0].quota)).toBe(0);
+});
