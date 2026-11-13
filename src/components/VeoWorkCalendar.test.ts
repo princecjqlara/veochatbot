@@ -5,6 +5,7 @@ vi.mock('next/link', () => ({ default: ({ children }: any) => children }));
 vi.mock('./VeoAdsConnection', () => ({ default: () => null }));
 vi.mock('@/lib/use-hourly-report-refresh', () => ({ useHourlyReportRefresh: () => {} }));
 import Calendar from './VeoWorkCalendar';
+import { buildVeoCalendar } from '@/lib/veo-calendar-analytics';
 let view: ReactTestRenderer;
 const text = (v: any): string => Array.isArray(v) ? v.map(text).join('') : typeof v === 'string' || typeof v === 'number' ? String(v) : (v?.children || []).map(text).join('');
 afterEach(async () => { if (view) await act(async () => view.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -34,4 +35,30 @@ it('renders inquiry-date sales and clear red/green colors even when daily transa
     await act(async()=>inquiries.props.onClick());
     expect(text(view.root.findByProps({'aria-label':'Work date 2026-11-12'}))).toContain('CD 3');
 
+});
+
+it('switches the complete daily report to actual money made and spent, with no inquiry sections or extra request',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-14T08:00:00Z'));
+ const input={as_of:'2026-11-14T08:00:00Z',scope:{role:'owner',launch_at:'2026-11-01T00:00:00Z'},pages:[{id:'page',name:'Page'}],
+ leads:[{id:'buyer',page_id:'page',name:'Buyer',stage:'converted',inquiry_at:'2026-11-01T01:00:00Z'}],selected_clients:[],
+ orders:[{order_key:'order',contact_id:'buyer',seller_id:'seller',currency:'PHP',paid_minor:100000,total_minor:100000,commission_minor:35000,financial_source:'workspace',closed_at:'2026-11-13T01:00:00Z',closed_date:'2026-11-13',done_at:'2026-11-14T01:00:00Z',done_date:'2026-11-14'}],
+ cash:[{contact_id:'buyer',currency:'PHP',amount_minor:30000,paid_day:'2026-11-13'},{contact_id:'buyer',currency:'PHP',amount_minor:70000,paid_day:'2026-11-14'}],
+ spend:[{page_id:'page',currency:'PHP',spend_date:'2026-11-14',amount_minor:20000,complete:true}],peer_lag_hours:[],messages:[],message_coverage:[],page_plans:[],team_plans:[],employees:[],created_orders:[]};
+ const report=buildVeoCalendar(input,{},'2026-11','2026-11-14');const fetcher=vi.fn(async()=>Response.json(report));vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Calendar,{scope:{role:'owner'},pages:input.pages}));});
+ expect(view.root.findAllByProps({'aria-label':'Daily money made and spent'})).toHaveLength(0);
+ expect(text(view.toJSON())).toContain('Clients acquired on');const reads=fetcher.mock.calls.length;
+ const daily=view.root.findAllByType('button').find(b=>text(b)==='Daily performance')!;
+ await act(async()=>daily.props.onClick());
+ const summary=view.root.findByProps({'aria-label':'Daily money made and spent'});
+ for(const label of ['Sales made','Money received','Ad spend','Staff commission','Total costs','Daily net profit','1,000.00','700.00','200.00','350.00','550.00','450.00'])expect(text(summary)).toContain(label);
+ expect(text(view.toJSON())).not.toContain('Clients acquired on');expect(text(view.toJSON())).not.toContain('Possible additional conversions within 30 days');
+ expect(view.root.findByProps({'aria-label':'Monthly earnings and daily averages'})).toBeTruthy();expect(fetcher.mock.calls.length).toBe(reads);
+ const shading=view.root.findAllByType('select').find(select=>select.props.value==='cohort_net')!;
+ await act(async()=>shading.props.onChange({target:{value:'inquiries'}}));
+ const dailyTile=view.root.findByProps({'aria-label':'Work date 2026-11-14'});
+ expect(text(dailyTile)).toContain('Sales made');expect(text(dailyTile)).toContain('1,000.00');expect(text(dailyTile)).toContain('DD 1');
+
+ const inquiry=view.root.findAllByType('button').find(b=>text(b)==='Inquiry-date results')!;await act(async()=>inquiry.props.onClick());
+ expect(view.root.findAllByProps({'aria-label':'Daily money made and spent'})).toHaveLength(0);expect(text(view.toJSON())).toContain('Clients acquired on');
 });
