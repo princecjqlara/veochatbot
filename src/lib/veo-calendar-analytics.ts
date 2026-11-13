@@ -101,7 +101,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
         const money = financials(co, cash, spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay && !co.some((o: any) => o.financial_source === 'workspace' && o.done_at)).map(f => ({ ...f,
             acquisition_cost_minor: f.spend_usable ? ratio(f.ad_spend_minor!, payers.size) : null, cost_per_inquiry_minor: f.spend_usable ? ratio(f.ad_spend_minor!, clients.length) : null,
             paid_customers: payers.size, net_minor: f.cash_net_minor, gross_roas: f.cash_roas, net_roas: f.cash_net_roas }));
-        return { inquiries: clients.length, converted: converted.length, converted_later: converted.filter((c: any) => c.converted_at && dayOf(c.converted_at) > day).length,
+        return { closed: co.filter((o: any) => o.closed_at).length, done: co.filter((o: any) => o.done_at).length, created_orders: createdOrders.filter((o: any) => clients.some((c: any) => c.id === o.contact_id)).length, inquiries: clients.length, converted: converted.length, converted_later: converted.filter((c: any) => c.converted_at && dayOf(c.converted_at) > day).length,
             conversion_time_unknown: converted.filter((c: any) => !c.converted_at).length, conversion_rate: ratio(converted.length, clients.length), paid_customers: payers.size, paid_rate: ratio(payers.size, clients.length),
             qualified: clients.filter((c: any) => c.stage === 'qualified').length, not_qualified: clients.filter((c: any) => c.stage === 'not_qualified').length,
             current_converted: clients.filter((c: any) => c.stage === 'converted').length, order_created: clients.filter((c: any) => c.stage === 'order_created').length,
@@ -120,7 +120,7 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
         const archivedClosed = closedOrders.filter((o: any) => o.financial_source === 'retained').length, archivedDone = dailyOrders.filter((o: any) => o.financial_source === 'retained').length;
         const salaryRates = (finance.salary_days || []).filter((d: any) => d.work_date === day && d.done > 0 && [35, 40].includes(d.rate));
         return { work_date: day, future: day > range.today, before_launch: day < launchDay, provisional: day === range.today, closed, done, archived_closed: archivedClosed, archived_done: archivedDone,
-            inquiries: summary.inquiries, cohort_converted: summary.converted, converted_later: summary.converted_later, cohort_finance: summary.finance,
+            inquiries: summary.inquiries, cohort_converted: summary.converted, converted_later: summary.converted_later, cohort_finance: summary.finance, cohort_closed: summary.closed, cohort_done: summary.done, cohort_orders_created: summary.created_orders,
             salary_rates: [...new Set<number>(salaryRates.map((d: any) => d.rate))].sort().map(rate => ({ rate, workers: salaryRates.filter((d: any) => d.rate === rate).length,
                 totals: salaryRates.filter((d: any) => d.rate === rate).flatMap((d: any) => d.totals.map((t: any) => ({ user_id: d.user_id, ...t }))) })),
             finance: financials(dailyOrders, cashByDay.get(day) || [], spendByDay.get(day) || [], input.pages.length, day < launchDay, currencies),
@@ -174,5 +174,15 @@ export function veoCalendarShade(day: any, metric: string, currency: string): nu
         const value = row?.net_minor;
         return typeof value === 'number' && Number.isFinite(value) ? value : null;
     }
-    return typeof day[metric] === 'number' ? day[metric] : null;
+    const cohortMetric = ({ closed: 'cohort_closed', done: 'cohort_done', orders_created_count: 'cohort_orders_created' } as Record<string, string>)[metric] || metric;
+    return typeof day[cohortMetric] === 'number' ? day[cohortMetric] : null;
+}
+
+/** Keep tile amounts and shading on the same attribution basis. */
+export function veoCalendarTile(day: any, metric: string) {
+    const inquiry = metric !== 'net';
+    return { inquiry, closed: inquiry ? day.cohort_closed ?? 0 : day.closed,
+        done: inquiry ? day.cohort_done ?? 0 : day.done,
+        orders: inquiry ? day.cohort_orders_created ?? 0 : day.created_orders?.count ?? 0,
+        finance: inquiry ? day.cohort_finance || [] : day.finance || [] };
 }

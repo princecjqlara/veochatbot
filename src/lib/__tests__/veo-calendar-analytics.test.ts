@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildVeoCalendar, demographics, objections, cohortProjection, veoCalendarShade } from '../veo-calendar-analytics';
+import { buildVeoCalendar, demographics, objections, cohortProjection, veoCalendarShade, veoCalendarTile } from '../veo-calendar-analytics';
 const first = '2026-11-01T04:00:00Z', now = '2026-11-08T04:00:00Z';
 const lead = (id: string, stage = 'converted') => ({ id, page_id: 'page', name: id, stage, inquiry_at: first, converted_at: stage === 'converted' ? '2026-11-03T04:00:00Z' : null });
 function inputs() { return { as_of: now, scope: { role: 'owner', launch_at: '2026-10-30T00:00:00Z' }, pages: [{ id: 'page', name: 'VEO' }], leads: [lead('one'), lead('two', 'qualified')], selected_clients: [lead('one'), lead('two', 'qualified')], orders: [{ order_key: 'order', contact_id: 'one', seller_id: 'seller', currency: 'PHP', paid_minor: 10000, total_minor: 10000, commission_minor: 3500, financial_source: 'workspace', closed_at: '2026-11-03T04:00:00Z', closed_date: '2026-11-03', done_at: '2026-11-05T04:00:00Z', done_date: '2026-11-05' }], cash: [{ contact_id: 'one', currency: 'PHP', amount_minor: 3000, paid_day: '2026-11-03' }, { contact_id: 'one', currency: 'PHP', amount_minor: 7000, paid_day: '2026-11-05' }], spend: [{ page_id: 'page', currency: 'PHP', spend_date: '2026-11-01', amount_minor: 2000, complete: true }, { page_id: 'page', currency: 'PHP', spend_date: '2026-11-05', amount_minor: 1000, complete: true }], peer_lag_hours: [], messages: [], message_coverage: [], page_plans: [], team_plans: [], employees: [{ id: 'seller', name: 'Seller' }], missing_inquiry_dates: 3 }; }
@@ -117,4 +117,16 @@ it('updates acquisition-date color after later completions and preserves the sep
  expect(veoCalendarShade(later.selected,'cohort_net','PHP')).toBe(4500);
  expect(veoCalendarShade(later.selected,'net','PHP')).toBe(-2000);
  expect(veoCalendarShade({...later.selected,future:true},'cohort_net','PHP')).toBeNull();
+});
+
+it('attributes tile sales, closed and done counts to first inquiry even when the sale occurs on a later date',()=>{
+ const r=buildVeoCalendar(inputs(),{},'2026-11','2026-11-01');
+ const acquired=r.days.find(d=>d.work_date==='2026-11-01')!;
+ const completed=r.days.find(d=>d.work_date==='2026-11-05')!;
+ expect(veoCalendarTile(acquired,'cohort_net')).toMatchObject({inquiry:true,closed:1,done:1,finance:[{received_minor:10000,net_minor:4500}]});
+ expect(veoCalendarShade(acquired,'closed','PHP')).toBe(1);
+ expect(veoCalendarShade(acquired,'done','PHP')).toBe(1);
+ expect(veoCalendarTile(completed,'cohort_net')).toMatchObject({closed:0,done:0});
+ expect(veoCalendarTile(completed,'net')).toMatchObject({inquiry:false,done:1,finance:[{gross_minor:10000,net_minor:5500}]});
+ expect(acquired.closed).toBe(0);expect(completed.done).toBe(1);
 });
