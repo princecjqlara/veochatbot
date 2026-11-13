@@ -57,7 +57,7 @@ function financials(orders: any[], cash: any[], spend: any[], pageCount: number,
     return currencies.map(currency => {
         const o = orders.filter(r => r.currency === currency), payments = cash.filter(r => r.currency === currency), ads = spend.filter(r => r.currency === currency);
         const done = o.filter(r => r.done_at), values = done.map(r => Number(r.total_minor));
-        const amount = ads.length && ads.every(r => r.amount_minor != null) ? sum(ads, 'amount_minor') : null, salaryKnown = !beforeLaunch && !done.some(r => r.commission_minor == null) && !payments.some(r => r.source === 'retained');
+        const amount = ads.length && ads.every(r => r.amount_minor != null) ? sum(ads, 'amount_minor') : null, salaryKnown = !done.some(r => r.commission_minor == null) && !payments.some(r => r.source === 'retained');
         const salary = salaryKnown ? sum(done, 'commission_minor') : null, gross = sum(done, 'paid_minor'), received = sum(payments, 'amount_minor');
         const mixedRevenue = [...orders, ...cash].some(r => r.currency !== currency && Number(r.paid_minor || r.amount_minor || 0) !== 0);
         const allPages = new Set(ads.map(r => r.page_id)).size === pageCount;
@@ -171,6 +171,7 @@ export function veoCalendarShade(day: any, metric: string, currency: string): nu
     if (day.future) return null;
     if (['net', 'cohort_net'].includes(metric)) {
         const row = (metric === 'cohort_net' ? day.cohort_finance : day.finance)?.find((f: any) => f.currency === currency);
+        if (row?.ad_spend_minor === 0 && (row?.spend_usable || row?.spend_complete)) return 0;
         const value = row?.net_minor;
         return typeof value === 'number' && Number.isFinite(value) ? value : null;
     }

@@ -130,3 +130,18 @@ it('attributes tile sales, closed and done counts to first inquiry even when the
  expect(veoCalendarTile(completed,'net')).toMatchObject({inquiry:false,done:1,finance:[{gross_minor:10000,net_minor:5500}]});
  expect(acquired.closed).toBe(0);expect(completed.done).toBe(1);
 });
+
+it('does not invent missing salary before launch when there are no completed orders or retained payments',()=>{
+ const data:any=inputs();data.scope.launch_at='2026-11-09T00:00:00Z';data.orders=[];data.cash=[];
+ const report=buildVeoCalendar(data,{},'2026-11','2026-11-01');
+ expect(report.selected.cohort.finance[0]).toMatchObject({salary_minor:0,received_minor:0,ad_spend_minor:2000,net_minor:-2000});
+ expect(veoCalendarShade(report.selected,'cohort_net','PHP')).toBe(-2000);
+});
+it('leaves verified zero-spend dates uncolored while retaining their profitable sales and net values',()=>{
+ const data:any=inputs();data.spend[0].amount_minor=0;
+ const report=buildVeoCalendar(data,{},'2026-11','2026-11-01');
+ expect(report.selected.cohort.finance[0]).toMatchObject({received_minor:10000,salary_minor:3500,net_minor:6500});
+ expect(veoCalendarShade(report.selected,'cohort_net','PHP')).toBe(0);
+ data.spend[0].complete=false;
+ expect(veoCalendarShade(buildVeoCalendar(data,{},'2026-11','2026-11-01').selected,'cohort_net','PHP')).toBeNull();
+});
