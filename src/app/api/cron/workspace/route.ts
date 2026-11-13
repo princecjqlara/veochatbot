@@ -8,6 +8,7 @@ import { processJevInterruptionReviews } from '@/lib/veo-jev-review';
 import { processVeoSourceJobs } from '@/lib/veo-source-jobs';
 import { cleanupWorkspacePhotos } from '@/lib/veo-photo-cleanup';
 import { runBackgroundJob } from '@/lib/background-run';
+import { queueReceiptDeletions } from '@/lib/veo-receipt-deletion';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -26,6 +27,7 @@ async function processWorkspace(request: NextRequest) {
     const startedAt = Date.now();
     try {
         // Expiry is enforced independently of delivery. A failed deletion remains visible and retries.
+        const receiptDeletion = await queueReceiptDeletions(db);
         await cleanupWorkspacePhotos(db);
 
         const maintained = await db.rpc('veo_maintenance');
@@ -90,6 +92,6 @@ async function processWorkspace(request: NextRequest) {
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
         }
-        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
+        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }

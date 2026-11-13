@@ -5,6 +5,15 @@ import Inbox from './VeoDealEvidenceInbox';
 let view:ReactTestRenderer;
 const text=(v:any):string=>typeof v==='string'?v:(v?.children||[]).map(text).join('');
 afterEach(async()=>{if(view)await act(async()=>view.unmount());vi.unstubAllGlobals();});
+it.each(['manager','team_leader'])('lets %s switch between sending directly and independent review',async role=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({items:[],total:0}))));
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'actor',role,supervisor_submissions_enabled:true},accounts:[]}));});
+ const toggle=view.root.findByProps({role:'switch'});expect(toggle.props.checked).toBe(true);
+ await act(async()=>toggle.props.onChange({target:{checked:false}}));
+ expect(text(view.toJSON())).toContain('Submit for review');
+ await act(async()=>toggle.props.onChange({target:{checked:true}}));
+ expect(text(view.toJSON())).toContain('Submit & send');
+});
 it.each(['manager','team_leader','owner','member'])('shows the correct submission action for %s while retaining the contact selector',async role=>{
  const fetcher=vi.fn(async()=>new Response(JSON.stringify({items:[],total:0})));vi.stubGlobal('fetch',fetcher);
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'actor',role,supervisor_submissions_enabled:true},accounts:[]}));});

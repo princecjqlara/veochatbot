@@ -106,6 +106,33 @@ it('allows the original seller to finish an existing Close Deal after client ser
 });
 const directMode=()=>db.query('UPDATE veo_deal_review_settings SET supervisor_submissions_enabled=true WHERE tenant_id=$1',[tenant]);
 const submitAs=(actor:string,e:any)=>rpc('veo_submit_deal_review',[actor,JSON.stringify(e.data),e.photos]);
+it('allows only scoped Managers and Team Leaders to delete receipts and blocks approval afterwards',async()=>{
+ const r=await submit(await evidence());
+ for(const actor of [member,owner,other])await expect(rpc('veo_deal_review_delete',[actor,r.id,'Wrong photo'])).rejects.toThrow();
+ const deleted=await rpc('veo_deal_review_delete',[manager,r.id,'Wrong photo']);expect(deleted.deleted_by).toBe(manager);expect(deleted.can_review).toBe(false);expect(deleted.can_delete).toBe(false);
+ await expect(approve(r)).rejects.toThrow('Deleted receipts');
+ expect((await rpc('veo_deal_review_delete',[manager,r.id,'Retry'])).deleted_at).toBe(deleted.deleted_at);
+});
+it.each([manager,leader])('withdraws approved evidence and durably requests Telegram removal without deleting verified payments',async actor=>{
+ await rpc('veo_sync_telegram_groups',[owner,JSON.stringify([{chat_id:-123,name:'Sales',pages:[{id:page,matched:true}],topics:{},identities:[]}])]);
+ const team=(await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1',[manager])).rows[0].id;
+ await rpc('veo_telegram_group_action',[manager,'group',JSON.stringify({team_id:team,chat_id:-123,page_ids:[page]})]);await rpc('veo_telegram_group_action',[manager,'membership',JSON.stringify({user_id:manager,chat_id:-123,telegram_user_id:55})]);
+ await directMode();const r=await submitAs(manager,await evidence('done',{seller_id:manager,received_now_minor:100000},manager));
+ const payments=(await db.query('SELECT * FROM veo_payments')).rows;expect(payments).toHaveLength(1);
+ await rpc('veo_deal_review_delete',[actor,r.id,'Mistaken receipt']);
+ expect(await rpc('veo_handoff',[r.delivery_submission])).toBeNull();expect(await rpc('veo_submission_receipt_deleted',[r.delivery_submission])).toBe(true);
+ expect((await db.query('SELECT * FROM veo_receipt_deletion_outbox')).rows).toHaveLength(1);expect((await db.query('SELECT * FROM veo_payments')).rows).toEqual(payments);
+ expect((await rpc('veo_deal_review_access',[actor,r.id])).deleted_at).toBeTruthy();
+});
+it.each([manager,leader])('allows a supervisor to switch off auto-approval without a retry promoting the receipt',async actor=>{
+ await directMode();const e=await evidence('closed',{auto_approve:false},actor);
+ const pending=await submitAs(actor,e);expect(pending.status).toBe('pending');
+ expect((await db.query('SELECT * FROM veo_submissions')).rows).toHaveLength(0);
+ await expect(submitAs(actor,{...e,data:{...e.data,auto_approve:true}})).rejects.toThrow('different evidence');
+ const retry=await submitAs(actor,e);
+ expect(retry.status).toBe('pending');expect(retry.duplicate).toBe(true);
+ expect((await approve(pending)).status).toBe('approved');
+});
 it('records a manager own Close and Done Deal automatically, preserves separate tips and produces an attested handoff',async()=>{
  await directMode();const e=await evidence('closed',{seller_id:manager},manager),cd=await submitAs(manager,e);
  expect(cd.status).toBe('approved');expect(cd.approval_mode).toBe('supervisor_submission');expect(cd.reviewed_by).toBe(manager);expect(cd.submitted_by_role).toBe('manager');expect(cd.can_review).toBe(false);expect((await submitAs(manager,e)).duplicate).toBe(true);

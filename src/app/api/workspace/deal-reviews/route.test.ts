@@ -46,3 +46,12 @@ it('queues a staff receipt after supervisor approval while retaining staff revie
  m.queue.mockClear();m.rpc.mockClear();m.scope.mockResolvedValue({user_id:id(3),role:'member',launch_at:'2026-11-09'});
  expect((await POST(request(body))).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();expect(m.queue).not.toHaveBeenCalled();
 });
+it.each(['member','owner'])('denies reviewed receipt deletion to %s before accessing the database',async role=>{
+ m.scope.mockResolvedValue({user_id:id(3),role,launch_at:'2026-11-09'});
+ expect((await POST(request({action:'delete',review_id:id(7),reason:'Wrong photo'}))).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();
+});
+it.each(['manager','team_leader'])('allows scoped %s deletion with a reason',async role=>{
+ m.scope.mockResolvedValue({user_id:id(3),role,launch_at:'2026-11-09'});m.rpc.mockResolvedValue({data:{id:id(7),deleted_at:'2026-11-13'}});
+ expect((await POST(request({action:'delete',review_id:id(7),reason:'Wrong photo'}))).status).toBe(200);
+ expect(m.rpc).toHaveBeenCalledWith('veo_deal_review_delete',{p_actor:id(3),p_id:id(7),p_reason:'Wrong photo'});
+});

@@ -31,11 +31,16 @@ it('denies cross-origin notes, oversized notes and revoked receipt access', asyn
     m.rpc.mockResolvedValue({ error: { code: '42501', message: 'Receipt outside your branch' } }); expect((await post({ action: 'notes', receipt_id: receipt, notes: 'Edit' })).status).toBe(403);
 });
 it('deletes only through the session actor and validates reasons, Page access and request origin',async()=>{
+    m.scope.mockResolvedValue({user_id:worker,role:'manager',launch_at:'2026-11-05',worker_ids:[worker]});
     expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo',cancel_closed:false})).status).toBe(200);
     expect(m.rpc).toHaveBeenCalledWith('veo_receipt_delete',{p_actor:worker,p_id:receipt,p_reason:'Wrong photo',p_cancel_closed:false});
     m.rpc.mockClear();expect((await post({action:'delete',receipt_id:receipt,reason:'',cancel_closed:false})).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled();
     expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo'},'https://other.test')).status).toBe(403);
     m.rpc.mockResolvedValue({error:{code:'42501',message:'Receipt outside your permitted branch'}});expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo'})).status).toBe(403);
+});
+it.each(['member','owner'])('denies receipt deletion for %s even with a valid receipt ID',async role=>{
+    m.scope.mockResolvedValue({user_id:worker,role,launch_at:'2026-11-05',worker_ids:[worker]});
+    expect((await post({action:'delete',receipt_id:receipt,reason:'Wrong photo'})).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();
 });
 it('checks saved source evidence and queues a background refresh without trusting browser evidence', async () => {
     m.rpc.mockResolvedValue({ data: { allowed: false, blockers: ['facebook_stage_unavailable'] } });

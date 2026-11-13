@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     if (request.headers.get('authorization') !== `Bearer ${secret}`) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true' && process.env.VEO_CHATBOT_ENABLED !== 'true') {
         return NextResponse.json({ success: true, skipped: true, reason: 'workspace_mode' });
     }
     const results: Record<string, unknown> = {};

@@ -6,6 +6,7 @@ import { workspaceScope, philippineDate, uuid } from '@/lib/veo-workspace';
 import { readVeoRpc } from '@/lib/veo-report-read';
 import { receiptPhoto, receiptHoldLabels } from '@/lib/veo-receipts';
 import { parseMoneyMinor } from '@/lib/contact-profile-evidence';
+import { queueReceiptDeletions } from '@/lib/veo-receipt-deletion';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 const bucket = 'veo-conversation-submissions';
@@ -76,8 +77,10 @@ export async function POST(request: NextRequest) {
         if (!request.headers.get('content-type')?.includes('multipart/form-data')) {
             const body = await request.json();
             if (body.action === 'delete') {
+                if (!['manager', 'team_leader'].includes(scope.role)) throw Object.assign(Error('Only Managers and Team Leaders can delete receipts. Ask your Manager or Team Leader.'), { status: 403 });
                 if (!uuid(body.receipt_id) || typeof body.reason !== 'string' || body.reason.trim().length < 3 || body.reason.length > 500 || body.cancel_closed != null && typeof body.cancel_closed !== 'boolean') throw Error('Choose a receipt and enter a deletion reason of 3 to 500 characters');
-                return response(checked(await db.rpc('veo_receipt_delete', { p_actor: scope.user_id, p_id: body.receipt_id, p_reason: body.reason.trim(), p_cancel_closed: body.cancel_closed === true })));
+                const receipt = checked(await db.rpc('veo_receipt_delete', { p_actor: scope.user_id, p_id: body.receipt_id, p_reason: body.reason.trim(), p_cancel_closed: body.cancel_closed === true }));
+                return response({ ...receipt, deletion_dispatch: receipt.delivery_submission ? await queueReceiptDeletions(db, receipt.delivery_submission) : { queued: 0, retry: false } });
             }
             if (body.action === 'notes') {
                 if (!uuid(body.receipt_id) || typeof body.notes !== 'string' || body.notes.length > 2000) throw Error('Choose a receipt and notes of at most 2000 characters');

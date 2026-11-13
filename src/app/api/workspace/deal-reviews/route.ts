@@ -4,6 +4,7 @@ import { readVeoRpc } from '@/lib/veo-report-read';
 import { uuid } from '@/lib/veo-workspace';
 import { dealChecked, dealEvidenceBucket, dealReviewScope, dealSubmission } from '@/lib/veo-deal-review';
 import { queueReviewedDelivery } from '@/lib/veo-reviewed-delivery';
+import { queueReceiptDeletions } from '@/lib/veo-receipt-deletion';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
 const reply = (body: any, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -31,6 +32,12 @@ export async function POST(request: NextRequest) {
     try {
         if (request.headers.get('origin') !== request.nextUrl.origin) return reply({ error: 'Same-origin request required' }, 403);
         const scope = await dealReviewScope(request), body = await request.json(), db = getSupabaseAdmin();
+        if (body.action === 'delete') {
+            if (!['manager', 'team_leader'].includes(scope.role)) return reply({ error: 'Only Managers and Team Leaders can delete receipts. Ask your Manager or Team Leader.' }, 403);
+            if (!uuid(body.review_id) || typeof body.reason !== 'string' || body.reason.trim().length < 3 || body.reason.length > 500) throw Error('Choose a receipt and enter a deletion reason of 3 to 500 characters');
+            const review = dealChecked(await db.rpc('veo_deal_review_delete', { p_actor: scope.user_id, p_id: body.review_id, p_reason: body.reason.trim() }));
+            return reply({ review, deletion_dispatch: review.delivery_submission ? await queueReceiptDeletions(db, review.delivery_submission) : { queued: 0, retry: false } });
+        }
         if (body.action === 'submit') {
             const data = dealSubmission(body);
             const review = dealChecked(await db.rpc('veo_submit_deal_review', { p_actor: scope.user_id, p_data: data, p_photos: body.photo_ids }));
