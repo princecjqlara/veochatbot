@@ -94,13 +94,13 @@ export function buildVeoCalendar(input: any, finance: any, month: string, select
     const createdByDay = group(createdOrders, o => o.created_date);
     const byContact = group(orders, o => o.contact_id);
     const cohort = (day: string) => {
-        const clients = leadsByDay.get(day) || [], convertedIds = new Set(clients.filter(c => c.stage === 'converted').map(c => c.id));
-        const co = clients.flatMap(c => byContact.get(c.id) || []), cash = clients.flatMap(c => cashByContact.get(c.id) || []).filter((p: any) => p.paid_day >= day &&
-            (p.source !== 'workspace' || convertedIds.has(p.contact_id)));
+        const clients = leadsByDay.get(day) || [];
+        const co = clients.flatMap(c => byContact.get(c.id) || []), cash = clients.flatMap(c => cashByContact.get(c.id) || []).filter((p: any) => p.paid_day >= day);
         const converted = clients.filter((c: any) => c.converted_at || c.stage === 'converted'), payers = new Set(co.filter((o: any) => o.closed_at && Number(o.paid_minor) > 0).map((o: any) => o.contact_id));
         const money = financials(co, cash, spends.filter((s: any) => s.spend_date === day), input.pages.length, day < launchDay && !co.some((o: any) => o.financial_source === 'workspace' && o.done_at)).map(f => ({ ...f,
             acquisition_cost_minor: f.spend_usable ? ratio(f.ad_spend_minor!, payers.size) : null, cost_per_inquiry_minor: f.spend_usable ? ratio(f.ad_spend_minor!, clients.length) : null,
-            paid_customers: payers.size, net_minor: f.cash_net_minor, gross_roas: f.cash_roas, net_roas: f.cash_net_roas }));
+            paid_customers: payers.size, earnings_after_commission_minor: f.salary_minor == null ? null : f.gross_minor - f.salary_minor,
+            ad_return_minor: f.spend_usable && Number(f.ad_spend_minor) > 0 ? f.net_minor : null }));
         return { closed: co.filter((o: any) => o.closed_at).length, done: co.filter((o: any) => o.done_at).length, created_orders: createdOrders.filter((o: any) => clients.some((c: any) => c.id === o.contact_id)).length, inquiries: clients.length, converted: converted.length, converted_later: converted.filter((c: any) => c.converted_at && dayOf(c.converted_at) > day).length,
             conversion_time_unknown: converted.filter((c: any) => !c.converted_at).length, conversion_rate: ratio(converted.length, clients.length), paid_customers: payers.size, paid_rate: ratio(payers.size, clients.length),
             qualified: clients.filter((c: any) => c.stage === 'qualified').length, not_qualified: clients.filter((c: any) => c.stage === 'not_qualified').length,
@@ -186,4 +186,12 @@ export function veoCalendarTile(day: any, metric: string) {
         done: inquiry ? day.cohort_done ?? 0 : day.done,
         orders: inquiry ? day.cohort_orders_created ?? 0 : day.created_orders?.count ?? 0,
         finance: inquiry ? day.cohort_finance || [] : day.finance || [] };
+}
+
+/** Zero ad spend is a client-earnings result, not an advertising return. */
+export function veoCalendarResult(finance: any) {
+ const noAds = finance?.ad_spend_minor === 0 && (finance?.spend_usable || finance?.spend_complete);
+ if (noAds) return { label: 'Client earnings after commission (no ads)', amount: finance?.earnings_after_commission_minor ?? (finance?.salary_minor == null ? null : Number(finance?.gross_minor || 0) - finance.salary_minor), noAds: true };
+ const amount = finance?.net_minor;
+ return { label: amount == null ? (finance?.financial_blocker === 'salary_missing' ? 'Commission history missing' : 'Ad result awaiting costs') : amount < 0 ? 'Ad result: loss' : amount > 0 ? 'Ad result: profit' : 'Ad result: break-even', amount: amount == null ? null : Math.abs(amount), noAds: false };
 }

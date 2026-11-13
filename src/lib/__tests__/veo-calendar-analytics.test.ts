@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildVeoCalendar, demographics, objections, cohortProjection, veoCalendarShade, veoCalendarTile } from '../veo-calendar-analytics';
+import { buildVeoCalendar, demographics, objections, cohortProjection, veoCalendarShade, veoCalendarTile, veoCalendarResult } from '../veo-calendar-analytics';
 const first = '2026-11-01T04:00:00Z', now = '2026-11-08T04:00:00Z';
 const lead = (id: string, stage = 'converted') => ({ id, page_id: 'page', name: id, stage, inquiry_at: first, converted_at: stage === 'converted' ? '2026-11-03T04:00:00Z' : null });
 function inputs() { return { as_of: now, scope: { role: 'owner', launch_at: '2026-10-30T00:00:00Z' }, pages: [{ id: 'page', name: 'VEO' }], leads: [lead('one'), lead('two', 'qualified')], selected_clients: [lead('one'), lead('two', 'qualified')], orders: [{ order_key: 'order', contact_id: 'one', seller_id: 'seller', currency: 'PHP', paid_minor: 10000, total_minor: 10000, commission_minor: 3500, financial_source: 'workspace', closed_at: '2026-11-03T04:00:00Z', closed_date: '2026-11-03', done_at: '2026-11-05T04:00:00Z', done_date: '2026-11-05' }], cash: [{ contact_id: 'one', currency: 'PHP', amount_minor: 3000, paid_day: '2026-11-03' }, { contact_id: 'one', currency: 'PHP', amount_minor: 7000, paid_day: '2026-11-05' }], spend: [{ page_id: 'page', currency: 'PHP', spend_date: '2026-11-01', amount_minor: 2000, complete: true }, { page_id: 'page', currency: 'PHP', spend_date: '2026-11-05', amount_minor: 1000, complete: true }], peer_lag_hours: [], messages: [], message_coverage: [], page_plans: [], team_plans: [], employees: [{ id: 'seller', name: 'Seller' }], missing_inquiry_dates: 3 }; }
@@ -47,12 +47,12 @@ describe('restored daily activity and eventual inquiry cohort analytics', () => 
         input.spend[0].complete = true; input.pages.push({ id: 'missing', name: 'Missing Page' });
         expect(buildVeoCalendar(input, {}, '2026-11', '2026-11-01').selected.cohort.finance[0].gross_roas).toBeNull();
     });
-    it('keeps verified cash separate until the new-period contact is Converted and has a qualifying order', () => {
+    it('shows verified cash separately without counting unfinished orders as completed-sales profit', () => {
         const input: any = inputs(); input.leads[0].stage = 'order_created'; input.leads[0].converted_at = null;
         input.orders[0].closed_at = null; input.orders[0].done_at = null; input.orders[0].done_date = null;
         input.cash.forEach((p: any) => p.source = 'workspace');
         const r = buildVeoCalendar(input, { salary_days: [] }, '2026-11', '2026-11-01');
-        expect(r.selected.cohort.paid_customers).toBe(0); expect(r.selected.cohort.finance[0].received_minor).toBe(0);
+        expect(r.selected.cohort.paid_customers).toBe(0); expect(r.selected.cohort.finance[0].received_minor).toBe(10000);expect(r.selected.cohort.finance[0].gross_minor).toBe(0);expect(r.selected.cohort.finance[0].net_minor).toBe(-2000);
         expect(r.days.find(d => d.work_date === '2026-11-05')?.finance[0].received_minor).toBe(7000);
     });
 });
@@ -144,4 +144,18 @@ it('leaves verified zero-spend dates uncolored while retaining their profitable 
  expect(veoCalendarShade(report.selected,'cohort_net','PHP')).toBe(0);
  data.spend[0].complete=false;
  expect(veoCalendarShade(buildVeoCalendar(data,{},'2026-11','2026-11-01').selected,'cohort_net','PHP')).toBeNull();
+});
+
+it('does not turn a pending deposit into profit before the order is completed',()=>{
+ const data:any=inputs();data.orders[0].done_at=null;data.orders[0].done_date=null;data.orders[0].paid_minor=3000;data.orders[0].commission_minor=0;data.cash=[data.cash[0]];
+ const f=buildVeoCalendar(data,{},'2026-11','2026-11-01').selected.cohort.finance[0];
+ expect(f).toMatchObject({received_minor:3000,gross_minor:0,salary_minor:0,net_minor:-2000,cash_net_minor:1000,ad_return_minor:-2000});
+ expect(veoCalendarResult(f)).toMatchObject({label:'Ad result: loss',amount:2000,noAds:false});
+});
+it('labels zero-spend completed client earnings separately from ad performance',()=>{
+ const data:any=inputs();data.spend[0].amount_minor=0;
+ const f=buildVeoCalendar(data,{},'2026-11','2026-11-01').selected.cohort.finance[0];
+ expect(f).toMatchObject({received_minor:10000,gross_minor:10000,earnings_after_commission_minor:6500,ad_return_minor:null});
+ expect(veoCalendarResult(f)).toEqual({label:'Client earnings after commission (no ads)',amount:6500,noAds:true});
+ expect(veoCalendarShade({cohort_finance:[f]},'cohort_net','PHP')).toBe(0);
 });
