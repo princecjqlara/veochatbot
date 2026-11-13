@@ -29,6 +29,46 @@ beforeAll(async () => {
     const dates = (await db.query<any>('SELECT veo_today()::text AS today,(veo_today()-2)::text AS earlier')).rows[0]; today = dates.today; earlier = dates.earlier;
 }, 180000);
 afterAll(async () => { await db?.close(); });
+it('registers real inbound clients atomically while their webhook is still queued and ignores echoes',async()=>{
+    await db.exec('BEGIN');try{
+        const psid='123456789',at=new Date(Date.now()-5000).toISOString();
+        const event=(echo=false)=>({object:'page',entry:[{id:'111',messaging:[{sender:{id:echo?'111':psid},recipient:{id:echo?psid:'111'},message:{mid:echo?'own-echo':'real-inbound',...(echo?{is_echo:true}:{text:'Hello'})}}]}]});
+        await db.query('SELECT veo_ingest_event($1,$2,$3,$4)',['111','auto-sync:inbound',at,JSON.stringify(event())]);
+        const c=(await db.query<any>('SELECT id,last_inbound_at,first_interaction_at FROM contacts WHERE page_id=$1 AND psid=$2',[page,psid])).rows[0];
+        expect(c).toBeTruthy();expect(new Date(c.last_inbound_at).toISOString()).toBe(at);
+        expect((await db.query<any>("SELECT status FROM veo_event_inbox WHERE event_key='auto-sync:inbound'")).rows[0].status).toBe('queued');
+        await db.query('SELECT veo_ingest_event($1,$2,$3,$4)',['111','auto-sync:echo',at,JSON.stringify(event(true))]);
+        expect((await db.query('SELECT id FROM contacts WHERE page_id=$1 AND psid=$2',[page,'111'])).rows).toHaveLength(0);
+        await db.query('SELECT veo_ingest_event($1,$2,$3,$4)',['111','auto-sync:inbound',at,JSON.stringify(event())]);
+        expect((await db.query('SELECT id FROM contacts WHERE page_id=$1 AND psid=$2',[page,psid])).rows).toHaveLength(1);
+        await db.query('DELETE FROM contacts WHERE id=$1',[c.id]);
+        expect((await db.query<any>('SELECT veo_recover_queued_contact_identities(1000) n')).rows[0].n).toBeGreaterThan(0);
+        expect((await db.query('SELECT id FROM contacts WHERE page_id=$1 AND psid=$2',[page,psid])).rows).toHaveLength(1);
+    }finally{await db.exec('ROLLBACK');}
+});
+it('reconciles missing names without replacing existing names or inventing historical activity',async()=>{
+    await db.exec('BEGIN');try{
+        await db.query('INSERT INTO contacts(page_id,psid,name) VALUES($1,$2,NULL)',[page,'987654321']);
+        const r=(await db.query<any>('SELECT veo_seed_contact_identities($1,$2,$3) r',[owner,page,JSON.stringify([{psid:'987654321',name:'Recovered name'},{psid:'987654322',name:'New identity'}])])).rows[0].r;
+        expect(r.inserted).toBe(1);expect(r.updated_names).toBe(1);
+        const rows=(await db.query<any>("SELECT name,first_interaction_at,last_inbound_at FROM contacts WHERE page_id=$1 AND psid IN('987654321','987654322')",[page])).rows;
+        expect(rows).toHaveLength(2);expect(rows.every(c=>!c.first_interaction_at&&!c.last_inbound_at)).toBe(true);
+        await db.query('SELECT veo_seed_contact_identities($1,$2,$3)',[owner,page,JSON.stringify([{psid:'987654321',name:'Different name'}])]);
+        expect((await db.query<any>('SELECT name FROM contacts WHERE page_id=$1 AND psid=$2',[page,'987654321'])).rows[0].name).toBe('Recovered name');
+    }finally{await db.exec('ROLLBACK');}
+});
+it('shares Page sync leases, fences checkpoints and exposes only scoped collection health',async()=>{
+    await db.exec('BEGIN');try{
+        const first=(await db.query<any>('SELECT veo_claim_contact_identity_pages(3) r')).rows[0].r;
+        expect(first).toHaveLength(1);expect(first[0].page_id).toBe(page);
+        expect((await db.query<any>('SELECT acquire_page_sync_lease($1,$2,60) ok',[page,'manual-sync'])).rows[0].ok).toBe(false);
+        expect((await db.query<any>('SELECT veo_claim_contact_identity_pages(3) r')).rows[0].r).toEqual([]);
+        expect((await db.query<any>('SELECT veo_finish_contact_identity_page($1,$2,$3,2,1,NULL) ok',[page,id(999),'bad-cursor'])).rows[0].ok).toBe(false);
+        expect((await db.query<any>('SELECT veo_finish_contact_identity_page($1,$2,$3,2,1,NULL) ok',[page,first[0].lease_owner,'next-page'])).rows[0].ok).toBe(true);
+        const health=(await db.query<any>('SELECT veo_collection_status($1) r',[owner])).rows[0].r;expect(health.map((p:any)=>p.page_id)).toEqual([page]);expect(JSON.stringify(health)).not.toContain('access_token');
+        expect((await db.query<any>("SELECT has_function_privilege('authenticated','veo_claim_contact_identity_pages(integer)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+    }finally{await db.exec('ROLLBACK');}
+});
 it('enrolls recovered and newly enabled Pages without claiming historical message completeness',async()=>{
     await db.exec('BEGIN');try{
         const current=(await db.query<any>('SELECT capture_from FROM veo_calendar_message_coverage WHERE page_id=$1',[page])).rows[0];

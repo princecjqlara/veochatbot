@@ -7,6 +7,8 @@
     { "path": "/api/cron/database-health", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/meta-ads-sync", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/workspace", "schedule": "* * * * *" },
+    { "path": "/api/cron/workspace-events", "schedule": "* * * * *" },
+    { "path": "/api/cron/contact-identities", "schedule": "* * * * *" },
     { "path": "/api/cron/contact-profiles", "schedule": "* * * * *" },
     {
       "path": "/api/cron/messaging-auto-tag",
@@ -19,6 +21,8 @@
   ],
   "functions": {
     "src/app/api/cron/workspace/route.ts": { "maxDuration": 300 },
+    "src/app/api/cron/workspace-events/route.ts": { "maxDuration": 180 },
+    "src/app/api/cron/contact-identities/route.ts": { "maxDuration": 60 },
     "src/app/api/cron/contact-profiles/route.ts": { "maxDuration": 300 },
     "src/app/api/pages/[pageId]/contacts/[contactId]/profile/route.ts": { "maxDuration": 120 },
     "src/app/api/cron/messaging-auto-tag/route.ts": {

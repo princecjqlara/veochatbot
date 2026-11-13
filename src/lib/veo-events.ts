@@ -25,16 +25,17 @@ export async function receiveWorkspaceEvents(request: Request) {
         return NextResponse.json({ received: true }, { status: 200 });
     } catch { return NextResponse.json({ error: 'Event persistence failed; retry required' }, { status: 503 }); }
 }
-export async function processWorkspaceEvents(handler: (request: NextRequest) => Promise<Response>, origin: string, processingBudgetMs = 210000) {
+export async function processWorkspaceEvents(handler: (request: NextRequest) => Promise<Response>, origin: string, processingBudgetMs = 210000, options: { maxEvents?: number } = {}) {
     const db = getSupabaseAdmin();
     const deadline = Date.now() + Math.max(0, Math.min(210000, processingBudgetMs));
     let processed = 0;
+    const maxEvents = Math.min(2000, Math.max(1, Math.floor(options.maxEvents || 200)));
     // Drain successive small leases while there is time. A single 20-event
     // lease per minute fell behind real Page traffic. The DB leases only the
     // oldest outstanding event per conversation, including across cron runs.
     // Four separate conversations can progress together; each stays serial.
-    while (processed < 200 && Date.now() < deadline) {
-        const claimed = await db.rpc('veo_claim_events', { p_limit: Math.min(20, 200 - processed) });
+    while (processed < maxEvents && Date.now() < deadline) {
+        const claimed = await db.rpc('veo_claim_events', { p_limit: Math.min(20, maxEvents - processed) });
         if (claimed.error) throw new Error('Event queue unavailable');
         if (!claimed.data?.length) break;
         const lanes = new Map<string, any[]>();

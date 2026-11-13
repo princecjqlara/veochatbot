@@ -9,7 +9,7 @@ export async function runBackgroundJob<T>(name: string, operation: () => Promise
     let db = coordinator || null;
     const owner = randomUUID(); let claimed = false;
     try {
-        if (!db && process.env.VEO_WORKSPACE_ENABLED === 'true' && ['workspace', 'contact-profiles'].includes(name)) db = getSupabaseAdmin();
+        if (!db && process.env.VEO_WORKSPACE_ENABLED === 'true' && ['workspace', 'contact-profiles', 'workspace-events'].includes(name)) db = getSupabaseAdmin();
         if (db) {
             const lease = await db.rpc('veo_claim_background_job', { p_job: name, p_owner: owner });
             if (lease.error) throw new Error('Background coordination is temporarily unavailable');

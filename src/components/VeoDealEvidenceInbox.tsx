@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { assertDoneSettlement, dealAmounts } from '@/lib/veo-deal-amounts';
+import { startAdaptivePolling } from '@/lib/adaptive-polling';
 const field='block w-full rounded-lg border border-slate-300 bg-white p-2 text-sm';
 const button='rounded-lg bg-indigo-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-40';
 const money=(v:any,c='PHP')=>new Intl.NumberFormat('en-PH',{style:'currency',currency:c}).format(Number(v||0)/100);
@@ -29,7 +30,7 @@ export default function VeoDealEvidenceInbox({scope,accounts,compact=false,initi
  const orders=(profile?.orders||[]).filter((o:any)=>o.seller_id===seller&&!o.done_at),selected=orders.find((o:any)=>o.id===orderId),cd=(profile?.closed_deals||[]).find((d:any)=>d.seller_id===seller&&d.order_id===orderId);
  const context=[client,seller,kind,orderId].join(':');
  useEffect(()=>{request.current=crypto.randomUUID();uploads.current={};lockedPayload.current=null;snapshot.current=context;setFiles({});setExistingPayment('');},[context]);
- useEffect(()=>{if(compact)return;const c=new AbortController(),timer=setTimeout(()=>{json('/api/workspace/contacts?'+new URLSearchParams({search,offset:String(contactOffset),...(page?{page_id:page}:{})}),{signal:c.signal}).then(setFound).catch(e=>{if(!c.signal.aborted)setMessage(e.message);});},250);return()=>{clearTimeout(timer);c.abort();};},[search,page,contactOffset,compact]);
+ useEffect(()=>{if(compact)return;let stop:(()=>void)|undefined;const timer=setTimeout(()=>{stop=startAdaptivePolling(async signal=>{try{const b=await json('/api/workspace/contacts?'+new URLSearchParams({search,offset:String(contactOffset),...(page?{page_id:page}:{})}),{signal});if(!signal.aborted)setFound(b);}catch(e:any){if(!signal.aborted)setMessage(e.message);throw e;}},{intervalMs:30000,immediate:true});},250);return()=>{clearTimeout(timer);stop?.();};},[search,page,contactOffset,compact]);
  useEffect(()=>{setProfile(null);setOrderId('');setPrice('');setClosed('');setDone('');setTip('0');setCurrency('PHP');if(!client)return;const c=new AbortController();setLoading(true);json('/api/workspace?contact_id='+client,{signal:c.signal}).then(setProfile).catch(e=>{if(!c.signal.aborted)setMessage(e.message);}).finally(()=>{if(!c.signal.aborted)setLoading(false);});return()=>c.abort();},[client,version]);
  useEffect(()=>{const c=new AbortController();json('/api/workspace/deal-reviews?'+new URLSearchParams({status,offset:String(offset)}),{signal:c.signal}).then(setInbox).catch(e=>{if(!c.signal.aborted)setMessage(e.message);});return()=>c.abort();},[status,offset,version]);
  function chooseOrder(id:string){setOrderId(id);setTip('0');const o=orders.find((x:any)=>x.id===id),d=(profile?.closed_deals||[]).find((x:any)=>x.order_id===id&&x.seller_id===seller);if(o){setPrice((Number(o.total_minor)/100).toFixed(2));setCurrency(o.currency);setClosed(d?(Number(d.amount_minor)/100).toFixed(2):'');setDone((Math.max(0,Number(o.total_minor)-Number(o.paid_minor||0)-(d&&!d.verified_payment_id&&!Number(o.paid_minor)?Number(d.amount_minor):0))/100).toFixed(2));}else{setPrice('');setClosed('');setDone('');setCurrency('PHP');}}

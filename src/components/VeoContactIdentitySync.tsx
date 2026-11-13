@@ -16,7 +16,7 @@ export default function VeoContactIdentitySync({ pages }: { pages: Array<{ id: s
         finally { setBusy(false); }
     }
     return <section className="rounded border bg-white p-5 space-y-3"><h2 className="font-bold text-xl">Sync contacts</h2>
-        <p className="text-sm text-slate-600">Add contact names and identities in small batches. Existing contacts stay unchanged. Messages, past sales, and old automation activity are not imported.</p>
+        <p className="text-sm text-slate-600">Contacts now synchronize automatically in the background. New inbound clients are registered when their webhook arrives. Use this manual option for an additional Page scan; existing details, messages and financial records are preserved.</p>
         <label className="block">Page<select className="block w-full rounded border p-2" disabled={busy} value={page} onChange={event => { setPage(event.target.value); setCursor(null); setTotal(0); setDone(false); setMessage(''); }}><option value="">Choose a Page</option>{pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
         <button className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40" disabled={!page || busy || done} onClick={sync}>{busy ? 'Syncing…' : cursor ? 'Continue sync' : done ? 'Complete' : 'Sync first batch'}</button>
         {message && <p role="status" className="text-sm">{message}</p>}

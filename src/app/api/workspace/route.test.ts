@@ -9,6 +9,11 @@ import { GET, POST } from './route';
 import { philippineDate } from '@/lib/veo-workspace';
 afterEach(() => { vi.clearAllMocks(); });
 describe('workspace work-date boundaries', () => {
+    it('loads collection health without recalculating salary, capacity or the dashboard',async()=>{
+        const day=philippineDate();m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'owner',launch_at:day+'T00:00:00+08:00'}:name==='veo_collection_status'?[{page_id:'page',pending:3}]:null}));
+        const r=await GET(new NextRequest('https://veo.test/api/workspace?view=sync&date='+day));expect(r.status).toBe(200);expect((await r.json()).sync).toEqual([{page_id:'page',pending:3}]);
+        expect(m.rpc.mock.calls.some(c=>['veo_dashboard','veo_team_capacity','veo_salary'].includes(c[0]))).toBe(false);
+    });
     it('scopes existing-member supervisor changes and reports stale edits as conflicts',async()=>{
         const user='00000000-0000-4000-8000-000000000002',parent='00000000-0000-4000-8000-000000000003',old='00000000-0000-4000-8000-000000000004';
         const request=()=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify({action:'member_supervisor',user_id:user,parent_id:parent,expected_parent_id:old,actor:'foreign'})});

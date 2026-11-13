@@ -7,6 +7,7 @@ import type { WorkspaceContact } from '@/components/VeoWorkspaceContacts';
 import VeoDeferredSection from '@/components/VeoDeferredSection';
 import VeoPageState from '@/components/VeoPageState';
 import { createSearchSchedule } from '@/lib/search-schedule';
+import { startAdaptivePolling } from '@/lib/adaptive-polling';
 const PanelLoading = () => <VeoPageState title="Opening section" />;
 const VeoWorkspaceContacts = dynamic(() => import('@/components/VeoWorkspaceContacts'), { loading: PanelLoading });
 const VeoTeamsDashboard = dynamic(() => import('@/components/VeoTeamsDashboard'), { loading: PanelLoading });
@@ -94,18 +95,25 @@ function Workspace() {
     useEffect(() => {
         if (!data || ['owner', 'team_leader'].includes(data.scope.role) || view !== 'dashboard') return;
         setContactsLoading(true);
-        const controller = new AbortController();
-        const timer = setTimeout(async () => {
-            try {
-                const filters = new URLSearchParams({ search: query, offset: String(contactOffset), ...(page ? { page_id: page } : {}) });
-                const r = await fetch(`/api/workspace/contacts?${filters}`, { signal: controller.signal });
-                const b = await r.json(); if (!r.ok) throw new Error(b.error);
-                if (controller.signal.aborted) return;
-                setContacts(b.items || []); setContactTotal(b.total || 0); setContactsLoading(false);
-            } catch (e: any) { if (!controller.signal.aborted) { setContacts([]); setContactTotal(0); setContactsLoading(false); setMessage(e.message); } }
+        let stop: (() => void) | undefined;
+        const timer = setTimeout(() => {
+            stop = startAdaptivePolling(async signal => {
+                try {
+                    const filters = new URLSearchParams({ search: query, offset: String(contactOffset), ...(page ? { page_id: page } : {}) });
+                    const r = await fetch('/api/workspace/contacts?' + filters, { signal, cache: 'no-store' });
+                    const b = await r.json();if (!r.ok) throw Error(b.error);
+                    if (!signal.aborted) { setContacts(b.items || []);setContactTotal(b.total || 0);setContactsLoading(false); }
+                } catch (e:any) { if (!signal.aborted) { setContactsLoading(false);setMessage(e.message); }throw e; }
+            }, { intervalMs: 30000, immediate: true });
         }, contactSearchSchedule.current(query));
-        return () => { clearTimeout(timer); controller.abort(); };
+        return () => { clearTimeout(timer);stop?.(); };
     }, [page, query, contactOffset, view, data?.scope.role]);
+    useEffect(() => {
+        if (view !== 'sync') return;
+        return startAdaptivePolling(async signal => {
+            try { await refresh(signal); }catch (e:any) { if (!signal.aborted) setLoadError(e.message);throw e; }
+        }, { intervalMs: 30000 });
+    }, [view, day]); // eslint-disable-line react-hooks/exhaustive-deps
     async function submit(body: any) {
         setBusy(true); setMessage('');
         const key = body instanceof FormData ? null : JSON.stringify(body);
@@ -170,7 +178,7 @@ function Workspace() {
         {activeView === 'accounts' && isOwner && <VeoAccountAccess onSaved={refresh} />}
         {activeView === 'accounts' && <VeoMemberSupervisors accounts={data.accounts} scope={data.scope} busy={busy} submit={submit} />}
         {activeView === 'sync' && isOwner && <VeoContactIdentitySync pages={pages} />}
-        {activeView === 'sync' && <section className="rounded border bg-white p-5"><h2 className="font-bold text-xl">Collection health</h2>{data.sync.map((s: any) => <article className="py-4 border-t" key={s.page_id}><h3 className="font-semibold">{pages.find(p => p.id === s.page_id)?.name || 'Unknown page'}</h3><p>Last recorded event: {s.last_event_at ? new Date(s.last_event_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'Unavailable'} · pending {s.pending} · errors {s.errors}</p><p className="text-sm text-slate-500">{s.coverage}</p></article>)}</section>}
+        {activeView === 'sync' && <section className="rounded border bg-white p-5"><h2 className="font-bold text-xl">Collection health</h2>{data.sync.map((s: any) => <article className="py-4 border-t" key={s.page_id}><h3 className="font-semibold">{pages.find(p => p.id === s.page_id)?.name || 'Unknown page'}</h3><p>Last recorded event: {s.last_event_at ? new Date(s.last_event_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'Unavailable'} · pending {s.pending} · errors {s.errors}</p><p className="text-sm">Oldest pending: {s.oldest_pending_at ? new Date(s.oldest_pending_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'None'} ? Automatic contact sync: {s.identity_sync_at ? new Date(s.identity_sync_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'Waiting for first scan'}</p>{s.identity_sync_error&&<p className="text-sm text-amber-800">{s.identity_sync_error}</p>}<p className="text-sm text-slate-500">{s.coverage}</p></article>)}</section>}
         {activeView === 'profile' && <VeoTelegramProfile />}
         {['accounts', 'profile'].includes(activeView) && <form className="rounded border bg-white p-5 space-y-3" onSubmit={async e => { const f = formData(e); await submit({ ...f, action: 'password' }); e.currentTarget?.reset(); }}><h2 className="font-bold">Email sign-in password</h2><label className="block">Account<select name="user_id" className={field}>{data.accounts.filter((a: any) => activeView !== 'profile' || a.id === data.scope.user_id).map((a: any) => <option key={a.id} value={a.id}>{a.name} · {a.email || 'Email unavailable'}</option>)}</select></label><label className="block">New password<input name="password" required type="password" autoComplete="new-password" className={field} /></label><button className={button} disabled={busy}>Set password</button></form>}
         {isOwner && activeView === 'accounts' && <section className="rounded border bg-slate-50 p-5"><h2 className="font-bold">Read-only history archive</h2><p className="text-sm mt-2">Earlier records are preserved and excluded from this workspace’s targets, capacity and salary. Verified retained payments remain part of each contact’s labelled lifetime value.</p><div className="flex flex-wrap gap-3 mt-3">{[['contacts', 'Contacts'], ['campaigns', 'Campaigns'], ['contact_purchases', 'Orders'], ['contact_verified_payments', 'Verified payments'], ['page_activity_history', 'Activity']].map(([table, title]) => <a key={table} href={`/api/workspace/archive?table=${table}`} target="_blank" rel="noreferrer" className="text-sm underline">View archived {title.toLowerCase()}</a>)}</div></section>}
