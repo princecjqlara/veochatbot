@@ -55,3 +55,21 @@ it.each(['manager','team_leader'])('allows scoped %s deletion with a reason',asy
  expect((await POST(request({action:'delete',review_id:id(7),reason:'Wrong photo'}))).status).toBe(200);
  expect(m.rpc).toHaveBeenCalledWith('veo_deal_review_delete',{p_actor:id(3),p_id:id(7),p_reason:'Wrong photo'});
 });
+it('corrects a Close Deal price using integer money and the previous-price conflict guard',async()=>{
+ m.rpc.mockResolvedValue({data:{total_price_minor:120000}});
+ expect((await POST(request({action:'edit_price',review_id:id(7),total_price:'1200.00',expected_total_minor:100000,reason:'Correct package'}))).status).toBe(200);
+ expect(m.rpc).toHaveBeenCalledWith('veo_close_deal_price',{p_actor:id(3),p_review:id(7),p_total:120000,p_expected:100000,p_reason:'Correct package'});
+ m.rpc.mockClear();m.scope.mockResolvedValue({user_id:id(3),role:'member',launch_at:'2026-11-09'});
+ expect((await POST(request({action:'edit_price',review_id:id(7),total_price:'1200',expected_total_minor:100000,reason:'Wrong price'}))).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();
+});
+it('saves the supervisor policy and scopes pending approval to that supervisor',async()=>{
+ m.rpc.mockImplementation(async name=>({data:name==='veo_team_auto_approval_setting'?{enabled:true}:{approved:2}}));
+ const r=await POST(request({action:'auto_approval',enabled:true}));expect(r.status).toBe(200);expect((await r.json()).pending.approved).toBe(2);
+ expect(m.rpc).toHaveBeenCalledWith('veo_team_auto_approval_setting',{p_actor:id(3),p_enabled:true});
+ expect(m.rpc).toHaveBeenCalledWith('veo_auto_approve_pending_team_reviews',{p_limit:20,p_supervisor:id(3)});
+});
+it('does not grant staff access to team auto-approval or accept a nonboolean setting',async()=>{
+ expect((await POST(request({action:'auto_approval',enabled:'true'}))).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled();
+ m.scope.mockResolvedValue({user_id:id(3),role:'member',launch_at:'2026-11-09'});
+ expect((await POST(request({action:'auto_approval',enabled:true}))).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();
+});

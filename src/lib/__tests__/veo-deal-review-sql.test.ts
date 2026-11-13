@@ -106,6 +106,42 @@ it('allows the original seller to finish an existing Close Deal after client ser
 });
 const directMode=()=>db.query('UPDATE veo_deal_review_settings SET supervisor_submissions_enabled=true WHERE tenant_id=$1',[tenant]);
 const submitAs=(actor:string,e:any)=>rpc('veo_submit_deal_review',[actor,JSON.stringify(e.data),e.photos]);
+it('corrects a Close Deal total and remaining balance without changing the down payment or replay identity',async()=>{
+ const e=await evidence(),r=await approve(await submit(e));
+ const changed=await rpc('veo_close_deal_price',[manager,r.id,120000,100000,'Customer changed package']);
+ expect(Number(changed.total_price_minor)).toBe(120000);expect(Number(changed.closed_amount_minor)).toBe(30000);
+ expect(Number((await db.query<any>('SELECT total_minor FROM veo_orders WHERE id=$1',[r.order_id])).rows[0].total_minor)).toBe(120000);
+ expect((await submit(e)).duplicate).toBe(true);expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
+ await expect(rpc('veo_close_deal_price',[manager,r.id,130000,100000,'Stale correction'])).rejects.toThrow('price changed');
+ const done=await approve(await submit(await evidence('done',{order_id:r.order_id,closed_deal_id:r.closed_deal_id,total_price_minor:120000,received_now_minor:90000})));
+ expect(done.status).toBe('approved');await expect(rpc('veo_close_deal_price',[manager,r.id,130000,120000,'Already completed'])).rejects.toThrow('Done Deal');
+});
+it('restricts price correction to the supervisor branch and rejects totals below the deposit',async()=>{
+ const r=await submit(await evidence());
+ for(const actor of [member,owner,other])await expect(rpc('veo_close_deal_price',[actor,r.id,120000,100000,'Wrong price'])).rejects.toThrow();
+ await expect(rpc('veo_close_deal_price',[manager,r.id,20000,100000,'Too low'])).rejects.toThrow('down payment');
+ const changed=await rpc('veo_close_deal_price',[leader,r.id,110000,100000,'Correct package']);expect(Number(changed.total_price_minor)).toBe(110000);
+});
+it.each([manager,leader])('automatically approves staff milestones under an enabled supervisor policy',async actor=>{
+ await rpc('veo_team_auto_approval_setting',[actor,true]);
+ const cd=await submit(await evidence());expect(cd.status).toBe('approved');expect(cd.auto_approved).toBe(true);expect(cd.reviewed_by).toBe(actor);
+ const dd=await submit(await evidence('done',{order_id:cd.order_id,closed_deal_id:cd.closed_deal_id}));expect(dd.status).toBe('approved');expect(dd.auto_approved).toBe(true);
+ expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(2);
+});
+it('approves pending team evidence, enforces disabling, and rejects forged supervisor settings',async()=>{
+ const e=await evidence(),pending=await submit(e);expect(pending.status).toBe('pending');
+ for(const actor of [member,owner])await expect(rpc('veo_team_auto_approval_setting',[actor,true])).rejects.toThrow('Manager or Team Leader');
+ await rpc('veo_team_auto_approval_setting',[other,true]);expect((await rpc('veo_auto_approve_pending_team_reviews',[20,other])).approved).toBe(0);
+ await rpc('veo_team_auto_approval_setting',[manager,true]);expect((await rpc('veo_auto_approve_pending_team_reviews',[20,manager])).approved).toBe(1);
+ expect((await submit(e)).duplicate).toBe(true);
+ await rpc('veo_team_auto_approval_setting',[manager,false]);const next=await submit(await evidence('closed',{contact_id:clientB}));expect(next.status).toBe('pending');
+});
+it('keeps expired or deleted pending evidence out of automatic approval',async()=>{
+ const e=await evidence(),r=await submit(e);await db.query("UPDATE veo_photo_objects SET expires_at=now()-interval '1 minute'");
+ await rpc('veo_team_auto_approval_setting',[manager,true]);expect((await rpc('veo_auto_approve_pending_team_reviews',[20,manager])).needs_review).toBe(1);
+ expect((await rpc('veo_deal_review_access',[manager,r.id])).status).toBe('pending');expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(0);
+ await rpc('veo_deal_review_delete',[manager,r.id,'Invalid evidence']);expect((await rpc('veo_auto_approve_pending_team_reviews',[20,manager])).approved).toBe(0);
+});
 it('allows only scoped Managers and Team Leaders to delete receipts and blocks approval afterwards',async()=>{
  const r=await submit(await evidence());
  for(const actor of [member,owner,other])await expect(rpc('veo_deal_review_delete',[actor,r.id,'Wrong photo'])).rejects.toThrow();

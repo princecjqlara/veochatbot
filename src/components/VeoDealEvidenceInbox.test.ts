@@ -5,10 +5,18 @@ import Inbox from './VeoDealEvidenceInbox';
 let view:ReactTestRenderer;
 const text=(v:any):string=>typeof v==='string'?v:(v?.children||[]).map(text).join('');
 afterEach(async()=>{if(view)await act(async()=>view.unmount());vi.unstubAllGlobals();});
+it('saves a team-wide policy independently of the per-submission switch',async()=>{
+ const fetcher=vi.fn(async(url:string,options?:any)=>new Response(JSON.stringify(options?.method==='POST'?{enabled:true,pending:{approved:0}}:url.includes('auto_approval=1')?{enabled:false}:{items:[],total:0})));
+ vi.stubGlobal('fetch',fetcher);await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'manager',role:'manager',supervisor_submissions_enabled:true},accounts:[]}));});
+ const toggle=view.root.findByProps({'aria-label':'Auto-approve all team deals'});expect(toggle.props.checked).toBe(false);
+ await act(async()=>toggle.props.onChange({target:{checked:true}}));
+ const sent=fetcher.mock.calls.find(([,o])=>o?.method==='POST');expect(JSON.parse(sent![1].body)).toEqual({action:'auto_approval',enabled:true});
+ expect(text(view.toJSON())).toContain('Team auto-approval is ON');
+});
 it.each(['manager','team_leader'])('lets %s switch between sending directly and independent review',async role=>{
  vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({items:[],total:0}))));
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'actor',role,supervisor_submissions_enabled:true},accounts:[]}));});
- const toggle=view.root.findByProps({role:'switch'});expect(toggle.props.checked).toBe(true);
+ const toggle=view.root.findByProps({'aria-label':'Auto-approve this submission'});expect(toggle.props.checked).toBe(true);
  await act(async()=>toggle.props.onChange({target:{checked:false}}));
  expect(text(view.toJSON())).toContain('Submit for review');
  await act(async()=>toggle.props.onChange({target:{checked:true}}));

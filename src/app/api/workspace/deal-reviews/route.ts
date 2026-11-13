@@ -5,12 +5,14 @@ import { uuid } from '@/lib/veo-workspace';
 import { dealChecked, dealEvidenceBucket, dealReviewScope, dealSubmission } from '@/lib/veo-deal-review';
 import { queueReviewedDelivery } from '@/lib/veo-reviewed-delivery';
 import { queueReceiptDeletions } from '@/lib/veo-receipt-deletion';
+import { parseMoneyMinor } from '@/lib/money-minor';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
 const reply = (body: any, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 export async function GET(request: NextRequest) {
     try {
         const scope = await dealReviewScope(request), db = getSupabaseAdmin(), q = request.nextUrl.searchParams;
+        if (q.get('auto_approval') === '1') return reply(dealChecked(await readVeoRpc(db, 'veo_team_auto_approval_setting', { p_actor: scope.user_id, p_enabled: null })));
         const id = q.get('review_id'), contact = q.get('contact_id'), offset = Number(q.get('offset') || 0), status = q.get('status') || 'all';
         if (id) {
             if (!uuid(id)) throw Error('Choose a review');
@@ -32,6 +34,23 @@ export async function POST(request: NextRequest) {
     try {
         if (request.headers.get('origin') !== request.nextUrl.origin) return reply({ error: 'Same-origin request required' }, 403);
         const scope = await dealReviewScope(request), body = await request.json(), db = getSupabaseAdmin();
+        if (body.action === 'auto_approval') {
+            if (!['manager', 'team_leader'].includes(scope.role)) return reply({ error: 'Manager or Team Leader access required' }, 403);
+            if (typeof body.enabled !== 'boolean') throw Error('Choose an auto-approval setting');
+            const setting = dealChecked(await db.rpc('veo_team_auto_approval_setting', { p_actor: scope.user_id, p_enabled: body.enabled }));
+            let pending = null;
+            if (body.enabled) {
+                try { const result = await db.rpc('veo_auto_approve_pending_team_reviews', { p_limit: 20, p_supervisor: scope.user_id });pending = result.error ? { retry: true } : result.data; }
+                catch { pending = { retry: true }; }
+            }
+            return reply({ ...setting, pending });
+        }
+        if (body.action === 'edit_price') {
+            if (!['manager', 'team_leader'].includes(scope.role)) return reply({ error: 'Only Managers and Team Leaders can correct a Close Deal price' }, 403);
+            if (!uuid(body.review_id) || !Number.isSafeInteger(body.expected_total_minor) || body.expected_total_minor <= 0 || typeof body.reason !== 'string' || body.reason.trim().length < 3 || body.reason.length > 500) throw Error('Choose a Close Deal and enter a price correction reason');
+            const total = parseMoneyMinor(body.total_price);
+            return reply({ review: dealChecked(await db.rpc('veo_close_deal_price', { p_actor: scope.user_id, p_review: body.review_id, p_total: total, p_expected: body.expected_total_minor, p_reason: body.reason.trim() })) });
+        }
         if (body.action === 'delete') {
             if (!['manager', 'team_leader'].includes(scope.role)) return reply({ error: 'Only Managers and Team Leaders can delete receipts. Ask your Manager or Team Leader.' }, 403);
             if (!uuid(body.review_id) || typeof body.reason !== 'string' || body.reason.trim().length < 3 || body.reason.length > 500) throw Error('Choose a receipt and enter a deletion reason of 3 to 500 characters');
