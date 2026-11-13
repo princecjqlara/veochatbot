@@ -175,13 +175,14 @@ export function veoCalendarShade(day: any, metric: string, currency: string): nu
         const value = row?.net_minor;
         return typeof value === 'number' && Number.isFinite(value) ? value : null;
     }
+    if (metric.startsWith('daily_')) { const dailyMetric = metric.slice(6); return typeof day[dailyMetric] === 'number' ? day[dailyMetric] : null; }
     const cohortMetric = ({ closed: 'cohort_closed', done: 'cohort_done', orders_created_count: 'cohort_orders_created' } as Record<string, string>)[metric] || metric;
     return typeof day[cohortMetric] === 'number' ? day[cohortMetric] : null;
 }
 
 /** Keep tile amounts and shading on the same attribution basis. */
 export function veoCalendarTile(day: any, metric: string) {
-    const inquiry = metric !== 'net';
+    const inquiry = metric !== 'net' && !metric.startsWith('daily_');
     return { inquiry, closed: inquiry ? day.cohort_closed ?? 0 : day.closed,
         done: inquiry ? day.cohort_done ?? 0 : day.done,
         orders: inquiry ? day.cohort_orders_created ?? 0 : day.created_orders?.count ?? 0,
@@ -189,7 +190,8 @@ export function veoCalendarTile(day: any, metric: string) {
 }
 
 /** Zero ad spend is a client-earnings result, not an advertising return. */
-export function veoCalendarResult(finance: any) {
+export function veoCalendarResult(finance: any, inquiry = true) {
+ if (!inquiry) { const value = finance?.net_minor; return { label: value == null ? 'Daily net awaiting costs' : value < 0 ? 'Daily net loss' : value > 0 ? 'Daily net profit' : 'Daily break-even', amount: value == null ? null : Math.abs(value), noAds: false }; }
  const noAds = finance?.ad_spend_minor === 0 && (finance?.spend_usable || finance?.spend_complete);
  if (noAds) return { label: 'Client earnings after commission (no ads)', amount: finance?.earnings_after_commission_minor ?? (finance?.salary_minor == null ? null : Number(finance?.gross_minor || 0) - finance.salary_minor), noAds: true };
  const amount = finance?.net_minor;

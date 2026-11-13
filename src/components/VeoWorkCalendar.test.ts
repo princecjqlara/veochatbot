@@ -23,4 +23,15 @@ it('renders inquiry-date sales and clear red/green colors even when daily transa
     expect(text(profit)).toContain('Ad result: profit');
     const noSpend=view.root.findByProps({'aria-label':'Work date 2026-11-13'});expect(noSpend.props.style.backgroundColor).toBe('#ffffff');expect(text(noSpend)).toContain('No ad spend - no shading');expect(text(noSpend)).toContain('Client earnings after commission (no ads)');expect(text(noSpend)).not.toContain('profit');
     expect(view.root.findAllByType('option').some(o => o.props.value === 'net')).toBe(false);
+    const calls=(fetch as any).mock.calls.length;
+    const daily=view.root.findAllByType('button').find(b=>text(b)==='Daily performance')!;
+    await act(async()=>daily.props.onClick());
+    expect((fetch as any).mock.calls.length).toBe(calls);
+    const dailyTile=view.root.findByProps({'aria-label':'Work date 2026-11-12'});
+    expect(text(dailyTile)).toContain('CD 0');expect(text(dailyTile)).toContain('DD 0');expect(text(dailyTile)).toContain('Daily net loss');
+    expect(dailyTile.props.style.backgroundColor).toContain('hsl(0 ');
+    const inquiries=view.root.findAllByType('button').find(b=>text(b)==='Inquiry-date results')!;
+    await act(async()=>inquiries.props.onClick());
+    expect(text(view.root.findByProps({'aria-label':'Work date 2026-11-12'}))).toContain('CD 3');
+
 });

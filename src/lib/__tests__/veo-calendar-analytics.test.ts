@@ -159,3 +159,14 @@ it('labels zero-spend completed client earnings separately from ad performance',
  expect(veoCalendarResult(f)).toEqual({label:'Client earnings after commission (no ads)',amount:6500,noAds:true});
  expect(veoCalendarShade({cohort_finance:[f]},'cohort_net','PHP')).toBe(0);
 });
+
+it('keeps normal daily computation on completion and payment dates independently of inquiry-date results',()=>{
+ const report=buildVeoCalendar(inputs(),{},'2026-11','2026-11-01');
+ const inquiry=report.days.find(d=>d.work_date==='2026-11-01')!;
+ const paid=report.days.find(d=>d.work_date==='2026-11-05')!;
+ expect(veoCalendarTile(inquiry,'cohort_net')).toMatchObject({done:1,finance:[{gross_minor:10000,net_minor:4500}]});
+ expect(veoCalendarTile(inquiry,'net')).toMatchObject({done:0,finance:[{gross_minor:0,net_minor:-2000}]});
+ expect(veoCalendarTile(paid,'net')).toMatchObject({done:1,finance:[{gross_minor:10000,received_minor:7000,salary_minor:3500,net_minor:5500}]});
+ expect(veoCalendarShade(inquiry,'daily_done','PHP')).toBe(0);expect(veoCalendarShade(paid,'daily_done','PHP')).toBe(1);
+ expect(veoCalendarResult(paid.finance[0],false)).toMatchObject({label:'Daily net profit',amount:5500});
+});
