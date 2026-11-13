@@ -286,3 +286,24 @@ it('reuses prepared quotas only inside calendar planning and restores normal rec
  await rpc('veo_target',[member,(await db.query<any>('SELECT veo_today() d')).rows[0].d]);
  expect(Number((await db.query<any>('SELECT quota FROM veo_operating_quotas WHERE user_id=$1 AND work_date=veo_today()',[member])).rows[0].quota)).toBe(0);
 });
+
+it('corrects inquiry dates only after complete history, rejects stale leases and audits the earlier message',async()=>{
+ const lease=id(seq++),older='2026-08-01T22:27:29Z',later='2026-11-13T00:05:30Z';
+ await db.query("INSERT INTO ad_contact_sources(contact_id,page_id,first_inquiry_at,first_message_id,inquiry_basis,origin_ad_id,origin_evidence_key,attribution_status) VALUES($1,$2,$3,'recent','live_message','123','old-ad','verified_inline')",[client,page,later]);
+ await db.query("UPDATE veo_inquiry_history_jobs SET lease_token=$2,lease_until=now()+interval '2 minutes' WHERE contact_id=$1",[client,lease]);
+ expect((await rpc('veo_finish_inquiry_history',[client,id(seq++),null,older,'original',true,null])).saved).toBe(false);
+ const partial=await rpc('veo_finish_inquiry_history',[client,lease,'https://graph.facebook.com/v24.0/thread/messages?after=older',older,'original',false,null]);expect(partial.complete).toBe(false);
+ expect((await db.query<any>('SELECT inquiry_basis FROM ad_contact_sources WHERE contact_id=$1',[client])).rows[0].inquiry_basis).toBe('live_message');
+ await db.query("UPDATE veo_inquiry_history_jobs SET lease_token=$2,lease_until=now()+interval '2 minutes' WHERE contact_id=$1",[client,lease]);
+ const done=await rpc('veo_finish_inquiry_history',[client,lease,null,older,'original',true,null]);expect(done).toMatchObject({complete:true,changed:true});
+ const source=(await db.query<any>('SELECT * FROM ad_contact_sources WHERE contact_id=$1',[client])).rows[0];expect(source.inquiry_basis).toBe('verified_history');expect(source.first_message_id).toBe('original');expect(source.origin_ad_id).toBeNull();
+ expect((await db.query<any>("SELECT count(*) n FROM veo_audit WHERE action='inquiry_history_verified'")).rows[0].n).toBe(1);
+ expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
+ expect((await rpc('veo_finish_inquiry_history',[client,null,null,older,'original',true,null])).saved).toBe(false);
+});
+it('retains an earlier saved inquiry when the accessible history starts later',async()=>{
+ const lease=id(seq++);await db.query("INSERT INTO ad_contact_sources(contact_id,page_id,first_inquiry_at,first_message_id,inquiry_basis) VALUES($1,$2,'2025-01-01','original','verified_history')",[client,page]);
+ await db.query("UPDATE veo_inquiry_history_jobs SET lease_token=$2,lease_until=now()+interval '2 minutes' WHERE contact_id=$1",[client,lease]);
+ const result=await rpc('veo_finish_inquiry_history',[client,lease,null,'2026-01-01','later',true,null]);expect(result.complete).toBe(false);expect(result.error).toContain('original date retained');
+ expect((await db.query<any>('SELECT first_message_id FROM ad_contact_sources WHERE contact_id=$1',[client])).rows[0].first_message_id).toBe('original');
+});

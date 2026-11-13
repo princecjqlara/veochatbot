@@ -4,6 +4,7 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "crons": [
+    { "path": "/api/cron/inquiry-history", "schedule": "* * * * *" },
     { "path": "/api/cron/quotas", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/incentives", "schedule": "* * * * *" },
     { "path": "/api/cron/database-health", "schedule": "*/5 * * * *" },
