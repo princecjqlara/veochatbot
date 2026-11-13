@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const m=vi.hoisted(()=>({read:vi.fn()}));
 vi.mock('../veo-contact-identity-sync',()=>({readContactIdentityBatch:m.read}));
+vi.mock('../veo-storage-health',()=>({requireStorageForOptionalWork:vi.fn(async()=>{})}));
 import {syncAutomaticContactIdentities} from '../veo-automatic-contact-sync';
 afterEach(()=>{vi.resetAllMocks();});
 const page={page_id:'page',owner_id:'owner',fb_page_id:'111',access_token:'private',cursor:'older',lease_owner:'lease'};

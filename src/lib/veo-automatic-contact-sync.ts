@@ -1,9 +1,11 @@
 import { getSupabaseAdmin } from './supabase';
 import { readContactIdentityBatch } from './veo-contact-identity-sync';
+import { requireStorageForOptionalWork } from './veo-storage-health';
 
 /** Reconcile names/identities only. Real inbound webhooks establish inquiries;
  * an old conversation identity never establishes new activity or sends a bot. */
 export async function syncAutomaticContactIdentities(db: any = getSupabaseAdmin()) {
+    await requireStorageForOptionalWork(db);
     const claim = await db.rpc('veo_claim_contact_identity_pages', { p_limit: 3 });
     if (claim.error || !Array.isArray(claim.data)) throw Error('Automatic contact synchronization is unavailable');
     let inserted = 0, updated = 0, failed = 0;

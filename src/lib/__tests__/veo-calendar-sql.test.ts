@@ -29,6 +29,17 @@ beforeAll(async () => {
     const dates = (await db.query<any>('SELECT veo_today()::text AS today,(veo_today()-2)::text AS earlier')).rows[0]; today = dates.today; earlier = dates.earlier;
 }, 180000);
 afterAll(async () => { await db?.close(); });
+it('prioritizes waiting customer lanes without letting a customer message overtake its earlier staff handoff',async()=>{
+    await db.exec('BEGIN');try{
+        await db.exec("UPDATE veo_event_inbox SET status='done'");
+        const payload=(sender:string,recipient:string,mid:string,echo:boolean)=>JSON.stringify({object:'page',entry:[{id:'111',messaging:[{sender:{id:sender},recipient:{id:recipient},message:{mid,...(echo?{is_echo:true}:{})}}]}]});
+        for(const[key,sender,recipient,echo,seconds]of [['unrelated','111','999',true,30],['handoff','111','555',true,20],['customer','555','111',false,10]] as const){
+            await db.query("INSERT INTO veo_event_inbox(event_key,page_id,occurred_at,received_at,payload) VALUES($1,$2,now(),now()-$3::int*interval '1 second',$4)",['priority:'+key,page,seconds,payload(sender,recipient,key,echo)]);
+        }
+        const claim=async()=>{const row=(await db.query<any>('SELECT event_key FROM veo_claim_events(1)')).rows[0];await db.query("UPDATE veo_event_inbox SET status='done' WHERE event_key=$1",[row.event_key]);return row.event_key;};
+        expect(await claim()).toBe('priority:handoff');expect(await claim()).toBe('priority:customer');expect(await claim()).toBe('priority:unrelated');
+    }finally{await db.exec('ROLLBACK');}
+});
 it('registers real inbound clients atomically while their webhook is still queued and ignores echoes',async()=>{
     await db.exec('BEGIN');try{
         const psid='123456789',at=new Date(Date.now()-5000).toISOString();
