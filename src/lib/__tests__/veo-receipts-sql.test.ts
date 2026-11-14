@@ -921,8 +921,7 @@ describe('automatic fresh inquiry editor rotation', () => {
         expect((await db.query('SELECT * FROM veo_orders WHERE contact_id=$1',[customer])).rows).toHaveLength(0);
     });
     it('registers a client with sufficient details ahead of older incomplete inquiries in bounded batches',async()=>{
-        const patch=schemaMigrationPlan().find(m=>m.name==='202611140007_veo_dispatch_bounded_batches.sql');
-        await db.exec(patch!.sql);
+        for (const patch of schemaMigrationPlan().filter(m=>/^20261114000[78]_/.test(m.name))) await db.exec(patch.sql);
         await db.query("UPDATE veo_intake_auto_policy SET enabled_at=now()-interval '1 hour' WHERE tenant_id=$1",[tenant]);
         for(let i=0;i<8;i++) {
             const cid=id(request++);
