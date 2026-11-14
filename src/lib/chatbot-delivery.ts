@@ -3,12 +3,13 @@ import { getChatbotContactState, getChatbotHandoffOptions, saveChatbotContactSta
 import { isPipelineClosedForAutomation, pipelineStageForMessengerSignal, updateContactPipelineStage } from '@/lib/contact-pipeline';
 import { findLatestMessengerSystemSignal, getMessengerHandoffMetadata, loadMessengerHistoryForStopCheck } from '@/lib/messaging-auto-tag';
 import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
+import { getChatbotSalesStopReason } from '@/lib/chatbot-sales-stop';
 
 export class ChatbotDeliveryStoppedError extends Error {}
 
 /** Check immediately before each bubble/card, including changes made during generation. */
 export async function assertChatbotDeliveryAllowed(input: {
-    supabase: { from: (table: string) => any };
+    supabase: { from: (table: string) => any; rpc?: (name: string, args: Record<string, unknown>) => any };
     pageId: string;
     facebookPageId: string;
     accessToken: string;
@@ -25,21 +26,22 @@ export async function assertChatbotDeliveryAllowed(input: {
     const db = input.supabase;
     const enforceChatbotSettings = input.enforceChatbotSettings !== false;
     const checkSavedEligibility = async () => {
-        const [contactResult, configResult, state, jobResult] = await Promise.all([
+        const [contactResult, configResult, state, jobResult, salesStop] = await Promise.all([
             db.from('contacts').select('pipeline_stage,pipeline_stage_source,last_inbound_at,chatbot_enabled')
                 .eq('page_id', input.pageId).eq('id', input.contactId).maybeSingle(),
             enforceChatbotSettings ? db.from('chatbot_configs').select('enabled,follow_up_enabled,trial_mode_enabled,trial_contact_id,commercial_video_intake_enabled,policy_revision')
                 .eq('page_id', input.pageId).maybeSingle() : null,
             getChatbotContactState(db, input.pageId, input.contactId),
             input.followUpJobId ? db.from('chatbot_follow_up_jobs').select('status')
-                .eq('id', input.followUpJobId).eq('page_id', input.pageId).eq('contact_id', input.contactId).maybeSingle() : null
+                .eq('id', input.followUpJobId).eq('page_id', input.pageId).eq('contact_id', input.contactId).maybeSingle() : null,
+            getChatbotSalesStopReason(db, input.pageId, input.contactId)
         ]);
         if (contactResult.error) throw new Error(contactResult.error.message);
         if (configResult?.error) throw new Error(configResult.error.message);
         if (jobResult?.error) throw new Error(jobResult.error.message);
         const contact = contactResult.data;
         const config = configResult?.data;
-        if (!contact || contact.chatbot_enabled === false || (enforceChatbotSettings && (!config?.enabled || !isChatbotContactAllowed(config, input.contactId))) ||
+        if (!contact || salesStop || contact.chatbot_enabled === false || (enforceChatbotSettings && (!config?.enabled || !isChatbotContactAllowed(config, input.contactId))) ||
             (input.followUpJobId && jobResult?.data?.status !== 'processing') ||
             (input.followUp && enforceChatbotSettings && !config?.follow_up_enabled) ||
             state?.status === 'stopped' || isPipelineClosedForAutomation(contact?.pipeline_stage, contact?.pipeline_stage_source, config) ||

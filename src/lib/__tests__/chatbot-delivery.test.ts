@@ -9,7 +9,7 @@ function fixture(stage = 'engaged', source = 'chatbot', options: { state?: Recor
     const contact = { pipeline_stage: stage, pipeline_stage_source: source, last_inbound_at: null as string | null };
     const config = { enabled: true, follow_up_enabled: true, commercial_video_intake_enabled: Boolean(options.state?.automation_resumed_at), policy_revision: 1 };
     const state = options.state || null;
-    const db = { rpc: vi.fn().mockResolvedValue({ data: { applied: true }, error: null }), from: (table: string) => {
+    const db = { rpc: vi.fn(async (name: string) => ({ data: name === 'chatbot_contact_sales_stop' ? null : { applied: true }, error: null })), from: (table: string) => {
         const chain: any = { select: () => chain, eq: () => chain, in: () => chain,
             maybeSingle: async () => ({ data: table === 'contacts' ? contact : table === 'chatbot_configs'
                 ? config : table === 'chatbot_contact_states' ? state : null, error: null }),
@@ -26,6 +26,23 @@ function fixture(stage = 'engaged', source = 'chatbot', options: { state?: Recor
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe('terminal delivery stops', () => {
+    it('blocks an existing order even when the saved stage is still qualified and the state is active', async () => {
+        const f = fixture('qualified', 'chatbot', { state: { status: 'active', automation_resumed_at: '2026-11-14T00:00:00Z' } });
+        f.input.supabase.rpc.mockResolvedValue({ data: 'order_created', error: null } as any);
+        await expect(assertChatbotDeliveryAllowed(f.input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+        await expect(assertMessengerAutomationDeliveryAllowed(f.input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+        expect(mocks.getConversationForPsid).not.toHaveBeenCalled();
+    });
+    it('cancels delivery when an order arrives during the final Messenger read', async () => {
+        const f = fixture();let ordered = false;
+        f.input.supabase.rpc.mockImplementation(async () => ({ data: ordered ? 'order_created' : null, error: null } as any));
+        mocks.getConversationForPsid.mockImplementationOnce(async () => { ordered = true;return { messages: { data: [] } }; });
+        await expect(assertChatbotDeliveryAllowed(f.input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);
+    });
+    it('does not send when order eligibility is unavailable', async () => {
+        const f = fixture();f.input.supabase.rpc.mockResolvedValue({ data: null, error: { message: 'offline' } } as any);
+        await expect(assertChatbotDeliveryAllowed(f.input)).rejects.toThrow('Order eligibility check');
+    });
     it('blocks a disabled contact for AI and independent automatic replies',async()=>{
         const f=fixture();Object.assign(f.contact,{chatbot_enabled:false});
         await expect(assertChatbotDeliveryAllowed(f.input)).rejects.toBeInstanceOf(ChatbotDeliveryStoppedError);

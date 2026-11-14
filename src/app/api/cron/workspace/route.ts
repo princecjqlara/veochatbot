@@ -37,14 +37,8 @@ async function processWorkspace(request: NextRequest) {
         try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
         let intakeRetry = false;
         try { const cleaned = await db.rpc('veo_telegram_intake_maintenance');intakeRetry = !!cleaned.error; } catch { intakeRetry = true; }
-        try {
-            const tenants = await db.from('veo_intake_auto_policy').select('tenant_id').eq('enabled', true).limit(10);
-            if (tenants.error) intakeRetry = true;
-            for (const tenant of tenants.data || []) {
-                const dispatched = await db.rpc('veo_automatic_intake_tick', { p_tenant: tenant.tenant_id });
-                if (dispatched.error) intakeRetry = true;
-            }
-        } catch { intakeRetry = true; }
+        // Editor dispatch has an independent minute worker so maintenance and
+        // enrichment cannot prevent a due offer from being considered.
         try { await processJevInterruptionReviews({ limit: 1, timeBudgetMs: 20000 }); } catch { /* Keep the bot paused and retry independently of editor dispatch. */ }
         let sourceRetry = false;
         try { await processVeoSourceJobs(2, 25000); } catch { sourceRetry = true; }

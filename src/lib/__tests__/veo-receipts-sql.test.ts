@@ -920,6 +920,18 @@ describe('automatic fresh inquiry editor rotation', () => {
         await expect(rpc('veo_intake_action',[editorB,'accept',JSON.stringify({request_id:id(request++),contact_id:customer})])).rejects.toThrow(/automatic Telegram queue/);
         expect((await db.query('SELECT * FROM veo_orders WHERE contact_id=$1',[customer])).rows).toHaveLength(0);
     });
+    it('registers a client with sufficient details ahead of older incomplete inquiries in bounded batches',async()=>{
+        const patch=schemaMigrationPlan().find(m=>m.name==='202611140007_veo_dispatch_bounded_batches.sql');
+        await db.exec(patch!.sql);
+        await db.query("UPDATE veo_intake_auto_policy SET enabled_at=now()-interval '1 hour' WHERE tenant_id=$1",[tenant]);
+        for(let i=0;i<8;i++) {
+            const cid=id(request++);
+            await db.query("INSERT INTO contacts(id,page_id,psid,pipeline_stage,first_interaction_at,last_interaction_at,last_inbound_at) VALUES($1,$2,$3,'new',now()-interval '10 minutes',now()-interval '10 minutes',now()-interval '10 minutes')",[cid,autoPage,cid]);
+        }
+        const result=await tick();expect(result.new_announcements).toBeLessThanOrEqual(5);
+        expect(await dispatch(customer)).toBeDefined();
+        await due();await tick();expect((await dispatch(customer)).status).toBe('offered');
+    });
     it('moves a timed-out offer to another Ready editor and transfers ownership only on acceptance',async()=>{
         await tick();await due();await tick();const first=await dispatch();
         const sentAt=new Date(Date.now()-30000).toISOString();

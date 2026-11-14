@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
     getSupabaseAdmin: vi.fn(),
+    salesStop: vi.fn(),
     syncMessengerStageHistory: vi.fn(),
     captureContactAdSource: vi.fn().mockResolvedValue(undefined),
     captureStandaloneAdReferral: vi.fn().mockResolvedValue(undefined),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/supabase', () => ({
     getSupabaseAdmin: mocks.getSupabaseAdmin
 }));
+vi.mock('@/lib/chatbot-sales-stop', () => ({ getChatbotSalesStopReason: mocks.salesStop }));
 vi.mock('@/lib/messenger-stage-sync', () => ({ syncMessengerStageHistory: mocks.syncMessengerStageHistory }));
 vi.mock('@/lib/ad-attribution', () => ({ captureContactAdSource: mocks.captureContactAdSource, captureStandaloneAdReferral: mocks.captureStandaloneAdReferral }));
 
@@ -680,6 +682,7 @@ function createSupabaseMockWithGenericUpsertFailure() {
 describe('POST /api/facebook/webhook', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.salesStop.mockReset().mockResolvedValue(null);
         mocks.syncMessengerStageHistory.mockReset().mockResolvedValue({ events: 0, applied: 0 });
         vi.stubEnv('NODE_ENV', 'test');
         mocks.handleFollowUpWorkflowContactReply.mockResolvedValue({
@@ -1272,6 +1275,12 @@ describe('POST /api/facebook/webhook', () => {
         expect(mocks.sendMessage).toHaveBeenCalled();
     });
 
+    it('does not generate an intake reply when an order exists behind a stale open lead stage', async () => {
+        mocks.getSupabaseAdmin.mockReturnValue(createPhotoChatbotSupabaseMock({ pipelineStage: 'engaged', pipelineSource: 'chatbot', commercialVideo: true }));
+        mocks.salesStop.mockResolvedValue('order_created');
+        expect((await POST(createWebhookRequest())).status).toBe(200);
+        expect(mocks.generateChatbotResponse).not.toHaveBeenCalled();expect(mocks.sendMessage).not.toHaveBeenCalled();
+    });
     it.each(['qualified', 'converted', 'not_qualified', 'order_created', 'opted_out'])(
         'blocks text, photos and buttons for %s regardless of who set the stage', async stage => {
             for (const source of ['chatbot', 'manual', 'messenger']) {

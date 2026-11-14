@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getChatbotSalesStopReason } from '@/lib/chatbot-sales-stop';
 import { receiveWorkspaceEvents } from '@/lib/veo-events';
 import { veoEventReplay } from '@/lib/veo-event-context';
 import { syncMessengerStageHistory } from '@/lib/messenger-stage-sync';
@@ -1031,6 +1032,7 @@ export async function POST(request: NextRequest) {
                                     try {
                                         chatbotState = await getChatbotContactState(supabase, page.id, contact.id);
                                         const storedStopReason = getChatbotStateStopReason(chatbotState, interactionTime);
+                                        if (!stateStopReason) stateStopReason = await getChatbotSalesStopReason(supabase, page.id, contact.id);
                                         if (storedStopReason === 'window_expired') {
                                             // A fresh customer message opens a new seven-day activity window.
                                             // Other stop reasons remain durable until manually reset.

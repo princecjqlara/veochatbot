@@ -347,6 +347,35 @@ it('paginates scoped contacts with stable ties and preserves literal search matc
         await expect(db.query('SELECT veo_contacts_page($1,$2)', [owner, foreign])).rejects.toThrow('Forbidden');
     } finally { await db.exec('ROLLBACK'); }
 });
+it('stops a client when an order is saved, preserving answers and cancelling every unsent job status', async () => {
+    await db.exec('BEGIN');try {
+        const cid = id(960);
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,pipeline_stage_source) VALUES($1,$2,'ordered-client','Ordered client','qualified','chatbot')", [cid,page]);
+        await db.query("INSERT INTO chatbot_contact_states(page_id,contact_id,collected_details,status) VALUES($1,$2,'{\"Business Name\":\"Saved answer\"}','active')", [page,cid]);
+        await db.query("INSERT INTO chatbot_follow_up_jobs(page_id,contact_id,anchor_inbound_at,schedule_type,sequence_index,due_at,message_text,status) SELECT $1,$2,now(),'response',n,now()+interval '1 hour','Queued reply',s FROM (VALUES(0,'pending'),(1,'processing'),(2,'waiting_response')) v(n,s)", [page,cid]);
+        await db.query("INSERT INTO veo_orders(request_id,tenant_id,team_id,page_id,contact_id,seller_id,description,total_minor,currency,created_by) SELECT $1,tenant_id,id,$2,$3,$4,'Order',10000,'PHP',$5 FROM veo_teams WHERE manager_id=$4 LIMIT 1", [id(961),page,cid,manager,owner]);
+        expect((await db.query<any>('SELECT chatbot_contact_sales_stop($1,$2) reason',[page,cid])).rows[0].reason).toBe('order_created');
+        const state=(await db.query<any>('SELECT status,stop_reason,collected_details,automation_epoch FROM chatbot_contact_states WHERE contact_id=$1',[cid])).rows[0];
+        expect(state).toMatchObject({status:'stopped',stop_reason:'order_created',collected_details:{'Business Name':'Saved answer'}});expect(state.automation_epoch).toBeGreaterThan(0);
+        expect((await db.query<any>("SELECT count(*)::int n FROM chatbot_follow_up_jobs WHERE contact_id=$1 AND status='cancelled'",[cid])).rows[0].n).toBe(3);
+        await expect(db.query('SELECT reset_chatbot_contact($1,$2)',[page,cid])).rejects.toThrow(/already has an order/);
+    } finally { await db.exec('ROLLBACK'); }
+});
+it('switches only the selected contact off and on, invalidating work without inventing a human handoff', async () => {
+    await db.exec('BEGIN');try {
+        const cid=id(970);
+        expect((await db.query<any>('SELECT veo_can_page($1,$2) allowed',[owner,page])).rows[0].allowed).toBe(true);
+        await db.query("INSERT INTO contacts(id,page_id,psid,pipeline_stage,pipeline_stage_source) VALUES($1,$2,'off-client','engaged','chatbot')",[cid,page]);
+        await db.query("INSERT INTO chatbot_contact_states(page_id,contact_id,status) VALUES($1,$2,'active')",[page,cid]);
+        await db.query("INSERT INTO chatbot_follow_up_jobs(page_id,contact_id,anchor_inbound_at,schedule_type,sequence_index,due_at,message_text) VALUES($1,$2,now(),'response',0,now()+interval '1 hour','Queued')",[page,cid]);
+        const toggle=async(enabled:boolean)=>(await db.query<any>('SELECT set_contact_bot_permission($1,$2,$3,$4) r',[page,cid,owner,enabled])).rows[0].r;
+        expect(await toggle(false)).toMatchObject({enabled:false,changed:true,cancelled_follow_ups:1});
+        expect((await db.query<any>('SELECT chatbot_enabled FROM contacts WHERE id=$1',[cid])).rows[0].chatbot_enabled).toBe(false);
+        expect(await toggle(true)).toMatchObject({enabled:true,changed:true});
+        expect((await db.query<any>('SELECT status,automation_epoch FROM chatbot_contact_states WHERE contact_id=$1',[cid])).rows[0]).toMatchObject({status:'active'});
+        expect((await db.query<any>("SELECT count(*)::int n FROM chatbot_follow_up_jobs WHERE contact_id=$1 AND status='cancelled'",[cid])).rows[0].n).toBe(1);
+    } finally { await db.exec('ROLLBACK'); }
+});
 it('tracks physical disk pressure, stale monitoring and failed cleanup without exposing health functions publicly', async () => {
     const record = async (body: any) => (await db.query<any>('SELECT veo_record_storage_metrics($1::jsonb) r', [JSON.stringify({ resource_metrics_available: true, memory_total_bytes: 400000000, memory_available_bytes: 100000000, swap_total_bytes: 1000000000, swap_free_bytes: 900000000, cpu_count: 2, load_5m: 0.5, ...body })])).rows[0].r;
     const healthy = await record({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 1500000000, wal_bytes: 64000000 });
