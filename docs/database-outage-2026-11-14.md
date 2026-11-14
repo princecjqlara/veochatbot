@@ -8,6 +8,8 @@ After recovery, the database was approximately 234 MB with about 1.50 GB free on
 
 Confirmed application pressure sources: eleven scheduled routes started on overlapping minute boundaries; contact pagination materialized all contact display fields before sorting, with temporary disk writes in query statistics. The server had 46,000+ contacts. The ten-second application timeout did not provide a short database-side limit for several background RPCs. Historical inquiry recovery also lacked the optional-work health check used by identity imports.
 
+The older PostgreSQL logs additionally show recurring event-claim and automatic-intake statement timeouts before the full service failure. Migration `202611140005` adds short transaction deadlines to those live workers and maintenance as well. A timed-out transaction rolls back and the scheduled worker can retry; an application request timeout alone must not leave a much longer transaction running.
+
 ## Changes
 
 - Contact pagination counts and sorts only IDs and activity dates, then loads display fields for the requested page. Scope, literal search, ordering, totals and response fields remain the same.
