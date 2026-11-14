@@ -3,7 +3,7 @@ import { parseStorageMetrics, readStorageMetrics, requireStorageForOptionalWork 
 const metrics = 'node_filesystem_size_bytes{mountpoint="/",device="root"} 1000\nnode_filesystem_avail_bytes{device="root",mountpoint="/"} 1\nnode_filesystem_size_bytes{device="data",mountpoint="/data"} 2e9\nnode_filesystem_avail_bytes{mountpoint="/data",device="data"} 1.5e9\npg_wal_size_mb{service_type="postgresql"} 64';
 afterEach(() => { vi.unstubAllGlobals();vi.unstubAllEnvs(); });
 it('uses the actual data disk, including reserved space, rather than database size or the OS volume', () => {
-    expect(parseStorageMetrics(metrics)).toEqual({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 1500000000, wal_bytes: 67108864 });
+    expect(parseStorageMetrics(metrics)).toEqual({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 1500000000, wal_bytes: 67108864, resource_metrics_available: false });
     expect(() => parseStorageMetrics('node_filesystem_size_bytes{mountpoint="/"} 1000')).toThrow('unavailable');
     expect(() => parseStorageMetrics(metrics + '\nnode_filesystem_size_bytes{mountpoint="/data"} 3e9')).toThrow('Ambiguous');
 });

@@ -6,11 +6,17 @@ import Health from './VeoStorageHealth';
 let view: ReactTestRenderer;
 afterEach(async () => { if (view) await act(async () => view.unmount());vi.unstubAllGlobals(); });
 it('keeps a healthy compact check quiet while making critical or stale storage visible', async () => {
-    let healthy = true;vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: healthy ? 'healthy' : 'critical', maintenance_healthy: true, metrics_fresh: healthy, optional_work_paused: !healthy, database_bytes: 89000000, database_budget_bytes: 500000000, disk_size_bytes: 2000000000, disk_available_bytes: healthy ? 1500000000 : 200000000 })));
+    let healthy = true;vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: healthy ? 'healthy' : 'critical', maintenance_healthy: true, metrics_fresh: healthy, resource_metrics_fresh: true, resource_pressure: false, optional_work_paused: !healthy, database_bytes: 89000000, database_budget_bytes: 500000000, disk_size_bytes: 2000000000, disk_available_bytes: healthy ? 1500000000 : 200000000 })));
     await act(async () => { view = create(createElement(Health, { compact: true })); });expect(view.toJSON()).toBeNull();
     healthy = false;await act(async () => view.update(createElement(Health, { compact: false })));
     await act(async () => view.root.findByType('button').props.onClick());
     const text = JSON.stringify(view.toJSON());expect(text).toContain('needs attention');expect(text).toContain('paused');expect(text).toContain('stale');
+});
+it('shows memory pressure even when disk and cleanup are healthy', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: 'healthy', metrics_fresh: true, maintenance_healthy: true,
+        resource_metrics_fresh: true, resource_pressure: true, resource_pressure_reasons: ['low_memory'], optional_work_paused: true })));
+    await act(async () => { view = create(createElement(Health, { compact: true })); });
+    const text = JSON.stringify(view.toJSON());expect(text).toContain('low available memory');expect(text).toContain('resume automatically');
 });
 it('shows failed monitoring explicitly instead of a healthy storage claim', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'offline' }, { status: 503 })));

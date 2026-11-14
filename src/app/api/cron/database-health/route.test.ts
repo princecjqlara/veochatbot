@@ -11,7 +11,7 @@ it('authenticates before probing metrics or writing the bounded checkpoint', asy
     expect((await GET(request(false))).status).toBe(401);expect(m.metrics).not.toHaveBeenCalled();expect(m.rpc).not.toHaveBeenCalled();
 });
 it('reports healthy only when both disk metrics and independent cleanup are healthy', async () => {
-    m.rpc.mockResolvedValue({ data: { status: 'healthy', maintenance_healthy: true } });expect((await GET(request())).status).toBe(200);
+    m.rpc.mockResolvedValue({ data: { status: 'healthy', maintenance_healthy: true, resource_metrics_fresh: true, resource_pressure: false } });expect((await GET(request())).status).toBe(200);
     m.rpc.mockResolvedValueOnce({ data: { status: 'critical', maintenance_healthy: true } });expect((await GET(request())).status).toBe(503);
     m.rpc.mockResolvedValueOnce({ data: { status: 'healthy', maintenance_healthy: false } });expect((await GET(request())).status).toBe(503);
 });
@@ -19,4 +19,10 @@ it('records failed monitoring and makes checkpoint failures visible', async () =
     m.metrics.mockRejectedValueOnce(Error('offline'));m.rpc.mockResolvedValueOnce({ data: { status: 'unknown' } });expect((await GET(request())).status).toBe(503);
     expect(m.rpc).toHaveBeenCalledWith('veo_record_storage_metrics', { p_metrics: { available: false } });
     m.rpc.mockResolvedValueOnce({ error: { message: 'offline' } });expect((await GET(request())).status).toBe(503);
+});
+it('reports pressure or missing resource measurements despite healthy disk space', async () => {
+    for (const resource of [{ resource_metrics_fresh: true, resource_pressure: true }, { resource_metrics_fresh: false, resource_pressure: false }, {}]) {
+        m.rpc.mockResolvedValueOnce({ data: { status: 'healthy', maintenance_healthy: true, ...resource } });
+        expect((await GET(request())).status).toBe(503);
+    }
 });

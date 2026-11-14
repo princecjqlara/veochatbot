@@ -1,4 +1,5 @@
 import { assertVeoDatabaseUrl } from './veo-database-scope';
+import { parseDatabaseResourceMetrics } from './database-resource-health';
 
 export function parseStorageMetrics(source: string) {
     const values = new Map<string, number>();
@@ -11,7 +12,8 @@ export function parseStorageMetrics(source: string) {
     }
     const size = values.get('node_filesystem_size_bytes'), available = values.get('node_filesystem_avail_bytes');
     if (!size || available == null || available > size) throw Error('Database disk metrics unavailable');
-    return { available: true, disk_size_bytes: Math.round(size), disk_available_bytes: Math.round(available), wal_bytes: values.has('pg_wal_size_mb') ? Math.round(values.get('pg_wal_size_mb')! * 1048576) : null };
+    return { available: true, disk_size_bytes: Math.round(size), disk_available_bytes: Math.round(available), wal_bytes: values.has('pg_wal_size_mb') ? Math.round(values.get('pg_wal_size_mb')! * 1048576) : null,
+        ...parseDatabaseResourceMetrics(source) };
 }
 
 export async function readStorageMetrics() {

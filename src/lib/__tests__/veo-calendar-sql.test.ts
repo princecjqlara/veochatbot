@@ -316,8 +316,39 @@ it('cleans only old completed payloads in bounded batches and keeps business rec
     expect((await db.query<any>('SELECT (SELECT count(*) FROM contacts)::int contacts,(SELECT count(*) FROM tags)::int tags,(SELECT count(*) FROM veo_orders)::int orders,(SELECT count(*) FROM veo_payments)::int payments')).rows[0]).toEqual(before);
     expect((await db.query<any>("SELECT count(*)::int n FROM cron.job WHERE jobname='veo-storage-protection'")).rows[0].n).toBe(1);
 });
+it('pauses historical growth for memory, swap or sustained load and resumes after a cooldown', async () => {
+    await db.exec('BEGIN');try {
+        await db.exec('SELECT veo_storage_maintenance()');
+        const normal = { available: true, disk_size_bytes: 2000000000, disk_available_bytes: 1500000000, resource_metrics_available: true,
+            memory_total_bytes: 400000000, memory_available_bytes: 100000000, swap_total_bytes: 1000000000, swap_free_bytes: 900000000, cpu_count: 2, load_5m: 0.5 };
+        const record = async (extra: any = {}) => (await db.query<any>('SELECT veo_record_storage_metrics($1::jsonb) r', [JSON.stringify({ ...normal, ...extra })])).rows[0].r;
+        expect(await record()).toMatchObject({ optional_work_paused: false, resource_metrics_fresh: true, resource_pressure: false });
+        for (const [extra, reason] of [[{ memory_available_bytes: 20000000 }, 'low_memory'], [{ swap_free_bytes: 200000000 }, 'high_swap'], [{ load_5m: 3 }, 'sustained_load']] as const) {
+            const pressured = await record(extra);
+            expect(pressured).toMatchObject({ status: 'healthy', optional_work_paused: true, resource_pressure: true });
+            expect(pressured.resource_pressure_reasons).toContain(reason);
+        }
+        expect(await record()).toMatchObject({ optional_work_paused: true, resource_pressure_reasons: ['recovery_cooldown'] });
+        await db.exec("UPDATE app_private.veo_storage_state SET resource_paused_until=now()-interval '1 second'");
+        expect(await record()).toMatchObject({ optional_work_paused: false, resource_pressure: false });
+        await db.exec("UPDATE app_private.veo_storage_state SET resource_metrics_at=now()-interval '4 minutes'");
+        expect((await db.query<any>('SELECT veo_storage_status() r')).rows[0].r).toMatchObject({ optional_work_paused: true, resource_metrics_fresh: false });
+        await expect(record({ memory_available_bytes: 900000000 })).rejects.toThrow('Invalid resource metrics');
+    } finally { await db.exec('ROLLBACK'); }
+});
+it('paginates scoped contacts with stable ties and preserves literal search matching', async () => {
+    await db.exec('BEGIN');try {
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,last_interaction_at) VALUES($1,$4,'pressure-alpha','Pressure query alpha',now()),($2,$4,'pressure-beta','Pressure query beta',now()),($3,$5,'pressure-hidden','Pressure query hidden',now())", [id(950), id(951), id(952), page, foreign]);
+        const list = async (offset = 0, search = 'Pressure query') => (await db.query<any>('SELECT veo_contacts_page($1,NULL,$2,$3,1) r', [owner, search, offset])).rows[0].r;
+        const first = await list(), second = await list(1);
+        expect(first.total).toBe(2);expect(first.items.map((x: any) => x.id)).toEqual([id(950)]);expect(second.items.map((x: any) => x.id)).toEqual([id(951)]);
+        expect(first.items[0]).toMatchObject({ name: 'Pressure query alpha', psid: 'pressure-alpha', page_id: page, page_name: 'VEO' });
+        expect((await list(0, 'pressure-alpha')).total).toBe(1);expect((await list(0, '%')).total).toBe(0);expect((await list(50)).items).toEqual([]);
+        await expect(db.query('SELECT veo_contacts_page($1,$2)', [owner, foreign])).rejects.toThrow('Forbidden');
+    } finally { await db.exec('ROLLBACK'); }
+});
 it('tracks physical disk pressure, stale monitoring and failed cleanup without exposing health functions publicly', async () => {
-    const record = async (body: any) => (await db.query<any>('SELECT veo_record_storage_metrics($1::jsonb) r', [JSON.stringify(body)])).rows[0].r;
+    const record = async (body: any) => (await db.query<any>('SELECT veo_record_storage_metrics($1::jsonb) r', [JSON.stringify({ resource_metrics_available: true, memory_total_bytes: 400000000, memory_available_bytes: 100000000, swap_total_bytes: 1000000000, swap_free_bytes: 900000000, cpu_count: 2, load_5m: 0.5, ...body })])).rows[0].r;
     const healthy = await record({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 1500000000, wal_bytes: 64000000 });
     expect(healthy).toMatchObject({ status: 'healthy', metrics_fresh: true, maintenance_healthy: true, optional_work_paused: false });
     expect(await record({ available: true, disk_size_bytes: 2000000000, disk_available_bytes: 500000000 })).toMatchObject({ status: 'warning', optional_work_paused: false });

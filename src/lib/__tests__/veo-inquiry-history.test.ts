@@ -3,8 +3,14 @@ vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: vi.fn() }));
 import { recoverFirstInquiries, earliestCustomerMessage, inquiryHistoryCursor } from '../veo-inquiry-history';
 const job = { contact_id: 'contact', page_id: 'page', psid: 'buyer', fb_page_id: '123', access_token: 'private-token', lease_token: 'lease', scan_started: false, cursor: null };
 const msg = (id: string, date: string, sender = 'buyer') => ({ id, created_time: date, from: { id: sender } });
-const db = () => ({ rpc: vi.fn(async (name: string) => name === 'veo_claim_inquiry_history' ? { data: [job] } : { data: { saved: true, complete: true, changed: true } }) });
+const db = () => ({ rpc: vi.fn(async (name: string) => name === 'veo_storage_status' ? { data: { optional_work_paused: false } } : name === 'veo_claim_inquiry_history' ? { data: [job] } : { data: { saved: true, complete: true, changed: true } }) });
 afterEach(() => { vi.unstubAllGlobals(); });
+it('does not lease history or contact Meta while optional processing is paused', async () => {
+    const database = { rpc: vi.fn(async () => ({ data: { optional_work_paused: true } })) };
+    const fetcher = vi.fn();vi.stubGlobal('fetch', fetcher);
+    await expect(recoverFirstInquiries(database)).rejects.toMatchObject({ code: 'STORAGE_ATTENTION' });
+    expect(database.rpc).toHaveBeenCalledTimes(1);expect(database.rpc).toHaveBeenCalledWith('veo_storage_status');expect(fetcher).not.toHaveBeenCalled();
+});
 it('finds the oldest customer message and ignores earlier Page-authored messages', () => {
     expect(earliestCustomerMessage([msg('page', '2025-01-01', '123'), msg('new', '2026-11-13'), msg('first', '2026-08-01')], 'buyer')).toEqual({ at: '2026-08-01T00:00:00.000Z', id: 'first' });
     expect(earliestCustomerMessage([msg('new', '2026-11-13')], 'buyer', { at: '2026-08-01T00:00:00Z', id: 'first' })?.id).toBe('first');
@@ -21,7 +27,7 @@ it('follows every accessible page before confirming the first inquiry and never 
     for (const call of fetcher.mock.calls) expect(String(call[0])).not.toContain('access_token');
 });
 it('checkpoints long history without presenting a partial scan as verified', async () => {
-    const database = db(); database.rpc.mockImplementation(async (name: string) => name === 'veo_claim_inquiry_history' ? { data: [job] } : { data: { saved: true, complete: false, changed: false } });
+    const database = db(); database.rpc.mockImplementation(async (name: string) => name === 'veo_storage_status' ? { data: { optional_work_paused: false } } : name === 'veo_claim_inquiry_history' ? { data: [job] } : { data: { saved: true, complete: false, changed: false } });
     let page = 0;
     vi.stubGlobal('fetch', vi.fn(async () => { page++; const messages = { data: [msg('message-' + page, '2026-01-01')], paging: { next: 'https://graph.facebook.com/v24.0/thread/messages?after=' + page } }; return Response.json(page === 1 ? { data: [{ messages }] } : messages); }));
     expect(await recoverFirstInquiries(database)).toMatchObject({ checked: 0, pending: 1 });
