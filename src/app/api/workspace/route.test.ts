@@ -82,4 +82,12 @@ describe('workspace work-date boundaries', () => {
         const response = await GET(new NextRequest('https://veo.test/api/workspace'));
         expect(response.status).toBe(400); expect((await response.json()).error).toBe('Team aggregate unavailable');
     });
+    it('reports an open database circuit as retryable service failure without leaking transport details', async () => {
+        m.rpc.mockImplementation(async name => name === 'veo_scope'
+            ? { data: { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } }
+            : { error: { code: 'SUPABASE_CIRCUIT_OPEN', message: 'internal transport detail' } });
+        const response = await GET(new NextRequest('https://veo.test/api/workspace'));
+        expect(response.status).toBe(503);expect(response.headers.get('Retry-After')).toBe('30');
+        expect((await response.json()).error).toBe('Workspace report is temporarily unavailable. Retry shortly.');
+    });
 });

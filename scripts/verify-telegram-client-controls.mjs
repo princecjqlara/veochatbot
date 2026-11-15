@@ -43,6 +43,12 @@ try {
   queueExplained: rendered.text.includes('Waiting for your automatic editor offer'), buttonCount: rendered.reply_markup.inline_keyboard.flat().length, rolledBack: true };
  assert(report.render.multiline && !report.render.literalNewlines);
  assert(rendered.reply_markup.inline_keyboard.flat().every(b => b.url || /^vi:[a-f0-9-]{36}$/.test(b.callback_data)));
+ const commandControls = (await db.query("SELECT to_regprocedure('veo_telegram_intake_before_command_controls(uuid,bigint,bigint,text,jsonb)') IS NOT NULL installed")).rows[0].installed;
+ if (commandControls) {
+  assert(rendered.reply_markup.inline_keyboard.flat().every(b => ['Accept client', 'Remove from list'].includes(b.text)));
+  assert(rendered.text.includes('/ready') && rendered.text.includes('/busy'));
+  report.render.commandControls = true;
+ }
  const forbidden = (await db.query(`SELECT count(*)::int n FROM veo_telegram_intake_tokens t JOIN veo_intake_dispatch d ON d.contact_id=t.contact_id
   WHERE t.request_id=$1 AND t.action IN('accept','choose_worker') AND t.offer_id IS NULL AND d.status IN('waiting','offered')`, [request])).rows[0].n;
  assert.equal(forbidden, 0, 'Automatic queue clients must not expose unusable direct acceptance buttons');

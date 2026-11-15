@@ -1,4 +1,6 @@
 import { DatabaseReadTimeout, requestDeadline } from './request-deadline';
+import { isSupabaseUnavailable } from './supabase-errors';
+import { setSupabaseReadBudget } from './supabase-read-budget';
 
 /** Retry only transient read timeouts. Every attempt runs the SQL permission
  * checks again; invalid filters and authorization failures return immediately. */
@@ -8,12 +10,23 @@ export async function readVeoReport(read: (signal: AbortSignal) => PromiseLike<a
         try {
             const remaining = deadline - Date.now();
             if (remaining <= 0) throw new DatabaseReadTimeout();
-            const result = await requestDeadline(read, Math.min(18000, remaining));
-            if (result?.error?.code === '57014') throw new DatabaseReadTimeout();
+            const budget = Math.min(18000, remaining);
+            const result = await requestDeadline(signal => {
+                setSupabaseReadBudget(signal, budget);
+                return read(signal);
+            }, budget);
+            // The SDK resolves transport failures as { error }, including
+            // errors whose timeout code was replaced with an empty string.
+            // A pre-existing open circuit still fails fast; do not probe it
+            // again for every incoming workspace request.
+            if (result?.error?.code !== 'SUPABASE_CIRCUIT_OPEN' && isSupabaseUnavailable(result?.error)) throw result.error;
             return result;
         } catch (error) {
-            if (!(error instanceof DatabaseReadTimeout) || attempt === 2 || deadline - Date.now() <= 1000) throw error;
-            await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+            if (!isSupabaseUnavailable(error)) throw error;
+            const delay = (error as any)?.code === '57014' || error instanceof DatabaseReadTimeout
+                ? 500 * (attempt + 1) : 2000 * 2 ** attempt;
+            if (attempt === 2 || deadline - Date.now() <= delay + 1000) throw new DatabaseReadTimeout();
+            await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
     throw new DatabaseReadTimeout();

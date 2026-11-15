@@ -135,6 +135,20 @@ describe('workspace contacts, unified deals and Owner separation', () => {
         expect(JSON.stringify(view.toJSON())).toContain('Create account');
     });
 
+    it.each([503, 403])('recovers a temporary load failure automatically but keeps denied access closed (%s)', async status => {
+        m.params = new URLSearchParams('view=accounts');
+        m.fetch.mockImplementation(async (url: string) => url === '/api/pages' ? Response.json({ pages: [] }) : Response.json({ error: 'Source unavailable' }, { status }));
+        await act(async () => { view = create(createElement(Page)); });
+        const reads = () => m.fetch.mock.calls.filter(([url]) => url.startsWith('/api/workspace?')).length;
+        expect(reads()).toBe(1);
+        m.fetch.mockImplementation(async () => Response.json(dashboard('manager')));
+        await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+        expect(reads()).toBe(status === 503 ? 2 : 1);
+        expect(JSON.stringify(view.toJSON()).includes('Create account')).toBe(status === 503);
+        await act(async () => { await vi.advanceTimersByTimeAsync(90000); });
+        expect(reads()).toBe(status === 503 ? 2 : 1);
+    });
+
     it('ignores a late client search response after the user has changed the search', async () => {
         await render();
         const normal = m.fetch.getMockImplementation()!;

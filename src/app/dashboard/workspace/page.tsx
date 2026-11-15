@@ -43,6 +43,7 @@ function Workspace() {
     const dealStatus = requestedView === 'done' || params.get('status') === 'done' ? 'done' : 'closed';
     const [data, setData] = useState<any>(null), [pages, setPages] = useState<any[]>([]), [page, setPage] = useState(params.get('page_id') || '');
     const [loadedArea, setLoadedArea] = useState('');
+    const [retryableLoad, setRetryableLoad] = useState(false);
     const [loadError, setLoadError] = useState(''), [retry, setRetry] = useState(0);
     const [day, setDay] = useState(today()), [query, setQuery] = useState(params.get('search') || ''), [contacts, setContacts] = useState<WorkspaceContact[]>([]);
     const [contactOffset, setContactOffset] = useState(0), [contactTotal, setContactTotal] = useState(0), [contactsLoading, setContactsLoading] = useState(true), [picked, setPicked] = useState<WorkspaceContact | null>(null);
@@ -61,15 +62,16 @@ function Workspace() {
         const endpoint = lightweight ? '/api/workspace/new-clients?context=1' : contextual ? `/api/workspace/context?view=${encodeURIComponent(view)}&date=${encodeURIComponent(day)}${accounts}` : `/api/workspace?${filters}`;
         const r = await fetch(endpoint, { signal });
         let body = await r.json();
-        if (!r.ok) throw new Error(body.error);
+        if (!r.ok) throw Object.assign(new Error(body.error), { status: r.status });
         if (contextual && ['calendar', 'budget'].includes(view) && !['owner', 'team_leader'].includes(body.scope?.role)) {
             const fallback = await fetch(`/api/workspace?${filters}`, { signal }), result = await fallback.json();
-            if (!fallback.ok) throw new Error(result.error);body = result;
+            if (!fallback.ok) throw Object.assign(new Error(result.error), { status: fallback.status });body = result;
         }
         if (generation !== refreshGeneration.current) return;
         const next = lightweight ? { scope: body.scope, accounts: [], tomorrow: [] } : body;
         setData((previous: any) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
         setLoadError('');
+        setRetryableLoad(false);
         setLoadedArea(view);
     }
     useEffect(() => {
@@ -83,11 +85,22 @@ function Workspace() {
     useEffect(() => {
         const controller = new AbortController();
         setLoadError('');
-        void refresh(controller.signal).catch(e => { if (!controller.signal.aborted) setLoadError(e.message || 'The workspace could not be loaded.'); });
+        setRetryableLoad(false);
+        void refresh(controller.signal).catch(e => {
+            if (!controller.signal.aborted) {
+                setLoadError(e.message || 'The workspace could not be loaded.');
+                setRetryableLoad(e.status >= 500 || e instanceof TypeError);
+            }
+        });
         return () => { controller.abort(); refreshGeneration.current++; };
         // Area context does not use client search, page or pagination filters.
         // Those controls refresh their own complete lists instead of reloading team finances.
     }, [day, view, dealStatus, retry]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (!loadError || !retryableLoad || data && loadedArea === view) return;
+        const timer = setTimeout(() => setRetry(value => value + 1), 30000);
+        return () => clearTimeout(timer);
+    }, [loadError, retryableLoad, data, loadedArea, view]);
     useEffect(() => {
         const id = params.get('contact_id'); if (!id || ['new_clients', 'telegram'].includes(view)) return;
         const controller = new AbortController();

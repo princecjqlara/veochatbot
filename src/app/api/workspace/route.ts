@@ -10,7 +10,11 @@ import { isSupabaseUnavailable } from '@/lib/supabase-errors';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
-const errorResponse = (error: any) => NextResponse.json({ error: error.code === 'DATABASE_UNAVAILABLE' || error.code === '57014' ? 'Workspace report is busy. Retry shortly.' : error.message || 'Workspace unavailable' }, { status: error.status || (error.code === 'DATABASE_UNAVAILABLE' || error.code === '57014' ? 503 : 400) });
+const errorResponse = (error: any) => {
+    const unavailable = isSupabaseUnavailable(error) || error.status === 503;
+    return NextResponse.json({ error: unavailable ? 'Workspace report is temporarily unavailable. Retry shortly.' : error.message || 'Workspace unavailable' },
+        { status: unavailable ? 503 : error.status || 400, headers: { 'Cache-Control': 'no-store', ...(unavailable ? { 'Retry-After': '30' } : {}) } });
+};
 async function actor(request: NextRequest) {
     const session = await getSessionFromRequest(request);
     if (!session?.user?.id) throw Object.assign(new Error('Sign in required'), { status: 401 });
@@ -69,7 +73,7 @@ export async function GET(request: NextRequest) {
             includeOrders ? readVeoRpc(db, 'veo_orders_page', { p_actor: scope.user_id, p_day: day, p_view: view, p_page: page, p_search: search, p_offset: offset, p_limit: 50 }) : Promise.resolve({ data: null, error: null }),
             includeCapacity ? readVeoRpc(db, 'veo_team_capacity', { p_actor: scope.user_id, p_day: day }) : Promise.resolve({ data: null, error: null })
         ]);
-        if (dashboard.error || orders.error || capacity.error) throw new Error(dashboard.error?.message || orders.error?.message || capacity.error?.message);
+        if (dashboard.error || orders.error || capacity.error) throw dashboard.error || orders.error || capacity.error;
         return NextResponse.json({ ...dashboard.data, orders: orders.data?.orders || [], ...(orders.data ? { order_page: orders.data } : {}), capacity: capacity.data }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) { return errorResponse(error); }
 }

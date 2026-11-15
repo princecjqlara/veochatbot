@@ -1,3 +1,5 @@
+import { supabaseReadBudget } from './supabase-read-budget';
+
 const retryableStatuses = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const SUPABASE_REQUEST_TIMEOUT_MS = 10_000;
@@ -14,7 +16,7 @@ async function fetchSupabaseOnce(input: RequestInfo | URL, init?: RequestInit): 
     parentSignal?.addEventListener('abort', abortFromParent, { once: true });
     const timeout = setTimeout(() => controller.abort(Object.assign(new Error('Supabase request timed out'), {
         code: 'SUPABASE_REQUEST_TIMEOUT'
-    })), SUPABASE_REQUEST_TIMEOUT_MS);
+    })), supabaseReadBudget(parentSignal) ?? SUPABASE_REQUEST_TIMEOUT_MS);
     const cleanup = () => {
         clearTimeout(timeout);
         parentSignal?.removeEventListener('abort', abortFromParent);

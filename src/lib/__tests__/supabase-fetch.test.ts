@@ -1,11 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { supabaseFetch } from '../supabase-fetch';
+import { readVeoReport } from '../veo-report-read';
 
 const url = 'https://database.example/rest/v1/rows';
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('bounded Supabase transport', () => {
+    it('lets an explicitly bounded RPC read complete after ten seconds without replaying its POST', async () => {
+        const fetch = vi.fn((_input, init) => new Promise<Response>((resolve, reject) => {
+            const timer = setTimeout(() => resolve(Response.json({ total: 23 })), 12000);
+            init.signal.addEventListener('abort', () => { clearTimeout(timer);reject(init.signal.reason); }, { once: true });
+        }));
+        vi.stubGlobal('fetch', fetch);
+        const pending = readVeoReport(async signal => ({ data: await (await supabaseFetch(url, { method: 'POST', signal }, 1)).json() }));
+        await vi.advanceTimersByTimeAsync(12000);
+        expect(await pending).toEqual({ data: { total: 23 } });expect(fetch).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('still cancels a report RPC when its actual read deadline expires', async () => {
+        const fetch = vi.fn((_input, init) => new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })));
+        vi.stubGlobal('fetch', fetch);
+        const pending = expect(readVeoReport(signal => supabaseFetch(url, { method: 'POST', signal }, 1), 12000)).rejects.toMatchObject({ code: 'DATABASE_UNAVAILABLE' });
+        await vi.advanceTimersByTimeAsync(12000);await pending;
+        expect(fetch).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
+    });
     it('preserves JSON responses and clears the timer after consuming the body', async () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('[{"id":1}]', { headers: { 'content-type': 'application/json' } })));
         const response = await supabaseFetch(url);

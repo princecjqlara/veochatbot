@@ -3,6 +3,7 @@ import { getSessionFromRequest } from '@/lib/get-session';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, uuid } from '@/lib/veo-workspace';
 import { readVeoRpc } from '@/lib/veo-report-read';
+import { isSupabaseUnavailable } from '@/lib/supabase-errors';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 const response = (data: any, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -14,10 +15,15 @@ async function access(request: NextRequest) {
     return scope;
 }
 function checked(result: any) {
+    if (isSupabaseUnavailable(result.error)) throw Object.assign(Error('Client assignments are temporarily unavailable. Refresh assignments before retrying.'), { status: 503 });
     if (result.error) throw Object.assign(Error(result.error.code === '57014' ? 'The request timed out. Refresh assignments before retrying.' : result.error.message || 'Client assignments unavailable'), { status: result.error.code === '42501' ? 403 : result.error.code === '23505' ? 409 : result.error.code === '57014' ? 503 : 400 });
     return result.data;
 }
-const fail = (e: any) => response({ error: e.code === 'DATABASE_UNAVAILABLE' ? 'Client assignments are temporarily unavailable' : e.message || 'Client assignments unavailable' }, e.status || (e.code === 'DATABASE_UNAVAILABLE' ? 503 : 400));
+const fail = (e: any) => {
+    const unavailable = isSupabaseUnavailable(e) || e.status === 503;
+    return NextResponse.json({ error: unavailable ? 'Client assignments are temporarily unavailable. Refresh assignments before retrying.' : e.message || 'Client assignments unavailable' },
+        { status: unavailable ? 503 : e.status || 400, headers: { 'Cache-Control': 'no-store', ...(unavailable ? { 'Retry-After': '30' } : {}) } });
+};
 export async function GET(request: NextRequest) {
     try {
         const scope = await access(request), q = request.nextUrl.searchParams;

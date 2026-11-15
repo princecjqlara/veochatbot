@@ -31,5 +31,10 @@ export async function GET(request: NextRequest) {
             data.accounts = await loadVeoAccountDirectory(db, scope, view === 'profile');
         }
         return reply(data);
-    } catch { return reply({ error: 'Workspace context unavailable' }, 503); }
+    } catch (error: any) {
+        const code = String(error?.code || error?.cause?.code || 'UNKNOWN');
+        console.error('[WORKSPACE_CONTEXT] unavailable', { code: /^[A-Z0-9_]{1,48}$/.test(code) ? code : 'UNKNOWN' });
+        return NextResponse.json({ error: 'Workspace context is temporarily unavailable. Retry shortly.' },
+            { status: 503, headers: { 'Cache-Control': 'no-store', 'Retry-After': '30' } });
+    }
 }
