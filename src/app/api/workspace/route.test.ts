@@ -9,10 +9,24 @@ import { GET, POST } from './route';
 import { philippineDate } from '@/lib/veo-workspace';
 afterEach(() => { vi.clearAllMocks(); });
 describe('workspace work-date boundaries', () => {
+    it('finishes the dashboard calculation before starting the competing capacity report', async () => {
+        let finish!: (value: any) => void;
+        m.rpc.mockImplementation(async name => name === 'veo_scope'
+            ? { data: { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } }
+            : name === 'veo_dashboard_summary' ? new Promise(resolve => { finish = resolve; })
+            : { data: { teams: [] } });
+        const pending = GET(new NextRequest('https://veo.test/api/workspace'));
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+        expect(m.rpc.mock.calls.some(([name]) => name === 'veo_team_capacity')).toBe(false);
+        finish({ data: { accounts: [], salary: [] } });
+        const response = await pending;
+        expect(response.status).toBe(200);expect((await response.json()).capacity).toEqual({ teams: [] });
+        expect(m.rpc).toHaveBeenCalledWith('veo_team_capacity', { p_actor: 'owner', p_day: philippineDate() });
+    });
     it('loads collection health without recalculating salary, capacity or the dashboard',async()=>{
         const day=philippineDate();m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'owner',launch_at:day+'T00:00:00+08:00'}:name==='veo_collection_status'?[{page_id:'page',pending:3}]:null}));
         const r=await GET(new NextRequest('https://veo.test/api/workspace?view=sync&date='+day));expect(r.status).toBe(200);expect((await r.json()).sync).toEqual([{page_id:'page',pending:3}]);
-        expect(m.rpc.mock.calls.some(c=>['veo_dashboard','veo_team_capacity','veo_salary'].includes(c[0]))).toBe(false);
+        expect(m.rpc.mock.calls.some(c=>['veo_dashboard','veo_dashboard_summary','veo_team_capacity','veo_salary'].includes(c[0]))).toBe(false);
     });
     it('scopes existing-member supervisor changes and reports stale edits as conflicts',async()=>{
         const user='00000000-0000-4000-8000-000000000002',parent='00000000-0000-4000-8000-000000000003',old='00000000-0000-4000-8000-000000000004';
@@ -64,9 +78,9 @@ describe('workspace work-date boundaries', () => {
         m.rpc.mockImplementation(async name => ({ data: name === 'veo_scope' ? { user_id: 'owner', role: 'owner', launch_at: launch } : {} }));
         const future = philippineDate(new Date(Date.now() + 30 * 86400000));
         for (const date of ['1970-01-01', future]) expect((await GET(new NextRequest(`https://veo.test/api/workspace?date=${date}`))).status).toBe(400);
-        expect(m.rpc.mock.calls.some(([name]) => name === 'veo_dashboard')).toBe(false);
+        expect(m.rpc.mock.calls.some(([name]) => name === 'veo_dashboard_summary')).toBe(false);
         expect((await GET(new NextRequest('https://veo.test/api/workspace'))).status).toBe(200);
-        expect(m.rpc.mock.calls.some(([name]) => name === 'veo_dashboard')).toBe(true);
+        expect(m.rpc.mock.calls.some(([name]) => name === 'veo_dashboard_summary')).toBe(true);
     });
     it('passes complete server-side deal filters and pagination to the authoritative scoped query', async () => {
         const launch = new Date(Date.now() - 86400000).toISOString(), page = '00000000-0000-4000-8000-000000000001';

@@ -52,3 +52,40 @@ scheduled runs once resource checks permit it. No cron schedules were changed.
 An additional 28 focused cases passed, including an actual mocked submission
 being checkpointed for retry while optional work is paused, normal editor
 dispatch, the independent event worker and resource-monitoring validation.
+
+The overloaded Supabase service was restarted once through the authenticated
+Management API. PostgreSQL confirmed its new start at 14:27 UTC. At 14:30 UTC,
+pending offers, verified workforce and Jaucian health returned HTTP 200;
+ordinary workforce synchronization had resumed. The recorded five-minute load
+fell to 0.7, with fresh resource monitoring available again.
+
+Dashboard and capacity calculations completed independently in approximately
+six and three seconds. Running them concurrently still caused the signed-in
+dashboard to time out. The route now performs those calculations sequentially,
+preserving all financial results and permission checks, and stops immediately
+if the preceding report fails. A regression case holds the dashboard response
+open and verifies that capacity does not start until that calculation finishes.
+
+A later live read completed in 7.9 seconds, leaving insufficient headroom under
+the inherited eight-second database limit. Migration 202611160001 sets only
+the dashboard and capacity RPC limits to fifteen seconds, below the existing
+eighteen-second application read deadline. Function bodies, owners, execution
+privileges, assignment mutations and financial calculations are unchanged.
+
+Further profiling isolated unused order and collection lists in the dashboard
+query: a rollback probe excluding those lists completed in 3.8 seconds. The
+workspace already replaces the order list with its paginated query and loads
+collection health through its dedicated view. Migration 202611160002 adds a
+private summary RPC derived from the current full dashboard, omitting only
+those unused lists. The full RPC remains available. A financial SQL regression
+compares all remaining fields after an approved Close and Done Deal, verifies
+member scope and execution privileges, and checks that full order history is
+still returned by the original report.
+
+The summary migration passed its production rollback preflight and was applied
+at 19:33 UTC with original function bodies, permissions, records and accounts
+preserved. The corrected route then returned HTTP 200 against the production
+database in 6.5 seconds, including capacity, accounts and salary data. All 41
+financial SQL cases passed, along with the eleven workspace route cases.
+Two unrelated test timeouts during a concurrent production build passed their
+isolated reruns without changing test deadlines.

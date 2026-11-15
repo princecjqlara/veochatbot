@@ -35,6 +35,19 @@ async function evidence(kind='closed',extra:any={},actor=member){
 }
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
+it('returns the same dashboard financial figures without unused list hydration and preserves the full report',async()=>{
+ const closed=await approve(await submit(await evidence()));
+ await approve(await submit(await evidence('done',{order_id:closed.order_id,closed_deal_id:closed.closed_deal_id})));
+ const day=(await db.query<any>('SELECT veo_today()::text AS work_date')).rows[0].work_date;
+ const full=await rpc('veo_dashboard',[owner,day]);expect(full.orders.length).toBeGreaterThan(0);expect(full.sync.length).toBeGreaterThan(0);
+ const summary=await rpc('veo_dashboard_summary',[owner,day]);
+ expect(summary).toEqual({...full,orders:[],sync:[]});
+ expect((await rpc('veo_dashboard',[owner,day])).orders).toEqual(full.orders);
+ const personal=await rpc('veo_dashboard_summary',[member,day]);
+ expect(personal.accounts.every((a:any)=>a.id===member)).toBe(true);expect(personal.salary.every((s:any)=>s.user_id===member)).toBe(true);
+ await expect(rpc('veo_dashboard_summary',[id(999),day])).rejects.toThrow('Forbidden');
+ expect((await db.query<any>("SELECT has_function_privilege('anon','veo_dashboard_summary(uuid,date)','EXECUTE') anon,has_function_privilege('authenticated','veo_dashboard_summary(uuid,date)','EXECUTE') authenticated,has_function_privilege('service_role','veo_dashboard_summary(uuid,date)','EXECUTE') service")).rows[0]).toEqual({anon:false,authenticated:false,service:true});
+});
 it('keeps pending evidence out of the ledger and returns idempotent retries',async()=>{
  const e=await evidence(),r=await submit(e);expect(r.status).toBe('pending');expect(r.photos).toHaveLength(3);expect((await submit(e)).duplicate).toBe(true);
  for(const table of ['veo_orders','veo_closed_deals','veo_payments','veo_submissions'])expect((await db.query(`SELECT * FROM ${table}`)).rows).toHaveLength(0);

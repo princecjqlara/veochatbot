@@ -68,12 +68,15 @@ export async function GET(request: NextRequest) {
         }
         if (view === 'accounts') return NextResponse.json({ scope, accounts: await loadVeoAccountDirectory(db, scope), tomorrow: [], orders: [], salary: [], submissions: [], sync: [], teams: [], capacity: null }, { headers: { 'Cache-Control': 'no-store' } });
         const includeCapacity = view === 'capacity' || view === 'dashboard';
-        const [dashboard, orders, capacity] = await Promise.all([
-            readVeoRpc(db, 'veo_dashboard', { p_actor: scope.user_id, p_day: day }),
-            includeOrders ? readVeoRpc(db, 'veo_orders_page', { p_actor: scope.user_id, p_day: day, p_view: view, p_page: page, p_search: search, p_offset: offset, p_limit: 50 }) : Promise.resolve({ data: null, error: null }),
-            includeCapacity ? readVeoRpc(db, 'veo_team_capacity', { p_actor: scope.user_id, p_day: day }) : Promise.resolve({ data: null, error: null })
-        ]);
-        if (dashboard.error || orders.error || capacity.error) throw dashboard.error || orders.error || capacity.error;
+        // Both reports refresh shared planning rows and perform substantial
+        // aggregation. Running them together competes for the same database
+        // resources and can time out even when each succeeds independently.
+        const dashboard = await readVeoRpc(db, 'veo_dashboard_summary', { p_actor: scope.user_id, p_day: day });
+        if (dashboard.error) throw dashboard.error;
+        const orders = includeOrders ? await readVeoRpc(db, 'veo_orders_page', { p_actor: scope.user_id, p_day: day, p_view: view, p_page: page, p_search: search, p_offset: offset, p_limit: 50 }) : { data: null, error: null };
+        if (orders.error) throw orders.error;
+        const capacity = includeCapacity ? await readVeoRpc(db, 'veo_team_capacity', { p_actor: scope.user_id, p_day: day }) : { data: null, error: null };
+        if (capacity.error) throw capacity.error;
         return NextResponse.json({ ...dashboard.data, orders: orders.data?.orders || [], ...(orders.data ? { order_page: orders.data } : {}), capacity: capacity.data }, { headers: { 'Cache-Control': 'no-store' } });
     } catch (error) { return errorResponse(error); }
 }
