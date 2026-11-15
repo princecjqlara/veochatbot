@@ -19,9 +19,9 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 const request = (authorized = true) => new NextRequest('https://veo.test/api/cron/meta-ads-sync', { headers: authorized ? { Authorization: 'Bearer test-only' } : {} });
-it('actually schedules the dedicated ads worker without depending on the external follow-up cron',()=>{
+it('staggers the dedicated five-minute ads worker without depending on the external follow-up cron',()=>{
  const config=JSON.parse(fs.readFileSync('vercel.json','utf8'));
- expect(config.crons.filter((job:any)=>job.path==='/api/cron/meta-ads-sync')).toEqual([{path:'/api/cron/meta-ads-sync',schedule:'*/5 * * * *'}]);
+ expect(config.crons.filter((job:any)=>job.path==='/api/cron/meta-ads-sync')).toEqual([{path:'/api/cron/meta-ads-sync',schedule:'2-59/5 * * * *'}]);
  expect(config.functions['src/app/api/cron/meta-ads-sync/route.ts'].maxDuration).toBe(300);
 });
 it('authenticates before any credential read', async () => { expect((await GET(request(false))).status).toBe(401); expect(m.db).not.toHaveBeenCalled(); });

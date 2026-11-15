@@ -26,14 +26,17 @@ async function processWorkspace(request: NextRequest) {
     const db = getSupabaseAdmin();
     const startedAt = Date.now();
     try {
+        // Editor eligibility must refresh even if unrelated receipt cleanup
+        // or salary maintenance fails. A failed sync must also let cleanup run.
+        let integration: any = { retry: true };
+        try { integration = await syncTelegramWorkforce(); } catch { /* The next scheduled run retries. */ }
         // Expiry is enforced independently of delivery. A failed deletion remains visible and retries.
         const receiptDeletion = await queueReceiptDeletions(db);
         await cleanupWorkspacePhotos(db);
 
         const maintained = await db.rpc('veo_maintenance');
         if (maintained.error) throw new Error('Salary finalization unavailable');
-        let integration: any = { retry: true }, operations: any = { error: true };
-        try { integration = await syncTelegramWorkforce(); } catch { /* Retry independently of new-event collection. */ }
+        let operations: any = { error: true };
         try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
         let intakeRetry = false;
         try { const cleaned = await db.rpc('veo_telegram_intake_maintenance');intakeRetry = !!cleaned.error; } catch { intakeRetry = true; }

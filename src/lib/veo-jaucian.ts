@@ -3,12 +3,12 @@ import { CJ_OWNER_USER_ID } from '@/config/veo-owner';
 import { philippineDate, uuid } from './veo-workspace';
 
 export const commissionRule = { qualified_rate: 40, default_rate: 35, qualification: 'both_personal_closed_and_done_targets', timezone: 'Asia/Manila', team_override: false };
-const unavailable = (message: string, status = 503) => Object.assign(new Error(message), { status });
+const unavailable = (message: string, status = 503, cause?: unknown) => Object.assign(new Error(message), { status, ...(cause ? { cause } : {}) });
 
 export async function connectedVeoTenant(tenant: string, db?: ReturnType<typeof getSupabaseAdmin>) {
     if (!uuid(tenant)) throw unavailable('Invalid tenant', 400);
     const result = await (db || getSupabaseAdmin()).from('veo_tenants').select('id,name,owner_id,launch_at').eq('id', tenant).eq('owner_id', CJ_OWNER_USER_ID).maybeSingle();
-    if (result.error) throw unavailable('Tenant connection unavailable');
+    if (result.error) throw unavailable('Tenant connection unavailable', 503, result.error);
     if (!result.data?.launch_at) throw unavailable('Tenant is not connected', 403);
     return result.data;
 }
@@ -21,7 +21,7 @@ export async function veoDirectory(tenant: string, db = getSupabaseAdmin()) {
         const rows: any[] = [];
         for (let offset = 0; offset <= 10000; offset += 500) {
             const result = await query().range(offset, offset + 499);
-            if (result.error) throw unavailable('Workspace directory unavailable');
+            if (result.error) throw unavailable('Workspace directory unavailable', 503, result.error);
             rows.push(...(result.data || []));
             if ((result.data || []).length < 500) return rows;
         }

@@ -226,6 +226,10 @@ describe('chatbot follow-up scheduling', () => {
             attempt_count: 0
         };
         const supabase = {
+            rpc: vi.fn(async (name: string) => {
+                if (['chatbot_contact_sales_stop', 'get_chatbot_pricing_contact_catalog'].includes(name)) return { data: null, error: null };
+                throw Error('Unexpected follow-up RPC: ' + name);
+            }),
             from: vi.fn((table: string) => {
                 let operation = '';
                 const chain: any = {
@@ -251,7 +255,7 @@ describe('chatbot follow-up scheduling', () => {
                         if (table === 'chatbot_follow_up_jobs') return { data: { id: dueJob.id, status: 'processing' }, error: null };
                         if (table === 'pages') return { data: { id: 'page-1', name: 'Test Page', fb_page_id: 'fb-page-1', access_token: 'token' }, error: null };
                         if (table === 'contacts') return { data: { id: 'contact-1', page_id: 'page-1', psid: 'psid-1', name: 'Alex', last_interaction_at: dueJob.anchor_inbound_at, last_inbound_at: dueJob.anchor_inbound_at, pipeline_stage: 'engaged' }, error: null };
-                        if (table === 'chatbot_configs') return { data: { enabled: true, follow_up_enabled: true }, error: null };
+                        if (table === 'chatbot_configs') return { data: { enabled: true, follow_up_enabled: true, split_messages: true, max_message_parts: 0 }, error: null };
                         return { data: { status: 'active', collected_details: { Service: 'Premium haircut' }, missing_details: ['Mobile number'] }, error: null };
                     })
                 };
@@ -264,7 +268,7 @@ describe('chatbot follow-up scheduling', () => {
             now: new Date('2026-09-22T01:00:00.000Z')
         });
 
-        expect(result).toMatchObject({ checked: 1, sent: 1, readyManual: 0 });
+        expect(result, JSON.stringify(updates)).toMatchObject({ checked: 1, sent: 1, readyManual: 0 });
         expect(mocks.sendMessage).toHaveBeenNthCalledWith(
             1,
             'fb-page-1',
@@ -325,6 +329,7 @@ describe('follow-up lead-stage checks', () => {
         let source = 'chatbot';
         let jobStatus = 'processing';
         const supabase = { rpc: vi.fn(async (name: string, args: any) => {
+            if (name === 'chatbot_contact_sales_stop') return { data: null, error: null };
             if (name === 'apply_messenger_lead_stage') { stage = args.p_stage; source = 'messenger'; }
             return { data: { applied: true }, error: null };
         }), from: vi.fn((table: string) => {
@@ -343,7 +348,7 @@ describe('follow-up lead-stage checks', () => {
                     if (table === 'chatbot_follow_up_jobs') return { data: { id: job.id, status: jobStatus }, error: null };
                     if (table === 'pages') return { data: { id: 'page-1', name: 'Page', fb_page_id: 'fb-page', access_token: 'token' }, error: null };
                     if (table === 'contacts') return { data: { id: 'contact-1', page_id: 'page-1', psid: 'customer', name: 'Customer', last_inbound_at: job.anchor_inbound_at, pipeline_stage: stage, pipeline_stage_source: source }, error: null };
-                    if (table === 'chatbot_configs') return { data: { page_id: 'page-1', enabled: true, follow_up_enabled: true }, error: null };
+                    if (table === 'chatbot_configs') return { data: { page_id: 'page-1', enabled: true, follow_up_enabled: true, split_messages: true, max_message_parts: 0 }, error: null };
                     return { data: { status: 'active', collected_details: {}, missing_details: [] }, error: options.lookupError ? { message: 'State read failed' } : null };
                 },
                 then: (resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject)

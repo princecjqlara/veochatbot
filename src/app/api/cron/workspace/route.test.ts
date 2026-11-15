@@ -11,6 +11,21 @@ vi.mock('@/app/api/facebook/webhook/route', () => ({ POST: vi.fn() }));
 import { GET } from './route';
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 describe('private photo cleanup during unrelated worker failures', () => {
+    it('refreshes Telegram eligibility even when salary maintenance fails', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.stubEnv('CRON_SECRET', 'cron');
+        m.from.mockImplementation(() => { const q: any = { select: () => q, is: () => q, or: () => q, lte: () => q, limit: async () => ({ data: [] }) };return q; });
+        m.rpc.mockImplementation(async name => name === 'veo_maintenance' ? { error: { message: 'Ledger unavailable' } } : { data: true });
+        m.sync.mockResolvedValue({ checked: 8 });
+        const response = await GET(new NextRequest('https://veo.test/api/cron/workspace', { headers: { Authorization: 'Bearer cron' } }));
+        expect(response.status).toBe(503);expect(m.sync).toHaveBeenCalledOnce();expect(m.events).not.toHaveBeenCalled();
+    });
+    it('refreshes Telegram eligibility even when receipt cleanup is unavailable', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.stubEnv('CRON_SECRET', 'cron');
+        m.rpc.mockResolvedValue({ data: true });
+        m.from.mockImplementation(() => { throw Error('Cleanup unavailable'); });m.sync.mockResolvedValue({ checked: 8 });
+        const response = await GET(new NextRequest('https://veo.test/api/cron/workspace', { headers: { Authorization: 'Bearer cron' } }));
+        expect(response.status).toBe(503);expect(m.sync).toHaveBeenCalledOnce();
+    });
     it('queues source refresh and retries when saved Facebook evidence is temporarily unavailable', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true'); vi.stubEnv('CRON_SECRET', 'cron');
         m.from.mockImplementation(() => { const q: any = { select: () => q, is: () => q, or: () => q, lte: () => q, limit: async () => ({ data: [] }) }; return q; });

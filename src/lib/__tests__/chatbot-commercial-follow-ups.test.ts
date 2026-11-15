@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ history: vi.fn(), generate: vi.fn(), send: vi.fn(), outbound: vi.fn(), carousel: vi.fn(), driveFiles: vi.fn() }));
+const mocks = vi.hoisted(() => ({ history: vi.fn(), generate: vi.fn(), send: vi.fn(), outbound: vi.fn(), carousel: vi.fn(), driveFiles: vi.fn(), salesStop: vi.fn() }));
 vi.mock('@/lib/facebook', () => ({ getConversationForPsid: mocks.history, sendMessage: mocks.send, sendMessengerGenericCarousel: mocks.carousel }));
 vi.mock('@/lib/chatbot-drive-folders', () => ({ getReadyChatbotDriveFilesForDocuments: mocks.driveFiles, getReadyChatbotDriveFolderForDocument: vi.fn() }));
 vi.mock('@/lib/chatbot', () => ({ generateChatbotFollowUp: mocks.generate, getChatbotKnowledgePageId: (config: any) => config.page_id }));
 vi.mock('@/lib/outbound-message-events', () => ({ recordOutboundMessageEvent: mocks.outbound }));
+vi.mock('@/lib/chatbot-sales-stop', () => ({ getChatbotSalesStopReason: mocks.salesStop }));
 import { processDueChatbotFollowUps, scheduleChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 import type { ChatbotConfig } from '@/lib/chatbot';
 import { ChatbotFollowUpRepeatedError } from '@/lib/chatbot-message-copy';
@@ -51,6 +52,7 @@ function fixture(formComplete = false, clearRequest = false) {
 }
 beforeEach(() => {
     vi.clearAllMocks();
+    mocks.salesStop.mockResolvedValue(null);
     mocks.history.mockResolvedValue({ messages: { data: [{ id: 'inbound', from: { id: 'customer', name: 'CJ' },
         message: 'Interested in a commercial for our bakery', created_time: anchor }] } });
     mocks.generate.mockResolvedValue({ message: 'Ano pong location ng CJ Bakery?', messages: ['Ano pong location ng CJ Bakery?'], knowledge: [] });
@@ -166,6 +168,16 @@ describe('pricing package follow-up delivery', () => {
 });
 
 describe('commercial-video follow-up continuity', () => {
+    it('cancels a reminder after an order is recorded even when the saved lead label remains engaged', async () => {
+        const f = fixture();mocks.salesStop.mockResolvedValue('order_created');
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now })).toMatchObject({ sent: 0, cancelled: 1 });
+        expect(mocks.send).not.toHaveBeenCalled();
+    });
+    it('keeps a reminder retryable when its independent order check is unavailable', async () => {
+        const f = fixture();mocks.salesStop.mockRejectedValue(Error('Order eligibility check is unavailable'));
+        expect(await processDueChatbotFollowUps({ supabase: f.db, now })).toMatchObject({ sent: 0, failed: 1 });
+        expect(mocks.send).not.toHaveBeenCalled();expect(f.job.status).toBe('pending');
+    });
     it('uses computed first-day opportunities for a silent new client', async () => {
         const f = fixture();
         f.config.follow_up_first_day_mode = 'adaptive';

@@ -49,3 +49,27 @@ it('does not interpret a caller cancellation or invalid credentials as a databas
     expect((await fetch('https://database.example')).status).toBe(200);
     expect(fetcher).toHaveBeenCalledTimes(3);
 });
+it.each(['response', 'timeout'])('does not reopen a recovered connection for an older %s failure', async kind => {
+    let finish!: (response: Response) => void, fail!: (error: Error) => void;
+    const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>((resolve, reject) => { finish = resolve; fail = reject; }))
+        .mockResolvedValueOnce(new Response('', { status: 503 })).mockImplementation(async () => new Response('[]'));
+    const fetch = createSupabaseAvailabilityGate(fetcher), older = fetch('https://database.example');
+    const oldResult = older.catch(error => error);
+    await fetch('https://database.example');await vi.advanceTimersByTimeAsync(2000);
+    expect((await fetch('https://database.example')).status).toBe(200);
+    if (kind === 'response') finish(new Response('', { status: 503 }));
+    else fail(Object.assign(new Error('Supabase request timed out'), { code: 'SUPABASE_REQUEST_TIMEOUT' }));
+    await oldResult;
+    expect((await fetch('https://database.example')).status).toBe(200);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+});
+it('backs off once for a failed batch rather than extending the outage for every delayed response', async () => {
+    let finish!: (response: Response) => void;
+    const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }))
+        .mockResolvedValueOnce(new Response('', { status: 503 })).mockImplementation(async () => new Response('[]'));
+    const fetch = createSupabaseAvailabilityGate(fetcher), older = fetch('https://database.example');
+    await fetch('https://database.example');await vi.advanceTimersByTimeAsync(1500);
+    finish(new Response('', { status: 503 }));await older;
+    await vi.advanceTimersByTimeAsync(500);
+    expect((await fetch('https://database.example')).status).toBe(200);
+});

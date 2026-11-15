@@ -75,6 +75,26 @@ describe('temporary photo access for Jaucian', () => {
         m.rpc.mockClear();expect((await POST(request('Bearer test-key', { ...body, chat_id: 123 }))).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled();
         m.connected.mockRejectedValueOnce(Object.assign(Error('Wrong tenant'), { status: 403 }));expect((await POST(request('Bearer test-key'))).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();
     });
+    it.each(['P0001', '23514'])('returns actionable assignment policy feedback for %s', async code => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');m.connected.mockResolvedValue({});
+        m.rpc.mockResolvedValue({ error: { code, message: 'Choose Ready before accepting a client' } });
+        const response = await POST(new NextRequest('https://veo.test/api/workspace/handoff', { method: 'POST', headers: { Authorization: 'Bearer test-key' },
+            body: JSON.stringify({ resource: 'intake', tenant_id: '00000000-0000-4000-8000-000000000001', chat_id: -123, telegram_user_id: 42, action: 'ready', data: { request_id: '00000000-0000-4000-8000-000000000002' } }) }));
+        expect(response.status).toBe(400);expect((await response.json()).error).toBe('Choose Ready before accepting a client');
+    });
+    it('marks pending-offer outages retryable and logs only their safe database code', async () => {
+        vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key');m.connected.mockResolvedValue({});
+        m.rpc.mockResolvedValue({ error: { code: 'PGRST003', message: 'private database connection details' } });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const response = await POST(new NextRequest('https://veo.test/api/workspace/handoff', { method: 'POST', headers: { Authorization: 'Bearer test-key' },
+                body: JSON.stringify({ resource: 'intake', tenant_id: '00000000-0000-4000-8000-000000000001', action: 'pending' }) }));
+            expect(response.status).toBe(503);expect(response.headers.get('retry-after')).toBe('30');
+            const body = await response.json();expect(body.retryable).toBe(true);
+            expect(warn).toHaveBeenCalledWith('[JAUCIAN_HANDOFF] unavailable', { code: 'PGRST003' });
+            expect(JSON.stringify([body, warn.mock.calls])).not.toContain('private database');
+        } finally { warn.mockRestore(); }
+    });
     it('refuses photo access when submission state cannot be checked after eligibility passes', async () => {
         vi.stubEnv('VEO_JAUCIAN_SECRET', 'test-key'); m.rpc.mockImplementation(async name => ({ data: name === 'veo_handoff' ? { order_id: 'order' } : true }));
         m.from.mockReturnValue({ select: () => ({ eq: () => ({ single: async () => ({ data: null, error: Error('Database unavailable') }) }) }) });

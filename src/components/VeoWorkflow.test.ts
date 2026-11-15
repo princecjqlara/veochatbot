@@ -20,10 +20,10 @@ it('submits an explicit receipt deletion reason without removing financial payme
     const receipt={id:'r',contact_id:'c',page_id:'p',contact_name:'Client',seller_name:'Worker',receipt_kind:'done',salary_status:'on_hold',salary_holds:[],holds:[],delivery_status:'on_hold',order_id:'order',order_options:[]};
     const fetcher=vi.fn(async(_url:string,options?:any)=>new Response(JSON.stringify(options?.method==='POST'?{deleted_at:'now'}:{items:[receipt],total:1})));vi.stubGlobal('fetch',fetcher);
     vi.stubGlobal('FormData',class{get(key:string){return key==='reason'?'Wrong photo':null;}});
-    await act(async()=>{view=create(createElement(Receipts,{scope:{user_id:'worker',role:'member',launch_at:'2026-11-05'},accounts:[],compact:true}));});
+    await act(async()=>{view=create(createElement(Receipts,{scope:{user_id:'worker',role:'manager',launch_at:'2026-11-05'},accounts:[],compact:true}));});
     const form=view.root.findAllByType('form').find(f=>f.findAllByType('button').some(b=>text(b)==='Delete this receipt'))!;
     await act(async()=>{await form.props.onSubmit({preventDefault(){},currentTarget:{}});});
-    const writes=fetcher.mock.calls.filter(([,o])=>o?.method==='POST');expect(writes).toHaveLength(1);expect(JSON.parse(writes[0][1].body)).toEqual({action:'delete',receipt_id:'r',reason:'Wrong photo',cancel_closed:false});expect(text(view.toJSON())).toContain('verified payments, sales and commission records are retained');
+    const writes=fetcher.mock.calls.filter(([,o])=>o?.method==='POST');expect(writes).toHaveLength(1);expect(JSON.parse(writes[0][1].body)).toEqual({action:'delete',receipt_id:'r',reason:'Wrong photo',cancel_closed:false});expect(text(view.toJSON())).toContain('Verified financial records and audit history are retained');
 });
 it('checks the picked client Closed Deals and lets staff choose the correct deal to turn into Done',async()=>{
     const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.includes('contact_id=client')?{contact:{id:'client',page_id:'page',name:'Client',pipeline_stage:'qualified'},orders:[{id:'order',seller_id:'worker',total_minor:10000,paid_minor:0,currency:'PHP'}],payments:[],closed_deals:[{id:'closed',seller_id:'worker',amount_minor:4000,currency:'PHP',occurred_at:'2026-11-06',order_id:'order'},{id:'other',seller_id:'worker',amount_minor:5000,currency:'PHP',occurred_at:'2026-11-07',order_id:null}]}:url.includes('commission=1')?{target:1,closed:1,done:0,rate:35,totals:[]}:{items:[],total:0})));vi.stubGlobal('fetch',fetcher);

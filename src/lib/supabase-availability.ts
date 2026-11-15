@@ -4,7 +4,10 @@ import { isSupabaseUnavailable } from './supabase-errors';
  * separate workers. Successful recovery probes restore normal throughput. */
 export function createSupabaseAvailabilityGate(fetcher: typeof fetch): typeof fetch {
     let failures = 0, reopenAt = 0, probing = false, generation = 0;
-    const failed = () => {
+    const failed = (startedGeneration: number) => {
+        // Requests from a failed batch may finish after a successful recovery
+        // probe. Their old errors must not restart or extend the cooldown.
+        if (startedGeneration !== generation) return;
         failures = Math.min(5, failures + 1);
         reopenAt = Date.now() + Math.min(30_000, 2_000 * 2 ** (failures - 1));
         generation++;
@@ -20,11 +23,14 @@ export function createSupabaseAvailabilityGate(fetcher: typeof fetch): typeof fe
         if (probe) probing = true;
         try {
             const response = await fetcher(input, init);
-            if (response.status === 429 || response.status >= 500) failed();
-            else if (generation === startedGeneration) { failures = 0; reopenAt = 0; }
+            if (response.status === 429 || response.status >= 500) failed(startedGeneration);
+            else if (generation === startedGeneration) {
+                failures = 0; reopenAt = 0;
+                if (probe) generation++;
+            }
             return response;
         } catch (error) {
-            if (!signal?.aborted && isSupabaseUnavailable(error)) failed();
+            if (!signal?.aborted && isSupabaseUnavailable(error)) failed(startedGeneration);
             throw error;
         } finally { if (probe) probing = false; }
     };

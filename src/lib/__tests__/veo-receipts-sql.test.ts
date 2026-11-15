@@ -639,6 +639,7 @@ describe('Telegram groups, Page routes and multiple memberships', () => {
     const bind = (user: string, chat: number, telegram = tgMember) => groupAction(owner, 'membership', { user_id: user, chat_id: chat, telegram_user_id: telegram });
     beforeEach(async () => {
         await db.exec('BEGIN');transactionalTest = true;
+        await db.exec(schemaMigrationPlan().find(m => m.name === '202611150001_veo_telegram_client_controls.sql')!.sql);
         teamId = (await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1', [manager])).rows[0].id;
         await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,veo_tenant_id,veo_enabled) VALUES($1,'telegram-second-page','Second VEO Page','test',$2,true)", [secondPage, tenant]);
         for (const who of [owner, leader, manager, member]) await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)', [who, secondPage]);
@@ -709,11 +710,38 @@ describe('Telegram groups, Page routes and multiple memberships', () => {
         await expect(receive('callback', { token_id: token })).rejects.toThrow(/Ready/);
         await receive('ready');expect((await rpc('veo_intake_page', [member, 'pool', page, contactId, 0])).readiness.ready).toBe(true);
         await expect(receive('callback', { token_id: token }, tgMember, chatB)).rejects.toThrow(/another person|expired/);
-        const saved = await receive('callback', { token_id: token });expect((await receive('callback', { token_id: token })).request_id).toBe(saved.request_id);
+        const saved = await receive('callback', { token_id: token });expect(saved.feedback).toContain('Client accepted');expect((await receive('callback', { token_id: token })).request_id).toBe(saved.request_id);
         expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1', [contactId])).rows[0].user_id).toBe(member);
         expect((await rpc('veo_intake_page', [member, 'assigned', page, contactId, 0])).readiness.ready).toBe(false);
         expect((await db.query('SELECT id FROM veo_orders WHERE contact_id=$1', [contactId])).rows).toHaveLength(0);
         expect((await db.query("SELECT id FROM veo_audit WHERE action='client_assignment' AND entity_id=$1", [contactId])).rows).toHaveLength(1);
+    });
+    it('reuses Ready, Busy and navigation buttons while keeping each Telegram update idempotent', async () => {
+        await twoGroups();
+        const receive = (kind: string, data: any = {}) => rpc('veo_telegram_intake', [tenant, tgMember, chatA, kind, JSON.stringify({ request_id: id(request++), ...data })]);
+        const menu = await receive('pool'), rendered = await receive('render', { request_id: menu.request_id });
+        expect(rendered.text).toContain('\nStatus:');expect(rendered.text).not.toContain('\\n');
+        const buttons = rendered.reply_markup.inline_keyboard.flat();
+        const readyToken = buttons.find((b: any) => b.text === 'Ready').callback_data.slice(3);
+        const busyToken = buttons.find((b: any) => b.text === 'Busy').callback_data.slice(3);
+        const state = async () => (await rpc('veo_intake_page', [member])).readiness.ready;
+        const first = await receive('callback', { token_id: readyToken });expect(await state()).toBe(true);
+        await receive('callback', { token_id: busyToken });expect(await state()).toBe(false);
+        await receive('callback', { token_id: readyToken, request_id: first.request_id });expect(await state()).toBe(false);
+        const again = await receive('callback', { token_id: readyToken });expect(await state()).toBe(true);expect(again.request_id).not.toBe(first.request_id);
+        await receive('callback', { token_id: busyToken });expect(await state()).toBe(false);
+        const navigation = buttons.find((b: any) => b.text === 'My clients').callback_data.slice(3);
+        const listing = await receive('callback', { token_id: navigation });
+        expect((await receive('callback', { token_id: navigation })).request_id).not.toBe(listing.request_id);
+    });
+    it('shows collecting-details status instead of an acceptance or offer button for an incomplete inquiry', async () => {
+        await twoGroups();const cid = id(request++);
+        await db.query("INSERT INTO contacts(id,page_id,psid,name,pipeline_stage,last_interaction_at) VALUES($1,$2,$3,'Incomplete inquiry','new',now())", [cid, page, cid]);
+        const data = await rpc('veo_telegram_intake', [tenant, tgMember, chatA, 'pool', JSON.stringify({ request_id: id(request++) })]);
+        const rendered = await rpc('veo_telegram_intake', [tenant, tgMember, chatA, 'render', JSON.stringify({ request_id: data.request_id })]);
+        expect(rendered.text).toContain('Collecting client details (0/3)');
+        const tokens = (await db.query<any>('SELECT action FROM veo_telegram_intake_tokens WHERE request_id=$1 AND contact_id=$2', [data.request_id, cid])).rows;
+        expect(tokens).toEqual([]);
     });
     it('creates a Telegram reassignment offer, renders it for its verified recipient and preserves ownership until acceptance', async () => {
         await twoGroups();await bind(manager, chatA, 252525);const contactId = id(request++);
@@ -890,6 +918,7 @@ describe('automatic fresh inquiry editor rotation', () => {
     const due=async(cid=customer)=>{ const d=await dispatch(cid);await rpc('veo_ack_intake_notice',[tenant,d.id,chat,777]);await db.query("UPDATE veo_intake_dispatch SET eligible_at=now()-interval '1 minute' WHERE id=$1",[d.id]); };
     beforeEach(async()=>{
         await db.exec('BEGIN');transactionalTest=true;
+        await db.exec(schemaMigrationPlan().find(m=>m.name==='202611150001_veo_telegram_client_controls.sql')!.sql);
         await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,veo_tenant_id,veo_enabled) VALUES($1,'auto-editor-page','Editor Page','test',$2,true)",[autoPage,tenant]);
         await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)',[owner,autoPage]);
         for(const [who,parent,role,name] of [[autoLeader,owner,'team_leader','Automatic Leader'],[editorA,autoLeader,'member','Editor A'],[editorB,autoLeader,'member','Editor B']]) await action(owner,'create_account',{user_id:who,parent_id:parent,role,name,email:who+'@example.com',password_hash:'x'.repeat(40),page_ids:[autoPage]});
@@ -919,6 +948,23 @@ describe('automatic fresh inquiry editor rotation', () => {
         expect((await db.query<any>('SELECT offered_to FROM veo_client_offers WHERE id=$1',[offered.offer_id])).rows[0].offered_to).toBe(editorA);
         await expect(rpc('veo_intake_action',[editorB,'accept',JSON.stringify({request_id:id(request++),contact_id:customer})])).rejects.toThrow(/automatic Telegram queue/);
         expect((await db.query('SELECT * FROM veo_orders WHERE contact_id=$1',[customer])).rows).toHaveLength(0);
+    });
+    it('shows automatic queue status and accepts the delivered offer through its bound Telegram button exactly once',async()=>{
+        const receive=(kind:string,data:any={})=>rpc('veo_telegram_intake',[tenant,97001,chat,kind,JSON.stringify({request_id:id(request++),...data})]);
+        await tick();
+        const pool=await receive('pool'),listing=await receive('render',{request_id:pool.request_id});
+        expect(listing.text).toContain('Waiting for your automatic editor offer');
+        expect((await db.query('SELECT id FROM veo_telegram_intake_tokens WHERE request_id=$1 AND contact_id=$2',[pool.request_id,customer])).rows).toHaveLength(0);
+        await due();await tick();const offered=await dispatch();
+        const rendered=await receive('render_offer',{offer_id:offered.offer_id});
+        await rpc('veo_ack_intake_offer',[tenant,offered.offer_id,chat,888]);
+        const button=rendered.reply_markup.inline_keyboard.flat().find((b:any)=>b.text.startsWith('Accept'));
+        expect(button).toBeDefined();
+        const result=await receive('callback',{token_id:button.callback_data.slice(3)});
+        expect(result.feedback).toContain('Client accepted');
+        expect((await receive('callback',{token_id:button.callback_data.slice(3)})).request_id).toBe(result.request_id);
+        expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1',[customer])).rows[0].user_id).toBe(editorA);
+        expect((await db.query("SELECT id FROM veo_audit WHERE action='client_assignment' AND entity_id=$1",[customer])).rows).toHaveLength(1);
     });
     it('registers a client with sufficient details ahead of older incomplete inquiries in bounded batches',async()=>{
         for (const patch of schemaMigrationPlan().filter(m=>/^20261114000[78]_/.test(m.name))) await db.exec(patch.sql);
