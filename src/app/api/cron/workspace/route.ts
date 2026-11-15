@@ -9,6 +9,7 @@ import { processVeoSourceJobs } from '@/lib/veo-source-jobs';
 import { cleanupWorkspacePhotos } from '@/lib/veo-photo-cleanup';
 import { runBackgroundJob } from '@/lib/background-run';
 import { queueReceiptDeletions } from '@/lib/veo-receipt-deletion';
+import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -34,20 +35,27 @@ async function processWorkspace(request: NextRequest) {
         const receiptDeletion = await queueReceiptDeletions(db);
         await cleanupWorkspacePhotos(db);
 
-        const maintained = await db.rpc('veo_maintenance');
-        if (maintained.error) throw new Error('Salary finalization unavailable');
+        let optionalWorkPaused = false;
+        try { await requireStorageForOptionalWork(db); } catch { optionalWorkPaused = true; }
         let operations: any = { error: true };
-        try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
+        if (!optionalWorkPaused) {
+            const maintained = await db.rpc('veo_maintenance');
+            if (maintained.error) throw new Error('Salary finalization unavailable');
+            try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
+        }
         let intakeRetry = false;
         try { const cleaned = await db.rpc('veo_telegram_intake_maintenance');intakeRetry = !!cleaned.error; } catch { intakeRetry = true; }
         // Editor dispatch has an independent minute worker so maintenance and
         // enrichment cannot prevent a due offer from being considered.
-        try { await processJevInterruptionReviews({ limit: 1, timeBudgetMs: 20000 }); } catch { /* Keep the bot paused and retry independently of editor dispatch. */ }
-        let sourceRetry = false;
-        try { await processVeoSourceJobs(2, 25000); } catch { sourceRetry = true; }
-        let budgetRetry = false;
-        try { await refreshPageBudgets(); } catch { budgetRetry = true; }
-        const processed = await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin, Math.max(0, 210000 - (Date.now() - startedAt)));
+        let sourceRetry = optionalWorkPaused, budgetRetry = optionalWorkPaused;
+        if (!optionalWorkPaused) {
+            try { await processJevInterruptionReviews({ limit: 1, timeBudgetMs: 20000 }); } catch { /* Keep the bot paused and retry independently of editor dispatch. */ }
+            try { await processVeoSourceJobs(2, 25000); } catch { sourceRetry = true; }
+            try { await refreshPageBudgets(); } catch { budgetRetry = true; }
+        }
+        // The independent workspace-events worker continues live collection.
+        // Avoid a second bulk drain while the database is recovering.
+        const processed = optionalWorkPaused ? 0 : await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin, Math.max(0, 210000 - (Date.now() - startedAt)));
         const autoApproved = await db.rpc('veo_auto_approve_pending_team_reviews', { p_limit: 20 });
         if (autoApproved.error) throw new Error('Team auto-approval queue unavailable');
         const approved = await db.rpc('veo_enqueue_approved_deal_reviews', { p_limit: 20 });
@@ -91,6 +99,6 @@ async function processWorkspace(request: NextRequest) {
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
         }
-        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
+        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: optionalWorkPaused, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }

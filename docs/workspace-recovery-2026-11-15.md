@@ -35,3 +35,20 @@ production migration was applied at 13:49 UTC after a successful rollback
 preflight; existing data and private execution privileges were verified.
 The 13:50 UTC live pending-offer probe still returned HTTP 503. Code and schema
 validation therefore do not yet demonstrate full production recovery.
+
+Further hosted diagnostics showed widespread PostgreSQL statement timeouts,
+including the database's own monitoring exporter. The saved resource sample
+reported five-minute load 10.5 on two CPUs and 455 MB total memory; fresh
+monitoring was unavailable. The database occupied approximately 294 MB.
+These are observed service-resource limits, not proof that every timed-out
+query has the same cause.
+
+The existing pressure guard now also defers scheduled quota recalculation,
+stage-history repair, and optional workspace planning/maintenance/enrichment.
+The workspace worker keeps eligibility sync, receipt expiry cleanup and
+submission delivery; the independent live-event and editor-dispatch workers
+continue. Paused work is explicitly reported and resumes through ordinary
+scheduled runs once resource checks permit it. No cron schedules were changed.
+An additional 28 focused cases passed, including an actual mocked submission
+being checkpointed for retry while optional work is paused, normal editor
+dispatch, the independent event worker and resource-monitoring validation.

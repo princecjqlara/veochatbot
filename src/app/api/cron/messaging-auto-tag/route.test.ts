@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const mocks = vi.hoisted(() => ({ processPage: vi.fn(), processBatch: vi.fn(), workspace: vi.fn() }));
+const mocks = vi.hoisted(() => ({ processPage: vi.fn(), processBatch: vi.fn(), workspace: vi.fn(), guard: vi.fn() }));
+vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => ({}) }));
+vi.mock('@/lib/veo-storage-health', () => ({ requireStorageForOptionalWork: mocks.guard }));
 vi.mock('@/lib/messaging-auto-tag-worker', () => ({ processOneMessagingAutoTagPage: mocks.processPage, processMessagingStageSyncBatch: mocks.processBatch }));
 vi.mock('@/lib/veo-autotag', () => ({ processVeoAutoTags: mocks.workspace }));
 import { GET } from './route';
-beforeEach(() => { vi.stubEnv('CRON_SECRET', 'test-secret'); mocks.processPage.mockReset().mockResolvedValue({ pages: 1, webhookHealth: { verified: true } }); mocks.processBatch.mockReset().mockResolvedValue({pages:6,completed:6,failed:0}); mocks.workspace.mockReset().mockResolvedValue({ pages: 3, completed: 3, failed: 0 }); });
+beforeEach(() => { vi.stubEnv('CRON_SECRET', 'test-secret'); mocks.guard.mockReset().mockResolvedValue({});mocks.processPage.mockReset().mockResolvedValue({ pages: 1, webhookHealth: { verified: true } }); mocks.processBatch.mockReset().mockResolvedValue({pages:6,completed:6,failed:0}); mocks.workspace.mockReset().mockResolvedValue({ pages: 3, completed: 3, failed: 0 }); });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 describe('targeted chatbot Page maintenance', () => {
+    it('pauses optional stage-history scans when database resources are under pressure or unknown', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');mocks.guard.mockRejectedValue(Error('Database pressure'));
+        const response = await GET(new NextRequest('https://app.test/api/cron/messaging-auto-tag', { headers: { Authorization: 'Bearer test-secret' } }));
+        expect(response.status).toBe(503);expect(await response.json()).toMatchObject({ skipped: true, reason: 'database_pressure', retryable: true });
+        expect(mocks.workspace).not.toHaveBeenCalled();expect(mocks.processBatch).not.toHaveBeenCalled();
+    });
     it('uses bounded workspace recovery without claiming legacy stage scans', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
         const response = await GET(new NextRequest('https://app.test/api/cron/messaging-auto-tag', { headers: { Authorization: 'Bearer test-secret' } }));

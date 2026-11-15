@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processOneMessagingAutoTagPage, processMessagingStageSyncBatch } from '@/lib/messaging-auto-tag-worker';
 import { isSupabaseUnavailable } from '@/lib/supabase-errors';
 import { processVeoAutoTags } from '@/lib/veo-autotag';
+import { getSupabaseAdmin } from '@/lib/supabase';
+import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -14,6 +16,8 @@ export async function GET(request: NextRequest) {
     }
     try {
         if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+            try { await requireStorageForOptionalWork(getSupabaseAdmin()); }
+            catch { return NextResponse.json({ success: false, skipped: true, reason: 'database_pressure', retryable: true }, { status: 503, headers: { 'Retry-After': '60' } }); }
             const result = await processVeoAutoTags();
             return NextResponse.json({ success: result.failed === 0, ...result }, { status: result.failed ? 503 : 200, headers: { 'Cache-Control': 'no-store' } });
         }
