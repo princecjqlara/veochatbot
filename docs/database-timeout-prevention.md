@@ -7,7 +7,8 @@ salary snapshots produce a retryable error rather than an invented total.
 
 The existing quota schedule claims at most four worker leases at once and
 commits each worker separately. Each SQL update has a five-second deadline and
-the run starts work for at most twenty seconds. A shared run lease prevents
+the run starts work for at most ninety seconds, rechecking resource pressure
+between batches. A 150-second shared run lease prevents
 overlapping scheduler invocations. Failed or abandoned work remains retryable;
 a timed-out worker rolls back and receives a ten-minute cooldown. Completed
 worker updates are retained. Team planning uses recorded operating quotas.

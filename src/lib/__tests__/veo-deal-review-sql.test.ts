@@ -43,6 +43,7 @@ it('runs performance and calendar finance reports without quota writes in a read
 });
 it('fences duplicate quota runs and refreshes workers independently with fair, expiring leases',async()=>{
  expect(await rpc('veo_claim_background_job',['quotas',id(901)])).toBe(true);
+ expect((await db.query<any>("SELECT leased_until>clock_timestamp()+interval '120 seconds' covers_http_limit FROM veo_background_job_leases WHERE job='quotas'")).rows[0].covers_http_limit).toBe(true);
  expect(await rpc('veo_claim_background_job',['quotas',id(902)])).toBe(false);
  await rpc('veo_release_background_job',['quotas',id(901)]);
  await expect(rpc('veo_claim_quota_refresh',[5])).rejects.toThrow('Invalid');

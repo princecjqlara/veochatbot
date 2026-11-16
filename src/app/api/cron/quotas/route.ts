@@ -12,7 +12,8 @@ export async function GET(r: NextRequest) {
     try { await requireStorageForOptionalWork(db); }
     catch { return NextResponse.json({ skipped: true, reason: 'database_pressure', retryable: true }, { status: 503, headers: { 'Retry-After': '60' } }); }
     try {
-        const result = await runBackgroundJob('quotas', () => refreshQuotaSnapshots(db), db);
-        return NextResponse.json(result, { status: 'failed' in result && result.failed ? 503 : 200, headers: {'Cache-Control':'no-store'} });
+        const result = await runBackgroundJob('quotas', () => refreshQuotaSnapshots(db, 90000, () => requireStorageForOptionalWork(db)), db);
+        const retry = ('failed' in result && result.failed) || ('paused' in result && result.paused);
+        return NextResponse.json(result, { status: retry ? 503 : 200, headers: {'Cache-Control':'no-store'} });
     } catch { return NextResponse.json({ error: 'Quota refresh will retry' }, { status: 503 }); }
 }

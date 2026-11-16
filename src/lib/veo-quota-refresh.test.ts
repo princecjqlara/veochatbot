@@ -18,9 +18,15 @@ it('continues other workers after a recorded business-rule failure and never rep
 it('stops before starting another worker when the run budget cannot cover its deadline',async()=>{
     vi.useFakeTimers();vi.setSystemTime(0);
     const db={rpc:vi.fn(async(name:string)=>{if(name==='veo_claim_quota_refresh')return{data:jobs};vi.setSystemTime(17000);return{data:{ok:true}};})};
-    expect(await refreshQuotaSnapshots(db)).toEqual({workers:1,failed:0,deferred:true});expect(db.rpc).toHaveBeenCalledTimes(2);
+    expect(await refreshQuotaSnapshots(db,20000)).toEqual({workers:1,failed:0,deferred:true});expect(db.rpc).toHaveBeenCalledTimes(2);
 });
 it('defers the remaining work after a worker records database pressure',async()=>{
     const db={rpc:vi.fn().mockResolvedValueOnce({data:jobs}).mockResolvedValueOnce({data:{ok:false,overloaded:true}})};
     expect(await refreshQuotaSnapshots(db)).toEqual({workers:0,failed:1,deferred:true});expect(db.rpc).toHaveBeenCalledTimes(2);
+});
+it('rechecks pressure between batches and retains already committed progress when it pauses',async()=>{
+    const db={rpc:vi.fn().mockResolvedValueOnce({data:jobs}).mockResolvedValue({data:{ok:true}})};
+    const guard=vi.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(Error('Low memory'));
+    expect(await refreshQuotaSnapshots(db,90000,guard)).toEqual({workers:2,failed:0,deferred:true,paused:true});
+    expect(db.rpc).toHaveBeenCalledTimes(3);expect(guard).toHaveBeenCalledTimes(2);
 });
