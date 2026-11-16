@@ -10,7 +10,9 @@ import { migrationConnectionOptions } from './lib/migration-retry.mjs';
 // metadata discovery to finish. Application RPC deadlines remain independent.
 const env = { ...parseEnv(fs.readFileSync('.env.local', 'utf8')), ...process.env };
 const apply = process.argv.includes('--apply');
+const reconnect = process.argv.includes('--reconnect');
 assert(apply !== process.argv.includes('--preflight'), 'Choose --preflight or --apply');
+assert(apply || !reconnect, 'Reconnecting API sessions requires --apply');
 const project = assertSchemaDestination(new URL(env.NEXT_PUBLIC_SUPABASE_URL).hostname.split('.')[0]);
 const endpoint = assertProjectCredentials(env, project);
 const db = new pg.Client({ ...await migrationConnectionOptions(endpoint.connectionString), connectionTimeoutMillis: 10000, query_timeout: 20000 });
@@ -39,6 +41,12 @@ try {
     await db.query("NOTIFY pgrst,'reload config';NOTIFY pgrst,'reload schema'");
     await db.query(apply ? 'COMMIT' : 'ROLLBACK');
     Object.assign(report, { passed: true, schemaDiscoveryDeadline: '30s', serviceQueryDeadline: timeout(service) || '8s', permissionsPreserved: true });
+    if (reconnect) {
+        // Existing authenticator sessions retain their login-time deadline.
+        // Refresh only this database's identified PostgREST connections.
+        const refreshed = await db.query("SELECT pg_terminate_backend(pid) refreshed FROM pg_stat_activity WHERE datname=current_database() AND usename='authenticator' AND application_name LIKE 'PostgREST%' AND backend_type='client backend' AND pid<>pg_backend_pid()");
+        report.apiConnectionsRefreshed = refreshed.rows.filter(r => r.refreshed).length;
+    }
 } catch (error) {
     await db.query('ROLLBACK').catch(() => {});
     Object.assign(report, { passed: false, error: error.message });
