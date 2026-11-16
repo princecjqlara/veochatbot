@@ -35,6 +35,82 @@ async function evidence(kind='closed',extra:any={},actor=member){
 }
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
+it('pays every manager 40 percent below quota consistently across salary, receipts, finance and calendar',async()=>{
+ await db.query("UPDATE veo_tenants SET launch_at=now()-interval '30 days' WHERE id=$1",[tenant]);
+ await db.query("UPDATE veo_accounts SET enrolled_at=now()-interval '30 days'");
+ await db.query("UPDATE contacts SET pipeline_stage='qualified' WHERE id IN($1,$2)",[client,clientB]);
+ const today=(await db.query<any>('SELECT veo_today()::text d')).rows[0].d;
+ for(const [seller,contact] of [[manager,client],[member,clientB]]){
+  const order=id(seq++);
+  await db.query(`INSERT INTO veo_orders(id,request_id,tenant_id,team_id,page_id,contact_id,seller_id,description,total_minor,currency,created_by)
+   SELECT $1,$2,$3,id,$4,$5,$6,'Carried deposit',203,'PHP',$6 FROM veo_teams WHERE manager_id=$7`,[order,id(seq++),tenant,page,contact,seller,manager]);
+  await db.query(`INSERT INTO veo_payments(request_id,order_id,kind,amount_minor,reference,occurred_at,verified_by)
+   VALUES($1::uuid,$2,'deposit',100,'DEPOSIT-'||$1::uuid::text,now()-interval '1 day',$4),($3::uuid,$2,'balance',103,'BALANCE-'||$3::uuid::text,now()-interval '1 minute',$4)`,[id(seq++),order,id(seq++),seller]);
+  const salary=await rpc('veo_salary',[seller,today]);
+  expect(salary).toMatchObject({closed:0,done:1,rate:seller===manager?40:35,manager_immunity:seller===manager});
+  const expected=seller===manager?81:71;
+  expect(Number(salary.totals[0].commission_minor)).toBe(expected);
+  for(const name of ['veo_finance_days','veo_salary_report']){
+   const day=(await rpc(name,[owner,today,today,page,seller])).days[0];
+   expect(day).toMatchObject({rate:seller===manager?40:35,manager_immunity:seller===manager});
+   expect(Number(day.totals[0].commission_minor)).toBe(expected);
+  }
+  expect(Number((await rpc('veo_receipt_commission',[owner,seller,today])).totals[0].commission_minor)).toBe(expected);
+  expect(Number((await db.query<any>('SELECT commission_minor FROM veo_calendar_order_values WHERE id=$1',[order])).rows[0].commission_minor)).toBe(expected);
+  if(seller===manager){
+   await db.query("INSERT INTO veo_deal_incentives(order_id,percent,reason,actor_id) VALUES($1,5,'Extra service',$2)",[order,manager]);
+   expect(Number((await rpc('veo_salary',[seller,today])).totals[0].commission_minor)).toBe(91);
+   expect(Number((await rpc('veo_salary_report',[owner,today,today,page,seller])).days[0].totals[0].commission_minor)).toBe(91);
+   expect(Number((await db.query<any>('SELECT commission_minor FROM veo_calendar_order_values WHERE id=$1',[order])).rows[0].commission_minor)).toBe(91);
+   await db.query(`INSERT INTO veo_payments(request_id,order_id,kind,amount_minor,reference,occurred_at,verified_by) VALUES($1::uuid,$2,'refund',10,'REFUND-'||$1::uuid::text,now()-interval '1 second',$3)`,[id(seq++),order,seller]);
+   expect(Number((await rpc('veo_salary',[seller,today])).totals[0].commission_minor)).toBe(86);
+   expect(Number((await rpc('veo_salary_report',[owner,today,today,page,seller])).days[0].totals[0].commission_minor)).toBe(86);
+   expect(Number((await db.query<any>('SELECT commission_minor FROM veo_calendar_order_values WHERE id=$1',[order])).rows[0].commission_minor)).toBe(86);
+  }
+ }
+ for(const seller of [manager,other]) expect(await rpc('veo_salary',[seller,today])).toMatchObject({rate:40,manager_immunity:true});
+ expect((await rpc('veo_salary',[other,today])).totals).toEqual([]);
+});
+
+it('keeps managers active after verified departure through both Telegram membership paths and permits explicit removal',async()=>{
+ await rpc('veo_sync_telegram_groups',[owner,JSON.stringify([{chat_id:-123,name:'Sales',pages:[{id:page,matched:true}],topics:{},identities:[]}])]);
+ const team=(await db.query<any>('SELECT id FROM veo_teams WHERE manager_id=$1',[manager])).rows[0].id;
+ await rpc('veo_telegram_group_action',[manager,'group',JSON.stringify({team_id:team,chat_id:-123,page_ids:[page]})]);
+ for(const [seller,tg] of [[manager,55],[member,56]]) await rpc('veo_telegram_group_action',[manager,'membership',JSON.stringify({user_id:seller,chat_id:-123,telegram_user_id:tg})]);
+ const observed=(await db.query<any>("SELECT (now()+interval '1 second')::text t")).rows[0].t;
+ const result=await rpc('veo_apply_telegram_observations',[tenant,JSON.stringify({tenant_id:tenant,workers:[{user_id:manager,telegram_user_id:55},{user_id:member,telegram_user_id:56}].map(p=>({...p,chat_id:-123,observed_at:observed,membership:'left',membership_confirmed:true,is_bot:false}))})]);
+ expect(result.departures).toBe(1);
+ expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[manager])).rows[0].active).toBe(true);
+ expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[member])).rows[0].active).toBe(false);
+ expect((await db.query<any>('SELECT payload FROM veo_telegram_group_states WHERE user_id=$1',[manager])).rows[0].payload.membership).toBe('left');
+ await db.query('DELETE FROM veo_telegram_group_states WHERE user_id=$1',[manager]);
+ await db.query('DELETE FROM veo_telegram_memberships WHERE user_id=$1',[manager]);
+ await db.query('UPDATE veo_teams SET telegram_groups_managed=false,telegram_chat_id=-123 WHERE id=$1',[team]);
+ await db.query('DELETE FROM veo_telegram_staff_state WHERE user_id=$1',[manager]);
+ await db.query('INSERT INTO veo_staff_telegram_groups(user_id,telegram_chat_id,verified_at) VALUES($1,-123,now()) ON CONFLICT(user_id) DO UPDATE SET telegram_chat_id=-123,verified_at=now()',[manager]);
+ const legacy=await rpc('veo_apply_telegram_observations',[tenant,JSON.stringify({tenant_id:tenant,workers:[{user_id:manager,telegram_user_id:55,chat_id:-123,observed_at:observed,membership:'left',membership_confirmed:true,is_bot:false}]})]);
+ expect(legacy.departures).toBe(0);
+ expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[manager])).rows[0].active).toBe(true);
+ expect((await rpc('veo_offboard',[owner,manager,'Owner requested removal','supervisor'])).active).toBe(false);
+});
+
+it('exempts managers from attendance warnings and quota carryover without exempting members',async()=>{
+ await db.query('UPDATE veo_teams SET telegram_chat_id=-123 WHERE manager_id=$1',[manager]);
+ await db.query("UPDATE veo_tenants SET launch_at=now()-interval '30 days' WHERE id=$1",[tenant]);
+ await db.query("UPDATE veo_accounts SET enrolled_at=now()-interval '30 days'");
+ for(const [seller,tg] of [[manager,55],[member,56]]){
+  await db.query('INSERT INTO veo_worker_mappings(user_id,telegram_user_id) VALUES($1,$2)',[seller,tg]);
+  await db.query(`INSERT INTO veo_telegram_staff_state(user_id,tenant_id,telegram_chat_id,telegram_user_id,membership,observed_at,availability)
+   VALUES($1,$2,-123,$3,'member',now(),jsonb_build_object('work_date',(veo_today()+1)::text,'poll_id','tomorrow','created_at',now()-interval '3 hours','has_vote',false))`,[seller,tenant,tg]);
+  await db.query(`INSERT INTO veo_quota_policies(user_id,effective_from) VALUES($1,veo_today()-10) ON CONFLICT(user_id) DO UPDATE SET effective_from=veo_today()-10`,[seller]);
+  await db.query("INSERT INTO veo_operating_quotas(user_id,work_date,capacity,quota,basis) VALUES($1,veo_today()-1,3,3,'{}')",[seller]);
+  const supply=await rpc('veo_supply_target',[seller,(await db.query<any>('SELECT veo_today()::text d')).rows[0].d,3]);
+  expect(supply.carry_remaining).toBe(seller===manager?0:3);
+ }
+ const workers=(await rpc('veo_workflow_warnings',[owner,null])).workers;
+ expect(workers.find((w:any)=>w.id===manager).warnings.some((w:any)=>w.kind==='availability_unanswered')).toBe(false);
+ expect(workers.find((w:any)=>w.id===member).warnings.some((w:any)=>w.kind==='availability_unanswered')).toBe(true);
+});
 it('runs performance and calendar finance reports without quota writes in a read-only transaction',async()=>{
  await db.exec('SET TRANSACTION READ ONLY');
  const day=(await db.query<any>('SELECT veo_today()::text d')).rows[0].d;

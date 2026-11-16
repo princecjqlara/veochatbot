@@ -84,13 +84,13 @@ it('retains the mounted profile during refresh and temporary failure, but clears
  await act(async()=>{view.update(createElement(Profile,{...props,version:2}));});
  expect(flatten(view.toJSON())).not.toContain('Employee A');expect(flatten(view.toJSON())).toContain('Access denied');
 });
-it('keeps the salary panel and nested profile mounted while reloading the same report',async()=>{
+it('keeps the salary statement mounted while reloading the same report',async()=>{
  vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-07T01:00:00Z'));
  let pending=false;
  vi.stubGlobal('fetch',vi.fn((url:string)=>url.includes('employee-profile')?Promise.resolve(Response.json(fixture())):pending?new Promise<Response>(()=>{}):Promise.resolve(Response.json({summary:{},employees:[{id:'A',name:'Employee A',active:true}],orders:[],finance:{days:[]},page_rankings:[],order_page:{total:0},client_assignments:[]}))));
  const props={scope:{role:'owner',user_id:'owner',launch_at:'2026-11-05T00:00:00Z'},pages:[],busy:false,submit:vi.fn(),initialWorkerId:'A',mode:'salary'};
  await act(async()=>{view=create(createElement(Operations,{...props,refreshToken:0}));await vi.advanceTimersByTimeAsync(300);});
- const article=view.root.findByProps({'aria-label':'Unified employee profile'});pending=true;
+ const article=view.root.findByProps({'aria-label':'Salary for selected dates'});pending=true;
  await act(async()=>{view.update(createElement(Operations,{...props,refreshToken:1}));await vi.advanceTimersByTimeAsync(300);});
- expect(view.root.findByProps({'aria-label':'Unified employee profile'})).toBe(article);expect(flatten(view.toJSON())).not.toContain('Loading verified performance');
+ expect(view.root.findByProps({'aria-label':'Salary for selected dates'})).toBe(article);expect(flatten(view.toJSON())).not.toContain('Loading verified performance');
 });

@@ -9,6 +9,11 @@ const contact = { id: 'client', page_id: 'page', name: 'Client', pipeline_stage:
 const order = { id: 'order', total_minor: 10000, paid_minor: 2000, currency: 'PHP' };
 const commission = { target: 3, closed: 3, done: 2, rate: 35, totals: [{ currency: 'PHP', gross_minor: 20000, commission_minor: 7000 }], provisional: true };
 const props = { contact, seller: 'worker', order, kind: 'done', version: 0, loading: false, onSaved: vi.fn() };
+it('shows fixed manager commission below quota without claiming quota qualification', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...commission, closed: 0, done: 0, rate: 40, manager_immunity: true }))));
+    await act(async () => { view = create(createElement(Details, props)); });
+    const output = text(view.toJSON()); expect(output).toContain('Manager immunity · fixed 40%'); expect(output).not.toContain('Both quotas reached'); expect(output).not.toContain('Still needed:');
+});
 afterEach(async () => { if (view) await act(async () => view.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 it('shows current lead stage, saved deal price, actual payments and remaining balance before upload', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(commission))));

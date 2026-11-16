@@ -28,7 +28,7 @@ it('binds the shared VEO directory to CJ’s launched tenant and never selects c
         user_pages: [member, 'manager', CJ_OWNER_USER_ID].map(user_id => ({ user_id, page_id: 'page' })), veo_attendance: [] });
     const data = await veoDirectory(tenant);
     expect(data.accounts[0]).toMatchObject({ name: 'Worker', telegram_user_id: 42, telegram_username_verified: false, page_ids: ['page'] });
-    expect(data.commission_rule).toMatchObject({ qualified_rate: 40, default_rate: 35, team_override: false });
+    expect(data.commission_rule).toMatchObject({ qualified_rate: 40, default_rate: 35, manager_rate: 40, manager_qualification: 'fixed', manager_immunity: ['quota_rate_reduction', 'quota_carryover', 'attendance_penalties', 'automatic_removal'], team_override: false });
     expect(calls.every(([, fields]) => !/\*|password|token|email/.test(fields))).toBe(true);
     database({ veo_tenants: [{ id: tenant, owner_id: 'another-owner', launch_at: '2026-11-05T00:00:00Z' }] });
     await expect(connectedVeoTenant(tenant)).rejects.toMatchObject({ status: 403 });

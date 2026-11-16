@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from './supabase';
 import { CJ_OWNER_USER_ID } from '@/config/veo-owner';
 import { philippineDate, uuid } from './veo-workspace';
 
-export const commissionRule = { qualified_rate: 40, default_rate: 35, qualification: 'both_personal_closed_and_done_targets', timezone: 'Asia/Manila', team_override: false };
+export const commissionRule = { qualified_rate: 40, default_rate: 35, qualification: 'both_personal_closed_and_done_targets', manager_rate: 40, manager_qualification: 'fixed', manager_immunity: ['quota_rate_reduction', 'quota_carryover', 'attendance_penalties', 'automatic_removal'], timezone: 'Asia/Manila', team_override: false };
 const unavailable = (message: string, status = 503, cause?: unknown) => Object.assign(new Error(message), { status, ...(cause ? { cause } : {}) });
 
 export async function connectedVeoTenant(tenant: string, db?: ReturnType<typeof getSupabaseAdmin>) {

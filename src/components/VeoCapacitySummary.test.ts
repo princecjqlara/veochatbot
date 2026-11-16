@@ -27,3 +27,8 @@ it('shows unavailable averages and undeclared participation without claiming a z
     try { const text = flatten(view.toJSON()); expect(text).toContain('Unavailable'); expect(text).toContain('Insufficient history'); expect(text).toContain('quota awaits active participation'); expect(view.root.findAllByType('progress')).toHaveLength(0); }
     finally { await act(async () => view.unmount()); }
 });
+it('explains a manager rate below quota without claiming the quotas were reached', async () => {
+    let view: any; await act(async () => { view = create(createElement(Summary, { capacity: { combined: metrics, teams: [] }, personal: { closed: 0, done: 0, target: 3, operating_quota: 0, rate: 40, manager_immunity: true } })); });
+    try { const output = flatten(view.toJSON()); expect(output).toContain('Manager immunity: fixed 40%'); expect(output).not.toContain('Both personal quotas reached:'); expect(output).not.toContain('To reach 40%:'); expect(output).not.toContain('at least one verified Closed and Done Deal is required'); }
+    finally { await act(async () => view.unmount()); }
+});
