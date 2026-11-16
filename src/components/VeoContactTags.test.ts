@@ -3,6 +3,17 @@ import { act, create } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import VeoContactTags from './VeoContactTags';
 afterEach(() => { vi.unstubAllGlobals(); });
+it('queues a targeted stage read and reloads tags only when the background scan completes',async()=>{
+    const changed=vi.fn(async()=>{});let complete=false;
+    const fetcher=vi.fn(async(path:string,options?:any)=>path.startsWith('/api/tags')?Response.json({items:[],total:0}):options?.method==='POST'?Response.json({queued:true,status:'pending'}):Response.json({sync:{status:complete?'idle':'pending'},evidence:{stage:'converted'}}));vi.stubGlobal('fetch',fetcher);
+    let tree:any;await act(async()=>{tree=create(React.createElement(VeoContactTags,{pageId:'page',contactId:'client',tags:[],onChanged:changed}));});
+    const button=(label:string)=>tree.root.findAllByType('button').find((b:any)=>b.children.join('')===label);
+    try{
+        await act(async()=>button('Refresh Facebook stage').props.onClick());expect(fetcher).toHaveBeenCalledWith('/api/workspace/source',expect.objectContaining({body:JSON.stringify({action:'refresh',contact_id:'client'})}));
+        await act(async()=>button('Check stage and tags').props.onClick());expect(changed).not.toHaveBeenCalled();expect(JSON.stringify(tree.toJSON())).toContain('still pending');
+        complete=true;await act(async()=>button('Check stage and tags').props.onClick());expect(changed).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).toContain('Saved lead stage: converted');
+    }finally{await act(async()=>tree.unmount());}
+});
 it('adds available manual tags and preserves system-history tags as read-only', async () => {
     const changed = vi.fn(async () => {}), fetcher = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ items: [{ id: 'manual', name: 'Follow up' }], total: 1 }) }).mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
     vi.stubGlobal('fetch', fetcher); let tree: any;

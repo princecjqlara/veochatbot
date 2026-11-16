@@ -1,4 +1,5 @@
 import { fetchBusinessOrderNotices } from './veo-business-orders';
+import { syncMessengerStageHistory } from './messenger-stage-sync';
 
 function checked(result: any) {
     if (result.error) throw Object.assign(Error(result.error.code === '42501' ? 'Client Page access changed' : 'Facebook check could not be saved. Retry.'), { status: result.error.code === '42501' ? 403 : 503 });
@@ -14,6 +15,8 @@ export async function refreshReceiptFacebook(db: any, actor: string, contactId: 
         const page = await db.from('pages').select('fb_page_id,access_token').eq('id', context.page_id).single();
         if (page.error || !page.data?.access_token || !context.psid) throw Error('Facebook Page connection or client conversation unavailable. Ask the Owner to check the Page connection.');
         scan = await fetchBusinessOrderNotices({ pageId: page.data.fb_page_id, psid: context.psid, token: page.data.access_token, launchAt: context.launch_at, ...(timeoutMs ? { timeoutMs } : {}) });
+        await syncMessengerStageHistory(db, { pageId: context.page_id, contactId, facebookPageId: page.data.fb_page_id,
+            messages: (scan.messages || []).filter((m: any) => Date.parse(m.created_time || '') >= Date.parse(context.launch_at) && Date.parse(m.created_time || '') <= Date.now()) });
     } catch (e: any) {
         scan = { orders: [], stage: null, complete: false, pages_checked: 0, coverage: 'Facebook evidence unavailable; receipt submission is blocked.', error: e.name === 'TimeoutError' || e.name === 'AbortError' ? 'Facebook check timed out. Retry shortly.' : e.message || 'Facebook check unavailable. Retry.' };
     }

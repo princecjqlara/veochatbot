@@ -34,8 +34,24 @@ it('ignores a late response from the previous date range', async () => {
     let finish!: (value: Response) => void; const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; })).mockImplementation(async (url: string) => Response.json(body(url))); vi.stubGlobal('fetch', fetcher);
     await mount(); await act(async () => view.root.findByProps({ 'aria-label': 'Salary and performance from date' }).props.onChange({ target: { value: '2026-11-05' } })); await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     await act(async () => finish(Response.json(body('/api/workspace/operations?from=2026-11-01&to=2026-11-10'))));
-    expect(text(view.toJSON())).toContain('PHP 60.00'); expect(text(view.toJSON())).not.toContain('PHP 100.00');
+    expect(text(view.toJSON())).toContain('PHP 60.00');
+    expect(text(view.toJSON())).toContain('2026-11-05 to 2026-11-10, inclusive');
+    expect(view.root.findAllByType('tr').some(row=>text(row).includes('2026-11-01'))).toBe(false);
 });
 it('does not invent a salary for an empty verified ledger', async () => {
     await act(async () => { view = create(createElement(Statement, { days: [], from: '2026-11-01', to: '2026-11-10', role: 'owner', onEmployee: vi.fn() })); }); expect(text(view.toJSON())).toContain('No verified commission');
+});
+it('filters salary by person and date while preserving all employee choices and updating the period total',async()=>{
+    const second={...employee,id:'other',name:'Employee B'};
+    vi.stubGlobal('fetch',vi.fn(async(url:string)=>{
+        const result=body(url),q=new URL(url,'https://veo.test').searchParams;
+        const all=result.finance.days.flatMap(row=>[row,{...row,user_id:'other',name:'Employee B',totals:[{currency:'PHP',gross_minor:20000,commission_minor:2000}]}]);
+        return Response.json({...result,employees:[employee,second],finance:{days:all.filter(row=>!q.get('worker_id')||row.user_id===q.get('worker_id'))}});
+    }));
+    await mount();expect(text(view.toJSON())).toContain('PHP 300.00');expect(text(view.toJSON())).toContain('Total salary by date');expect(text(view.toJSON())).not.toContain('Staff work overdue');
+    await act(async()=>view.root.findByProps({'aria-label':'Salary employee'}).props.onChange({target:{value:'other'}}));await act(async()=>{await vi.advanceTimersByTimeAsync(1);});
+    expect(text(view.toJSON())).toContain('PHP 200.00');expect(view.root.findByProps({'aria-label':'Salary employee'}).findAllByType('option')).toHaveLength(3);
+    await act(async()=>view.root.findByProps({'aria-label':'Salary and performance from date'}).props.onChange({target:{value:'2026-11-08'}}));await act(async()=>{await vi.advanceTimersByTimeAsync(1);});
+    expect(text(view.toJSON())).toContain('PHP 60.00');
+    const q=new URL(vi.mocked(fetch).mock.calls.at(-1)![0] as string,'https://veo.test').searchParams;expect(q.get('view')).toBe('salary');expect(q.get('worker_id')).toBe('other');expect(q.get('from')).toBe('2026-11-08');
 });

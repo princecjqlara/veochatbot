@@ -16,7 +16,7 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-06T04:
 afterEach(async () => { if (view) await act(async () => view.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 it('shows actual daily commission and date-filtered clients, and routes receipt uploads through the strict checklist', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify(payload()))); vi.stubGlobal('fetch', fetcher);
-    await act(async () => { view = create(createElement(Operations, { scope, pages: [], busy: false, submit: vi.fn(), mode: 'salary' })); });
+    await act(async () => { view = create(createElement(Operations, { scope, pages: [], busy: false, submit: vi.fn(), mode: 'performance' })); });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     const text = flatten(view.toJSON()); expect(text).toContain('Previous Client'); expect(text).toContain('0.81'); expect(text).toContain('40%'); expect(text).toContain('Provisional');
     await act(async () => view.root.findAllByType('button').find(b => flatten(b).includes('Payment, receipt'))!.props.onClick());

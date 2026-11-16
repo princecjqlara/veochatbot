@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const m = vi.hoisted(() => ({ signIn: vi.fn(), signOut: vi.fn(), session: vi.fn(), replace: vi.fn(), push: vi.fn() }));
+const m = vi.hoisted(() => ({ signIn: vi.fn(), signOut: vi.fn(), session: vi.fn(), replace: vi.fn(), push: vi.fn(), update: vi.fn() }));
 vi.mock('next-auth/react', () => ({ useSession: m.session, signIn: m.signIn, signOut: m.signOut }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: m.replace, push: m.push }), useSearchParams: () => new URLSearchParams() }));
 import VeoSignIn from './VeoSignIn';
@@ -35,11 +35,13 @@ it('clears an invalidated old Facebook session so the email login screen remains
     try { expect(m.signOut).toHaveBeenCalledWith({ callbackUrl: '/' }); expect(m.replace).not.toHaveBeenCalled(); }
     finally { await act(async () => view.unmount()); }
 });
-it('retains an authenticated identity during a database outage without granting workspace access', async () => {
-    m.session.mockReturnValue({ status: 'authenticated', data: { user: { id: 'member', workspaceUnavailable: true } } });
+it('retains an authenticated identity during an outage and retries permission reads without spending another login attempt', async () => {
+    m.session.mockReturnValue({ status: 'authenticated', data: { user: { id: 'member', workspaceUnavailable: true } }, update: m.update });
     let view: any; await act(async () => { view = create(createElement(VeoSignIn)); });
     try {
         expect(m.signOut).not.toHaveBeenCalled(); expect(m.replace).not.toHaveBeenCalled();
         expect(view.root.findByProps({ role: 'alert' }).children.join('')).toContain('database is not responding');
+        await act(async()=>view.root.findAllByType('button').find(b=>b.children.join('')==='Retry sign-in status')!.props.onClick());
+        expect(m.update).toHaveBeenCalledOnce();expect(m.signIn).not.toHaveBeenCalled();
     } finally { await act(async () => view.unmount()); }
 });

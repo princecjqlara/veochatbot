@@ -1,8 +1,7 @@
 import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { createHash } from 'node:crypto';
 import { getSupabaseAdmin } from './supabase';
-import { passwordMatches, roles, workspaceEnabled, workspaceScope, type WorkspaceRole } from './veo-workspace';
+import { passwordMatches, workspaceEnabled, workspaceScope, type WorkspaceRole } from './veo-workspace';
 import { requestDeadline } from './request-deadline';
 import { isSupabaseUnavailable } from './supabase-errors';
 
@@ -14,16 +13,10 @@ export const authOptions: NextAuthOptions = {
                 try {
                     return await requestDeadline(async signal => {
                         const db = getSupabaseAdmin(signal), email = credentials.email.trim().toLowerCase();
-                        const key = createHash('sha256').update(email).digest('hex');
-                        const limit = await db.rpc('veo_login_attempt', { p_key: key });
-                        if (limit.error) throw new Error('DatabaseUnavailable');
-                        if (limit.data !== true) throw new Error('TooManyAttempts');
-                        const row = await db.from('users').select('id,name,email,image,password_hash,is_active').eq('email', email).maybeSingle();
-                        if (row.error) throw new Error('DatabaseUnavailable');
-                        if (!row.data?.is_active || !await passwordMatches(credentials.password!, row.data.password_hash)) return null;
-                        const scope = await db.rpc('veo_scope', { p_actor: row.data.id });
-                        if (scope.error) throw new Error('DatabaseUnavailable');
-                        if (!scope.data?.launch_at || !roles.includes(scope.data.role)) return null;
+                        const row = await db.rpc('veo_login_context', { p_email: email });
+                        if (row.error) throw new Error(row.error.message === 'TooManyAttempts' ? 'TooManyAttempts' : 'DatabaseUnavailable');
+                        if (row.data?.limited === true) throw new Error('TooManyAttempts');
+                        if (!row.data?.id || !await passwordMatches(credentials.password!, row.data.password_hash)) return null;
                         return { id: row.data.id, name: row.data.name, email: row.data.email, image: row.data.image };
                     }, 12_000);
                 } catch (error) {

@@ -14,3 +14,10 @@ it('rejects duplicated or incomplete salary days and unsafe amounts rather than 
 it('keeps zero-value staff and former staff visible without inventing a currency or salary', () => {
     const result = salaryPeriod([{ user_id: 'former', name: 'Former worker', active: false, work_date: '2026-11-09', totals: [] }]); expect(result.totals).toEqual([]); expect(result.people[0].active).toBe(false); expect(result.people[0].amounts.size).toBe(0);
 });
+it('reconciles person, date and period totals without mixing currencies or rounding adjustments',()=>{
+    const result=salaryPeriod([day('2026-11-08','PHP','3500'),{...day('2026-11-08','PHP','2000'),user_id:'other',name:'Other'},day('2026-11-09','PHP','-100'),{...day('2026-11-09','USD','1200'),user_id:'other',name:'Other'}]);
+    expect(result.dates.map(d=>[d.date,d.people.size,[...d.amounts.values()].map(a=>[a.currency,a.commission_minor])])).toEqual([
+        ['2026-11-09',2,[['PHP',-100n],['USD',1200n]]],['2026-11-08',2,[['PHP',5500n]]]
+    ]);
+    for(const total of result.totals){expect(result.dates.reduce((sum,d)=>sum+(d.amounts.get(total.currency)?.commission_minor||0n),0n)).toBe(total.commission_minor);expect(result.people.reduce((sum,p)=>sum+(p.amounts.get(total.currency)?.commission_minor||0n),0n)).toBe(total.commission_minor);}
+});

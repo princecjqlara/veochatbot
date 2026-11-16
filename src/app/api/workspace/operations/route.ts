@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { workspaceScope, philippineDate, uuid } from '@/lib/veo-workspace';
 import { calendarRange } from '@/lib/ad-calendar';
 import { readVeoRpc } from '@/lib/veo-report-read';
+import { loadVeoAccountDirectory } from '@/lib/veo-account-directory';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -23,9 +24,18 @@ export async function GET(request: NextRequest) {
             result = await readVeoRpc(getSupabaseAdmin(), 'veo_calendar_finance', { p_actor: scope.user_id, p_from: range.days[0], p_to: range.days.at(-1), p_page: page });
         } else {
             const from = q.get('from') || philippineDate(), to = q.get('to') || philippineDate(), offset = Number(q.get('offset') || 0);
-            const worker = scope.role === 'member' ? q.get('status') === 'released' ? null : scope.user_id : q.get('worker_id') || null;
+            const worker = scope.role === 'member' ? view !== 'salary' && q.get('status') === 'released' ? null : scope.user_id : q.get('worker_id') || null;
             if (!validDay(from) || !validDay(to) || (worker && !uuid(worker)) || !Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid date or employee filter');
             if (from < philippineDate(new Date(scope.launch_at)) || to > philippineDate() || to < from || (Date.parse(to) - Date.parse(from)) / 86400000 > 92) return NextResponse.json({ error: 'Choose up to 93 Philippine dates from launch through today' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
+            if (view === 'salary') {
+                const db=getSupabaseAdmin();
+                const finance=await readVeoRpc(db,'veo_finance_days',{p_actor:scope.user_id,p_from:from,p_to:to,p_page:page,p_worker:worker});
+                if(finance.error) throw Object.assign(Error('Salary is temporarily unavailable. Retry shortly.'),{status:finance.error.code==='42501'?403:503});
+                if(!Array.isArray(finance.data?.days)) throw Object.assign(Error('Complete salary records are temporarily unavailable'),{status:503});
+                const roster=await loadVeoAccountDirectory(db,scope,scope.role==='member');
+                const employees=roster.filter((person:any)=>['member','manager'].includes(person.role)&&(scope.role!=='member'||person.id===scope.user_id)).map((person:any)=>({id:person.id,name:person.name,role:person.role,active:person.active}));
+                return NextResponse.json({finance:finance.data,employees},{headers:{'Cache-Control':'no-store'}});
+            }
             result = await readVeoRpc(getSupabaseAdmin(), 'veo_operations', { p_actor: scope.user_id, p_from: from, p_to: to, p_page: page, p_worker: worker,
                 p_status: q.get('status') || 'all', p_search: q.get('search') || '', p_offset: offset });
         }

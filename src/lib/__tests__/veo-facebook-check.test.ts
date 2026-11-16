@@ -26,3 +26,11 @@ it('never fetches a deleted, revoked or expired submission', async () => {
     const db = database(); db.rpc.mockResolvedValue({ data: null });
     expect(await refreshSubmissionFacebook(db, 'submission')).toBe(false); expect(fetchNotices).not.toHaveBeenCalled(); expect(db.from).not.toHaveBeenCalled();
 });
+it('persists stage history and tags from the same authorized receipt read while excluding old or customer messages',async()=>{
+    const db=database();
+    const message=(id:string,from='fb-page',at='2026-11-06')=>({id,from:{id:from},created_time:at,message:'Lead stage set to Qualified'});
+    fetchNotices.mockResolvedValue({orders:[],complete:true,messages:[message('valid'),message('old','fb-page','2026-11-01'),message('customer','client')]});
+    await refreshReceiptFacebook(db,'worker','client');
+    expect(db.rpc.mock.calls.filter(([name]:any)=>name==='apply_messenger_lead_stage')).toHaveLength(1);
+    expect(db.rpc).toHaveBeenCalledWith('apply_messenger_lead_stage',expect.objectContaining({p_page_id:'page',p_contact_id:'client',p_message_id:'valid',p_stage:'qualified'}));
+});

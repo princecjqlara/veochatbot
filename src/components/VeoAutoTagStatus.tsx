@@ -19,7 +19,7 @@ export default function VeoAutoTagStatus() {
     }, [version]);
     return <section className="rounded-xl border bg-white p-4 space-y-3" aria-label="Auto-tag recovery by Page">
         <div className="flex flex-wrap justify-between gap-2"><h2 className="font-bold text-lg">Auto-tag recovery</h2><button className="underline text-sm" onClick={() => setVersion(v => v + 1)}>Recheck tag status</button></div>
-        <p className="text-sm text-slate-600">Webhooks save stage history immediately. Scheduled scans recover exposed notices and restore missing saved history tags. Missing contact names and identities are synced from the Page without importing old chat transcripts.</p>
+        <p className="text-sm text-slate-600">Webhooks save stage history immediately. Scheduled scans recover exposed notices, rotate through known contacts independently of new messages, and restore missing history tags. Use Refresh Facebook stage on a client’s profile to prioritize that conversation.</p>
         <p className="text-xs text-slate-500">Meta may omit administrative notices; a successful scan cannot prove every Business Suite change was exposed.</p>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {!data && !error && <p role="status" className="text-sm">Loading Page tag status…</p>}

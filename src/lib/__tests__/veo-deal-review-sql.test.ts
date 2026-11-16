@@ -35,6 +35,56 @@ async function evidence(kind='closed',extra:any={},actor=member){
 }
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
+it('clears old overdue projects only after approved Done Deal evidence and preserves pending reviews and financial history',async()=>{
+ await db.query("UPDATE veo_tenants SET launch_at=now()-interval '10 days' WHERE id=$1",[tenant]);
+ const at=(await db.query<any>("SELECT (now()-interval '3 days')::text at")).rows[0].at;
+ const closed=await approve(await submit(await evidence('closed',{occurred_at:at})));
+ const fact=async()=> (await db.query<any>('SELECT overdue,overdue_hours,verified_done_deal FROM veo_work_facts WHERE id=$1',[closed.order_id])).rows[0];
+ expect(await fact()).toMatchObject({overdue:true,verified_done_deal:false});
+ const pending=await submit(await evidence('done',{order_id:closed.order_id,closed_deal_id:closed.closed_deal_id}));
+ expect(await fact()).toMatchObject({overdue:true,verified_done_deal:false});
+ const done=await approve(pending);expect(done.delivery_status).toBe('waiting_for_telegram_setup');
+ expect(await fact()).toMatchObject({overdue:false,verified_done_deal:true});expect(Number((await fact()).overdue_hours)).toBe(0);
+ const warnings=await rpc('veo_workflow_warnings',[owner,member]);
+ expect(warnings.workers.flatMap((w:any)=>w.warnings).some((w:any)=>w.kind==='overdue_without_reason'&&w.order_id===closed.order_id)).toBe(false);
+ expect((await db.query('SELECT * FROM veo_payments WHERE order_id=$1',[closed.order_id])).rows).toHaveLength(2);
+ // Payment alone is not proof of completed production, even with a Close receipt.
+ await db.query("UPDATE veo_deal_reviews SET status='rejected' WHERE id=$1",[done.id]);
+ expect(await fact()).toMatchObject({overdue:true,verified_done_deal:false});
+ const submission=id(seq++);await db.query("INSERT INTO veo_submissions(id,order_id,submitted_by,object_path,expires_at,receipt_kind,status) VALUES($1,$2,$3,'legacy',now()+interval '1 day','closed','delivered')",[submission,closed.order_id,member]);
+ expect(await fact()).toMatchObject({overdue:true,verified_done_deal:false});
+ await db.query("UPDATE veo_submissions SET receipt_kind='done' WHERE id=$1",[submission]);
+ expect(await fact()).toMatchObject({overdue:false,verified_done_deal:true});
+});
+it('keeps login credentials service-only, normalizes stored emails, rate limits and rejects inactive or ambiguous identities',async()=>{
+ const email=member+'@example.com';
+ await db.query('UPDATE users SET email=$2 WHERE id=$1',[member,' '+email.toUpperCase()+' ']);
+ const context=await rpc('veo_login_context',[email]);expect(context).toMatchObject({id:member,password_hash:stored});
+ expect(Object.keys(context).sort()).toEqual(['email','id','image','name','password_hash']);
+ const key="encode(sha256(convert_to($1,'UTF8')),'hex')";
+ await db.query(`UPDATE veo_login_limits SET attempts=10 WHERE key=${key}`,[email]);expect(await rpc('veo_login_context',[email])).toEqual({limited:true});
+ expect((await db.query<any>(`SELECT attempts FROM veo_login_limits WHERE key=${key}`,[email])).rows[0].attempts).toBe(11);
+ await db.query('DELETE FROM veo_login_limits');
+ await db.query('UPDATE users SET is_active=false WHERE id=$1',[member]);expect(await rpc('veo_login_context',[email])).toBeNull();
+ await db.query('UPDATE users SET is_active=true WHERE id=$1',[member]);await db.query('UPDATE veo_accounts SET active=false WHERE user_id=$1',[member]);expect(await rpc('veo_login_context',[email])).toBeNull();
+ await db.query('UPDATE veo_accounts SET active=true WHERE user_id=$1',[member]);await db.query('UPDATE users SET email=$2 WHERE id=$1',[other,email]);
+ await expect(rpc('veo_login_context',[email])).rejects.toThrow('Ambiguous account');
+ expect((await db.query<any>("SELECT has_function_privilege('anon','veo_login_context(text)','EXECUTE') anon,has_function_privilege('authenticated','veo_login_context(text)','EXECUTE') authenticated,has_function_privilege('service_role','veo_login_context(text)','EXECUTE') service")).rows[0]).toEqual({anon:false,authenticated:false,service:true});
+});
+it('rotates stage audits through known contacts using fenced Page leases and keeps a failed read retryable',async()=>{
+ await db.query('UPDATE pages SET messaging_auto_tag_enabled=true WHERE id=$1',[page]);
+ const claim=async()=>{await db.query("UPDATE veo_autotag_page_state SET next_attempt_at=now()-interval '1 minute' WHERE page_id=$1",[page]);return (await rpc('veo_claim_autotag_pages',[1]))[0];};
+ const first=await claim();const audit=await rpc('veo_autotag_audit_contact',[page,first.lease_token]);expect(audit.id).toBe(client);
+ await expect(rpc('veo_autotag_audit_contact',[page,id(999)])).rejects.toThrow('lease lost');
+ expect(await rpc('veo_finish_autotag_page',[page,first.lease_token,JSON.stringify({error:'META_READ_UNAVAILABLE',audit_contact:audit.id})])).toBe(true);
+ const retry=await claim();expect((await rpc('veo_autotag_audit_contact',[page,retry.lease_token])).id).toBe(client);
+ expect(await rpc('veo_finish_autotag_page',[page,first.lease_token,JSON.stringify({audit_contact:audit.id})])).toBe(false);
+ expect(await rpc('veo_finish_autotag_page',[page,retry.lease_token,JSON.stringify({audit_contact:audit.id})])).toBe(true);
+ const next=await claim();expect((await rpc('veo_autotag_audit_contact',[page,next.lease_token])).id).toBe(clientB);
+ await rpc('veo_finish_autotag_page',[page,next.lease_token,JSON.stringify({audit_contact:clientB})]);
+ const wrap=await claim();expect((await rpc('veo_autotag_audit_contact',[page,wrap.lease_token])).id).toBe(client);
+ expect((await db.query<any>("SELECT has_function_privilege('authenticated','veo_autotag_audit_contact(uuid,uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+});
 it('returns the same dashboard financial figures without unused list hydration and preserves the full report',async()=>{
  const closed=await approve(await submit(await evidence()));
  await approve(await submit(await evidence('done',{order_id:closed.order_id,closed_deal_id:closed.closed_deal_id})));

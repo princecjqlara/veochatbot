@@ -21,7 +21,8 @@ export async function processVeoSourceJobs(limit = 2, timeBudgetMs = 25000) {
             scan = await fetchBusinessOrderNotices({ pageId: page.data.fb_page_id, psid: contact.data.psid, token: page.data.access_token, launchAt: tenant.data.launch_at, cursorUrl: job.cursor_url, timeoutMs: Math.min(18000, timeBudgetMs - (Date.now() - started)) });
             const observed = await db.rpc('veo_observe_business_orders', { p_actor: tenant.data.owner_id, p_contact: job.contact_id, p_orders: scan.orders });
             if (observed.error) throw Error('Could not save Facebook order observations');
-            const stages = await syncMessengerStageHistory(db, { pageId: job.page_id, contactId: job.contact_id, facebookPageId: page.data.fb_page_id, messages: scan.messages });
+            const messages = scan.messages.filter((m: { created_time?: string }) => Date.parse(m.created_time || '') >= Date.parse(tenant.data.launch_at) && Date.parse(m.created_time || '') <= Date.now());
+            const stages = await syncMessengerStageHistory(db, { pageId: job.page_id, contactId: job.contact_id, facebookPageId: page.data.fb_page_id, messages });
             const reconciled = await db.rpc('veo_reconcile_contact_order', { p_actor: tenant.data.owner_id, p_contact: job.contact_id });
             if (reconciled.error) throw Error('Could not reconcile observed client order');
             scan = { complete: scan.complete, next_cursor: scan.next_cursor, stages_saved: stages.events, orders_seen: scan.orders.length, coverage: scan.coverage };

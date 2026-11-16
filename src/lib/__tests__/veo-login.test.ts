@@ -14,7 +14,7 @@ const facebook = (accountId = 'fb1') => (authOptions.callbacks!.signIn as any)({
 });
 beforeEach(() => {
     vi.clearAllMocks(); vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
-    m.rpc.mockImplementation(async name => ({ data: name === 'veo_login_attempt' ? true : { role: 'member', page_ids: ['page'], launch_at: '2026-11-05T00:00:00Z' } }));
+    m.rpc.mockImplementation(async name => ({ data: name === 'veo_login_context' ? { id: 'member', name: 'Member', email: 'member@any-provider.example', password_hash: 'hashed' } : { role: 'member', page_ids: ['page'], launch_at: '2026-11-05T00:00:00Z' } }));
     m.maybeSingle.mockResolvedValue({ data: { id: 'member', name: 'Member', email: 'member@any-provider.example', password_hash: 'hashed', is_active: true, facebook_id: 'fb1' } });
     m.matches.mockResolvedValue(true); m.cookie.mockReturnValue({ value: 'member' }); m.update.mockResolvedValue({ error: null });
 });
@@ -41,7 +41,7 @@ describe('stored roles and administrator-created sign-in', () => {
         for (const role of ['manager', 'team_leader', 'owner', undefined]) expect(await credentials({ email: 'member@any-provider.example', password: ' ', role })).toMatchObject({ id: 'member' });
     });
     it('fails closed when the rate limit is exhausted and never looks up or creates a user', async () => {
-        m.rpc.mockResolvedValue({ data: false });
+        m.rpc.mockResolvedValue({ data: { limited: true } });
         await expect(credentials({ email: 'member@any-provider.example', password: 'x', role: 'member' })).rejects.toThrow('TooManyAttempts');
         expect(m.maybeSingle).not.toHaveBeenCalled(); expect(m.update).not.toHaveBeenCalled();
     });
@@ -49,10 +49,17 @@ describe('stored roles and administrator-created sign-in', () => {
         m.rpc.mockResolvedValueOnce({ data: null, error: { code: 'SUPABASE_REQUEST_TIMEOUT' } });
         await expect(credentials({ email: 'member@any-provider.example', password: 'x' })).rejects.toThrow('DatabaseUnavailable');
         expect(m.maybeSingle).not.toHaveBeenCalled();
-        m.maybeSingle.mockResolvedValueOnce({ data: null, error: { code: 'SUPABASE_UPSTREAM_522' } });
+        m.rpc.mockResolvedValueOnce({ data: null, error: { code: 'SUPABASE_UPSTREAM_522' } });
         await expect(credentials({ email: 'member@any-provider.example', password: 'x' })).rejects.toThrow('DatabaseUnavailable');
         m.matches.mockResolvedValueOnce(false);
         expect(await credentials({ email: 'member@any-provider.example', password: 'incorrect' })).toBeNull();
+    });
+    it('uses one bounded login lookup, normalizes email and never builds the full Page graph before password comparison', async () => {
+        expect(await credentials({ email: ' Member@Any-Provider.Example ', password: 'valid' })).toMatchObject({ id: 'member' });
+        expect(m.rpc).toHaveBeenCalledTimes(1);expect(m.rpc).toHaveBeenCalledWith('veo_login_context', { p_email: 'member@any-provider.example' });
+        expect(m.matches).toHaveBeenCalledWith('valid', 'hashed');expect(m.maybeSingle).not.toHaveBeenCalled();
+        m.rpc.mockResolvedValueOnce({ data: null });m.matches.mockClear();
+        expect(await credentials({ email: 'disabled@example.com', password: 'valid' })).toBeNull();expect(m.matches).not.toHaveBeenCalled();
     });
     it('provides credentials only and rejects Facebook even for CJ Owner', async () => {
         expect(authOptions.providers.map(p => p.id)).toEqual(['credentials']);

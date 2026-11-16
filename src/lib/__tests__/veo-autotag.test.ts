@@ -6,7 +6,7 @@ const page = { page_id: 'page', fb_page_id: '111', access_token: 'secret-token',
 const conversation = (id = 'thread', psid = 'customer') => ({ id, updated_time: '2026-11-11T00:00:00Z', participants: { data: [{ id: '111' }, { id: psid }] } });
 const stage = (text = 'Qualified', from = '111', at = '2026-11-10T00:00:00Z') => ({ id: text + at, message: 'Lead stage set to ' + text, from: { id: from }, created_time: at });
 beforeEach(() => {
-    vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');mock.rpc.mockReset().mockImplementation(async name => ({ data: name === 'veo_repair_autotag_history' ? 1 : name === 'apply_messenger_lead_stage' ? { applied: true } : true }));
+    vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');mock.rpc.mockReset().mockImplementation(async name => ({ data: name === 'veo_autotag_audit_contact' ? null : name === 'veo_repair_autotag_history' ? 1 : name === 'apply_messenger_lead_stage' ? { applied: true } : true }));
     mock.from.mockReset().mockImplementation(() => { const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { id: 'contact' } }) };return q; });
 });
 afterEach(() => { vi.unstubAllGlobals();vi.unstubAllEnvs(); });
@@ -65,7 +65,20 @@ it('rejects incomplete evidence and non-advancing cursors instead of silently ce
     expect((await scanVeoAutoTags(page)).complete).toBe(false);expect(finish().p_result.error).toBe('META_STAGE_EVIDENCE_INCOMPLETE');
 });
 it('isolates a failed Page while other claimed Pages still complete', async () => {
-    mock.rpc.mockImplementation(async name => ({ data: name === 'veo_claim_autotag_pages' ? [page, { ...page, page_id: 'other', access_token: '' }] : true }));
+    mock.rpc.mockImplementation(async name => ({ data: name === 'veo_autotag_audit_contact' ? null : name === 'veo_claim_autotag_pages' ? [page, { ...page, page_id: 'other', access_token: '' }] : true }));
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [] })));
     expect(await processVeoAutoTags()).toEqual({ pages: 2, completed: 1, failed: 1 });
+});
+it('recovers a stage from a known older conversation independently of the message checkpoint',async()=>{
+    mock.rpc.mockImplementation(async name=>({data:name==='veo_autotag_audit_contact'?{id:'old-contact',psid:'222'}:true}));
+    const fetch=vi.fn().mockResolvedValueOnce(Response.json({data:[]})).mockResolvedValueOnce(Response.json({data:[{...conversation('old','222'),updated_time:'2026-11-09T01:00:00Z'}]})).mockResolvedValueOnce(Response.json({data:[stage('Converted')]}));
+    vi.stubGlobal('fetch',fetch);
+    expect(await scanVeoAutoTags({...page,checked_at:'2026-11-11T00:00:00Z'})).toMatchObject({complete:true,stage_events:1});
+    const url=fetch.mock.calls[1][0];expect(url.searchParams.get('user_id')).toBe('222');expect(url.searchParams.has('since')).toBe(false);
+    expect(mock.rpc).toHaveBeenCalledWith('apply_messenger_lead_stage',expect.objectContaining({p_contact_id:'old-contact',p_stage:'converted'}));expect(finish().p_result.audit_contact).toBe('old-contact');
+});
+it('does not advance the audit when Meta returns a different client or fails',async()=>{
+    mock.rpc.mockImplementation(async name=>({data:name==='veo_autotag_audit_contact'?{id:'old-contact',psid:'222'}:true}));
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(Response.json({data:[]})).mockResolvedValueOnce(Response.json({data:[conversation('wrong','333')]})));
+    expect((await scanVeoAutoTags(page)).complete).toBe(false);expect(finish().p_result.error).toBe('META_CONTACT_AMBIGUOUS');expect(finish().p_result.audit_contact).toBeUndefined();expect(mock.rpc.mock.calls.some(([name])=>name==='apply_messenger_lead_stage')).toBe(false);
 });
