@@ -13,13 +13,13 @@ describe('role-protected performance and actual-salary calendar', () => {
     it('loads salary for the selected person and dates without unrelated orders and ranking calculations',async()=>{
         m.scope.mockResolvedValue({user_id:worker,role:'owner',launch_at:'2026-11-01',page_ids:[page]});m.rpc.mockResolvedValue({data:{days:[]}});
         const response=await GET(new NextRequest(`https://veo.test/api/workspace/operations?view=salary&from=2026-11-02&to=2026-11-05&worker_id=${page}&page_id=${page}`));
-        expect(response.status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_finance_days',{p_actor:worker,p_from:'2026-11-02',p_to:'2026-11-05',p_worker:page,p_page:page});
+        expect(response.status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_salary_report',{p_actor:worker,p_from:'2026-11-02',p_to:'2026-11-05',p_worker:page,p_page:page});
         expect(m.rpc.mock.calls.some(([name])=>name==='veo_operations')).toBe(false);expect((await response.json()).employees.map((p:any)=>p.id)).toEqual([worker,page]);
     });
     it('keeps a member salary and employee list personal even with a released-pool or foreign-person filter',async()=>{
         m.rpc.mockResolvedValue({data:{days:[]}});
         const response=await GET(new NextRequest(`https://veo.test/api/workspace/operations?view=salary&status=released&worker_id=${page}`));
-        expect(response.status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_finance_days',expect.objectContaining({p_worker:worker}));
+        expect(response.status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_salary_report',expect.objectContaining({p_worker:worker}));
         expect((await response.json()).employees.map((p:any)=>p.id)).toEqual([worker]);
     });
     it('does not present an incomplete or forbidden salary report as an empty successful ledger',async()=>{
@@ -60,5 +60,10 @@ describe('role-protected performance and actual-salary calendar', () => {
         expect(m.rpc).not.toHaveBeenCalled();
         m.rpc.mockResolvedValue({ error: { code: '42501', message: 'Forbidden' } });
         expect((await GET(new NextRequest('https://veo.test/api/workspace/operations'))).status).toBe(403);
+    });
+    it('explains missing provisional salary snapshots without inventing totals',async()=>{
+        m.rpc.mockResolvedValue({error:{code:'55000',message:'internal details'}});
+        const response=await GET(new NextRequest('https://veo.test/api/workspace/operations?view=salary'));
+        expect(response.status).toBe(503);expect(await response.json()).toEqual({error:"Today's salary quota snapshots are still being prepared. Retry shortly or choose completed dates."});
     });
 });

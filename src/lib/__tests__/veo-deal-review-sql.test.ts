@@ -35,6 +35,22 @@ async function evidence(kind='closed',extra:any={},actor=member){
 }
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
+it('serves salary from recorded quotas in a read-only transaction without running planning writes',async()=>{
+ await db.exec('SET TRANSACTION READ ONLY');
+ const day=(await db.query<any>('SELECT veo_today()::text AS work_date')).rows[0].work_date;
+ const report=await rpc('veo_salary_report',[owner,day,day,null,null]);expect(report.days.length).toBeGreaterThan(0);
+ expect(report.days.every((d:any)=>d.work_date===day)).toBe(true);
+});
+it('preserves salary math, employee and Page scope using the same verified ledger and rejects missing current quota snapshots',async()=>{
+ const closed=await approve(await submit(await evidence()));await approve(await submit(await evidence('done',{order_id:closed.order_id,closed_deal_id:closed.closed_deal_id})));
+ const day=(await db.query<any>('SELECT veo_today()::text AS work_date')).rows[0].work_date;
+ const expected=await rpc('veo_finance_days',[owner,day,day,page,member]);
+ const snapshot=async()=> (await db.query<any>("SELECT md5(jsonb_agg(to_jsonb(t) ORDER BY user_id,work_date)::text) hash FROM veo_daily_targets t")).rows[0].hash;
+ const before=await snapshot();expect(await rpc('veo_salary_report',[owner,day,day,page,member])).toEqual(expected);expect(await snapshot()).toBe(before);
+ await expect(rpc('veo_salary_report',[other,day,day,page,member])).rejects.toThrow('Forbidden');
+ await db.query('DELETE FROM veo_daily_targets WHERE user_id=$1 AND work_date=$2',[member,day]);await expect(rpc('veo_salary_report',[owner,day,day,page,member])).rejects.toThrow('snapshots are still being prepared');
+ expect((await db.query<any>("SELECT has_function_privilege('authenticated','veo_salary_report(uuid,date,date,uuid,uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+});
 it('clears old overdue projects only after approved Done Deal evidence and preserves pending reviews and financial history',async()=>{
  await db.query("UPDATE veo_tenants SET launch_at=now()-interval '10 days' WHERE id=$1",[tenant]);
  const at=(await db.query<any>("SELECT (now()-interval '3 days')::text at")).rows[0].at;

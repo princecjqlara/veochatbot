@@ -29,8 +29,8 @@ export async function GET(request: NextRequest) {
             if (from < philippineDate(new Date(scope.launch_at)) || to > philippineDate() || to < from || (Date.parse(to) - Date.parse(from)) / 86400000 > 92) return NextResponse.json({ error: 'Choose up to 93 Philippine dates from launch through today' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
             if (view === 'salary') {
                 const db=getSupabaseAdmin();
-                const finance=await readVeoRpc(db,'veo_finance_days',{p_actor:scope.user_id,p_from:from,p_to:to,p_page:page,p_worker:worker});
-                if(finance.error) throw Object.assign(Error('Salary is temporarily unavailable. Retry shortly.'),{status:finance.error.code==='42501'?403:503});
+                const finance=await readVeoRpc(db,'veo_salary_report',{p_actor:scope.user_id,p_from:from,p_to:to,p_page:page,p_worker:worker});
+                if(finance.error) throw Object.assign(Error(finance.error.code==='55000'?"Today's salary quota snapshots are still being prepared. Retry shortly or choose completed dates.":'Salary is temporarily unavailable. Retry shortly.'),{status:finance.error.code==='42501'?403:503});
                 if(!Array.isArray(finance.data?.days)) throw Object.assign(Error('Complete salary records are temporarily unavailable'),{status:503});
                 const roster=await loadVeoAccountDirectory(db,scope,scope.role==='member');
                 const employees=roster.filter((person:any)=>['member','manager'].includes(person.role)&&(scope.role!=='member'||person.id===scope.user_id)).map((person:any)=>({id:person.id,name:person.name,role:person.role,active:person.active}));

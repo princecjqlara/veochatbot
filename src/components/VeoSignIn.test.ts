@@ -41,7 +41,7 @@ it('retains an authenticated identity during an outage and retries permission re
     try {
         expect(m.signOut).not.toHaveBeenCalled(); expect(m.replace).not.toHaveBeenCalled();
         expect(view.root.findByProps({ role: 'alert' }).children.join('')).toContain('database is not responding');
-        await act(async()=>view.root.findAllByType('button').find(b=>b.children.join('')==='Retry sign-in status')!.props.onClick());
+        await act(async()=>view.root.findAllByType('button').find((b:any)=>b.children.join('')==='Retry sign-in status')!.props.onClick());
         expect(m.update).toHaveBeenCalledOnce();expect(m.signIn).not.toHaveBeenCalled();
     } finally { await act(async () => view.unmount()); }
 });
