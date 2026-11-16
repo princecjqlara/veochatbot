@@ -1,4 +1,4 @@
-import { isSupabaseUnavailable } from './supabase-errors';
+import { isSupabaseTimeoutOrOverload, isSupabaseUnavailable } from './supabase-errors';
 
 /** Protect each warm server worker; persisted queue leases still coordinate
  * separate workers. Successful recovery probes restore normal throughput. */
@@ -20,18 +20,43 @@ export function createSupabaseAvailabilityGate(fetcher: typeof fetch): typeof fe
         }), { status: 503, headers: { 'Content-Type': 'application/json',
             'Retry-After': String(Math.max(1, Math.ceil((reopenAt - Date.now()) / 1000))) } });
         const probe = reopenAt > 0, startedGeneration = generation;
+        let bodyOwnsProbe = false;
         if (probe) probing = true;
+        const healthy = () => {
+            if (generation !== startedGeneration) return;
+            failures = 0;reopenAt = 0;
+            if (probe) generation++;
+        };
         try {
             const response = await fetcher(input, init);
             if (response.status === 429 || response.status >= 500) failed(startedGeneration);
-            else if (generation === startedGeneration) {
-                failures = 0; reopenAt = 0;
-                if (probe) generation++;
-            }
-            return response;
+            else if (!probe || !response.body) healthy();
+            // Headers can arrive before a stalled response body. Observe body
+            // failures too, while preserving cancellation and generation fences.
+            if (response.status === 429 || response.status >= 500 || !response.body) return response;
+            const reader = response.body.getReader();
+            bodyOwnsProbe = probe;
+            let settled = false;
+            const finish = (complete: boolean) => {
+                if (settled) return;
+                settled = true;
+                if (probe) { if (complete) healthy();probing = false; }
+            };
+            const body = new ReadableStream<Uint8Array>({
+                async pull(controller) {
+                    try { const part = await reader.read();if (part.done) { finish(true);controller.close(); } else controller.enqueue(part.value); }
+                    catch (error) {
+                        if (isSupabaseUnavailable(error) && (!signal?.aborted || isSupabaseTimeoutOrOverload(signal.reason))) failed(startedGeneration);
+                        finish(false);
+                        controller.error(error);
+                    }
+                },
+                cancel(reason) { finish(false);return reader.cancel(reason); }
+            });
+            return new Response(body, {status: response.status, statusText: response.statusText, headers: response.headers});
         } catch (error) {
-            if (!signal?.aborted && isSupabaseUnavailable(error)) failed(startedGeneration);
+            if (isSupabaseUnavailable(error) && (!signal?.aborted || isSupabaseTimeoutOrOverload(signal.reason))) failed(startedGeneration);
             throw error;
-        } finally { if (probe) probing = false; }
+        } finally { if (probe && !bodyOwnsProbe) probing = false; }
     };
 }

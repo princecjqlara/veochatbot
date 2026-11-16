@@ -20,18 +20,26 @@ export async function passwordMatches(password: string, stored: string) {
     return compare(passwordInput(password), stored.slice(11));
 }
 const requestScopes = new WeakMap<object, Map<string, Promise<WorkspaceScope | null>>>();
+const pendingScopes = new Map<string, Promise<WorkspaceScope | null>>();
 async function readWorkspaceScope(userId: string): Promise<WorkspaceScope | null> {
     const { data, error } = await readVeoRpc(getSupabaseAdmin(), 'veo_scope', { p_actor: userId }, 20000);
     if (error) throw Object.assign(new Error('Workspace permissions are temporarily unavailable. Retry shortly.'), { status: 503 });
     return data;
 }
+function currentWorkspaceScope(userId: string) {
+    const pending = pendingScopes.get(userId);
+    if (pending) return pending;
+    const read = readWorkspaceScope(userId).finally(() => { if (pendingScopes.get(userId) === read) pendingScopes.delete(userId); });
+    pendingScopes.set(userId, read);
+    return read;
+}
 /** Reuse only within one HTTP request. The next request rechecks live access. */
 export function workspaceScope(userId: string, request?: object): Promise<WorkspaceScope | null> {
-    if (!request) return readWorkspaceScope(userId);
+    if (!request) return currentWorkspaceScope(userId);
     let scopes = requestScopes.get(request);
     if (!scopes) { scopes = new Map(); requestScopes.set(request, scopes); }
     let scope = scopes.get(userId);
-    if (!scope) { scope = readWorkspaceScope(userId); scopes.set(userId, scope); }
+    if (!scope) { scope = currentWorkspaceScope(userId); scopes.set(userId, scope); }
     return scope;
 }
 export async function workspaceAction(actor: string, action: string, payload: Record<string, unknown>) {

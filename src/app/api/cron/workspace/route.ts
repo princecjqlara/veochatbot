@@ -37,11 +37,12 @@ async function processWorkspace(request: NextRequest) {
 
         let optionalWorkPaused = false;
         try { await requireStorageForOptionalWork(db); } catch { optionalWorkPaused = true; }
-        let operations: any = { error: true };
+        let operations: any = { error: true }, maintenanceRetry = optionalWorkPaused;
         if (!optionalWorkPaused) {
-            const maintained = await db.rpc('veo_maintenance');
-            if (maintained.error) throw new Error('Salary finalization unavailable');
-            try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
+            try { const maintained = await db.rpc('veo_maintenance');maintenanceRetry = !!maintained.error; }
+            catch { maintenanceRetry = true; }
+            if (maintenanceRetry) optionalWorkPaused = true;
+            else try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
         }
         let intakeRetry = false;
         try { const cleaned = await db.rpc('veo_telegram_intake_maintenance');intakeRetry = !!cleaned.error; } catch { intakeRetry = true; }
@@ -99,6 +100,6 @@ async function processWorkspace(request: NextRequest) {
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
         }
-        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: optionalWorkPaused, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
+        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: maintenanceRetry, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }

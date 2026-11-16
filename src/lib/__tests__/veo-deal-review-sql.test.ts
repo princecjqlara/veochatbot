@@ -35,6 +35,50 @@ async function evidence(kind='closed',extra:any={},actor=member){
 }
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
+it('runs performance and calendar finance reports without quota writes in a read-only transaction',async()=>{
+ await db.exec('SET TRANSACTION READ ONLY');
+ const day=(await db.query<any>('SELECT veo_today()::text d')).rows[0].d;
+ expect((await rpc('veo_operations',[owner,day,day,null,null,'all','',0])).finance.days.length).toBeGreaterThan(0);
+ expect((await rpc('veo_calendar_finance',[owner,day,day,null])).days.length).toBeGreaterThan(0);
+});
+it('fences duplicate quota runs and refreshes workers independently with fair, expiring leases',async()=>{
+ expect(await rpc('veo_claim_background_job',['quotas',id(901)])).toBe(true);
+ expect(await rpc('veo_claim_background_job',['quotas',id(902)])).toBe(false);
+ await rpc('veo_release_background_job',['quotas',id(901)]);
+ await expect(rpc('veo_claim_quota_refresh',[5])).rejects.toThrow('Invalid');
+ const first=await rpc('veo_claim_quota_refresh',[2]),second=await rpc('veo_claim_quota_refresh',[2]);
+ expect(first).toHaveLength(2);expect(second).toHaveLength(1);expect(new Set([...first,...second].map((j:any)=>j.user_id)).size).toBe(3);
+ await expect(rpc('veo_refresh_worker_quota',[first[0].user_id,id(903)])).rejects.toThrow('lease lost');
+ const result=await rpc('veo_refresh_worker_quota',[first[0].user_id,first[0].lease_token]);expect(result.ok).toBe(true);
+ await expect(rpc('veo_refresh_worker_quota',[first[0].user_id,first[0].lease_token])).rejects.toThrow('lease lost');
+ await db.query("UPDATE veo_quota_refresh_state SET lease_until=clock_timestamp()-interval '1 second' WHERE user_id=$1",[first[1].user_id]);
+ const retry=(await rpc('veo_claim_quota_refresh',[1]))[0];expect(retry.user_id).toBe(first[1].user_id);expect(retry.lease_token).not.toBe(first[1].lease_token);
+ await db.query('UPDATE users SET is_active=false WHERE id=$1',[retry.user_id]);expect(await rpc('veo_refresh_worker_quota',[retry.user_id,retry.lease_token])).toMatchObject({ok:true,skipped:true});
+ await db.query("UPDATE veo_quota_refresh_state SET last_work_date=veo_today()-1,next_attempt_at=clock_timestamp()+interval '1 hour' WHERE user_id=$1",[first[0].user_id]);
+ expect((await rpc('veo_claim_quota_refresh',[1]))[0].user_id).toBe(first[0].user_id);
+ for(const signature of ['veo_claim_quota_refresh(integer)','veo_refresh_worker_quota(uuid,uuid)','veo_connection_safety()'])expect((await db.query<any>("SELECT has_function_privilege('authenticated',$1,'EXECUTE') exposed",[signature])).rows[0].exposed).toBe(false);
+});
+it('processes a bounded reconciliation batch without recalculating current-day quotas',async()=>{
+ await db.query("UPDATE veo_tenants SET launch_at=now()-interval '30 days' WHERE id=$1",[tenant]);
+ await db.query("UPDATE veo_accounts SET enrolled_at=now()-interval '30 days'");
+ await db.query('INSERT INTO veo_salary_reconciliation(user_id,work_date) SELECT $1,veo_today()-n FROM generate_series(1,12) n ON CONFLICT DO NOTHING',[member]);
+ await db.query("INSERT INTO veo_salary_reconciliation(user_id,work_date) SELECT user_id,veo_today()-1 FROM veo_accounts WHERE active AND role IN('member','manager') ON CONFLICT DO NOTHING");
+ const count=async()=>Number((await db.query<any>('SELECT count(*) n FROM veo_salary_reconciliation')).rows[0].n);
+ const before=await count();expect(before).toBeGreaterThan(10);await rpc('veo_maintenance',[]);expect(await count()).toBe(before-10);
+ await rpc('veo_maintenance',[]);expect(await count()).toBe(0);
+});
+it('rolls back a slow worker update and backs it off so other quota updates can still commit',async()=>{
+ const jobs=await rpc('veo_claim_quota_refresh',[4]),job=jobs.find((j:any)=>j.user_id===member),otherJob=jobs.find((j:any)=>j.user_id!==member);
+ const before=(await db.query<any>('SELECT target FROM veo_daily_targets WHERE user_id=$1 AND work_date=veo_today()',[member])).rows[0].target;
+ await db.exec(`ALTER FUNCTION veo_target(uuid,date) RENAME TO veo_target_timeout_fixture;
+ CREATE FUNCTION veo_target(p_user uuid,p_day date) RETURNS integer LANGUAGE plpgsql AS $$BEGIN
+ IF p_user='${member}'::uuid THEN UPDATE veo_daily_targets SET target=target+99 WHERE user_id=p_user AND work_date=p_day;RAISE EXCEPTION 'Simulated deadline' USING ERRCODE='57014';END IF;
+ RETURN veo_target_timeout_fixture(p_user,p_day);END $$;`);
+ expect(await rpc('veo_refresh_worker_quota',[job.user_id,job.lease_token])).toMatchObject({ok:false,overloaded:true});
+ expect((await db.query<any>('SELECT target FROM veo_daily_targets WHERE user_id=$1 AND work_date=veo_today()',[member])).rows[0].target).toBe(before);
+ expect((await db.query<any>("SELECT last_error_code,next_attempt_at>clock_timestamp()+interval '9 minutes' backed_off FROM veo_quota_refresh_state WHERE user_id=$1",[member])).rows[0]).toEqual({last_error_code:'57014',backed_off:true});
+ expect((await rpc('veo_refresh_worker_quota',[otherJob.user_id,otherJob.lease_token])).ok).toBe(true);
+});
 it('serves salary from recorded quotas in a read-only transaction without running planning writes',async()=>{
  await db.exec('SET TRANSACTION READ ONLY');
  const day=(await db.query<any>('SELECT veo_today()::text AS work_date')).rows[0].work_date;

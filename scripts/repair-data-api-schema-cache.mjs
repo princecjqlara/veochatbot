@@ -28,20 +28,26 @@ try {
     assert(auth && service, 'Expected Data API roles');
     const previous = timeout(auth);
     assert(previous && /^(8s|30s|60s)$/.test(previous), 'Review the existing authenticator deadline before changing it');
+    for (const role of before) {
+        const idle = role.rolconfig?.find(s => s.startsWith('idle_in_transaction_session_timeout='));
+        assert(!idle || idle === 'idle_in_transaction_session_timeout=30s', 'Review the existing idle transaction deadline before changing it');
+    }
     if (!timeout(service)) await db.query("ALTER ROLE service_role SET statement_timeout='8s'");
     await db.query("ALTER ROLE authenticator SET statement_timeout='60s'");
+    await db.query("ALTER ROLE authenticator SET idle_in_transaction_session_timeout='30s';ALTER ROLE service_role SET idle_in_transaction_session_timeout='30s'");
     const after = await roles();
     for (const original of before) {
         const current = after.find(r => r.rolname === original.rolname);
         assert.deepEqual({ ...current, rolconfig: original.rolconfig }, original, 'Role permissions must stay unchanged');
-        const unrelated = settings => (settings || []).filter(s => !s.startsWith('statement_timeout=')).sort();
+        const unrelated = settings => (settings || []).filter(s => !s.startsWith('statement_timeout=') && !s.startsWith('idle_in_transaction_session_timeout=')).sort();
         assert.deepEqual(unrelated(current.rolconfig), unrelated(original.rolconfig));
+        assert(current.rolconfig.includes('idle_in_transaction_session_timeout=30s'));
     }
     assert.equal(timeout(after.find(r => r.rolname === 'authenticator')), '60s');
     assert.equal(timeout(after.find(r => r.rolname === 'service_role')), timeout(service) || '8s');
-    await db.query("NOTIFY pgrst,'reload config';NOTIFY pgrst,'reload schema'");
+    await db.query("NOTIFY pgrst,'reload config'");
     await db.query(apply ? 'COMMIT' : 'ROLLBACK');
-    Object.assign(report, { passed: true, schemaDiscoveryDeadline: '60s', serviceQueryDeadline: timeout(service) || '8s', permissionsPreserved: true });
+    Object.assign(report, { passed: true, schemaDiscoveryDeadline: '60s', serviceQueryDeadline: timeout(service) || '8s', idleTransactionDeadline: '30s', permissionsPreserved: true });
     if (reconnect) {
         // Existing authenticator sessions retain their login-time deadline.
         // Refresh only this database's identified PostgREST connections.

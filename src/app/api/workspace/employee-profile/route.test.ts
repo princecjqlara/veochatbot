@@ -43,14 +43,14 @@ it('returns performance analytics with salary history and omits duplicate intern
     expect(response.status).toBe(200);expect(body.performance).toMatchObject({completed_days:1,current_clients:3,new_clients:2,average_done:1});
     expect(body.days).toHaveLength(1);expect(body.performance_inputs).toBeUndefined();
 });
-it('recovers a transient database timeout with the same authenticated filters', async () => {
-    vi.useFakeTimers(); m.rpc.mockResolvedValueOnce({ error: { code: '57014' } });
-    const response = request(`worker_id=${worker}`); await vi.advanceTimersByTimeAsync(500);
+it('recovers one transient gateway error with the same authenticated filters', async () => {
+    vi.useFakeTimers(); m.rpc.mockResolvedValueOnce({ error: { code: 'SUPABASE_UPSTREAM_502' } });
+    const response = request(`worker_id=${worker}`); await vi.advanceTimersByTimeAsync(2000);
     expect((await response).status).toBe(200); expect(m.rpc).toHaveBeenCalledTimes(2);
     expect(m.rpc.mock.calls[0]).toEqual(m.rpc.mock.calls[1]);
 });
-it('returns service unavailable after bounded persistent timeouts', async () => {
+it('returns service unavailable without repeating a timed-out query', async () => {
     vi.useFakeTimers(); m.rpc.mockResolvedValue({ error: { code: '57014' } });
     const response = request(`worker_id=${worker}`); await vi.advanceTimersByTimeAsync(2000);
-    expect((await response).status).toBe(503); expect(m.rpc).toHaveBeenCalledTimes(3);
+    expect((await response).status).toBe(503); expect(m.rpc).toHaveBeenCalledOnce();
 });

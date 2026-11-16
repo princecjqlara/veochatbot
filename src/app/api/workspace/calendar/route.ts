@@ -30,14 +30,10 @@ export async function GET(request: NextRequest) {
         const refresh = q.get('refresh') === '1';
         const launchDay = philippineDate(new Date(scope.launch_at));
         const monthly = await monthCache(scopeKey, async () => {
-          if (range.days.includes(range.today)) {
-            const prepared = await db.rpc('veo_calendar_prepare', { p_actor: scope.user_id });
-            if (prepared.error) throw Object.assign(new Error('Today’s calendar planning is temporarily unavailable'), { status: 503 });
-          }
         const from = range.days[0] > launchDay ? range.days[0] : launchDay;
         const to = range.days.at(-1)! < range.today ? range.days.at(-1)! : range.today;
         const [input, finance] = await Promise.all([loadVeoCalendarInputs(db, scope.user_id, page ? [page] : scope.page_ids, range.days[0], range.days.at(-1)!, null, { allPages: !page }),
-            from > to ? Promise.resolve({ data: { days: [] }, error: null }) : db.rpc('veo_finance_days', { p_actor: scope.user_id, p_from: from, p_to: to, p_page: page })]);
+            from > to ? Promise.resolve({ data: { days: [] }, error: null }) : db.rpc('veo_salary_report', { p_actor: scope.user_id, p_from: from, p_to: to, p_page: page })]);
         if (finance.error) throw Object.assign(new Error('Calendar salary could not be completed. Retry shortly.'), { status: finance.error.code === '42501' ? 403 : 503 });
         return { input, finance: { salary_days: finance.data?.days || [] } };
         }, refresh);

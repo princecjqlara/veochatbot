@@ -1,12 +1,12 @@
 import { DatabaseReadTimeout, requestDeadline } from './request-deadline';
-import { isSupabaseUnavailable } from './supabase-errors';
+import { isSupabaseTimeoutOrOverload, isSupabaseUnavailable } from './supabase-errors';
 import { setSupabaseReadBudget } from './supabase-read-budget';
 
 /** Retry only transient read timeouts. Every attempt runs the SQL permission
  * checks again; invalid filters and authorization failures return immediately. */
 export async function readVeoReport(read: (signal: AbortSignal) => PromiseLike<any>, milliseconds = 45000) {
     const deadline = Date.now() + milliseconds;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
         try {
             const remaining = deadline - Date.now();
             if (remaining <= 0) throw new DatabaseReadTimeout();
@@ -23,9 +23,9 @@ export async function readVeoReport(read: (signal: AbortSignal) => PromiseLike<a
             return result;
         } catch (error) {
             if (!isSupabaseUnavailable(error)) throw error;
-            const delay = (error as any)?.code === '57014' || error instanceof DatabaseReadTimeout
-                ? 500 * (attempt + 1) : 2000 * 2 ** attempt;
-            if (attempt === 2 || deadline - Date.now() <= delay + 1000) throw new DatabaseReadTimeout();
+            if (isSupabaseTimeoutOrOverload(error)) throw new DatabaseReadTimeout();
+            const delay = 2000;
+            if (attempt === 1 || deadline - Date.now() <= delay + 1000) throw new DatabaseReadTimeout();
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }

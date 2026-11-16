@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
+import { refreshQuotaSnapshots } from '@/lib/veo-quota-refresh';
+import { runBackgroundJob } from '@/lib/background-run';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 export async function GET(r: NextRequest) {
@@ -10,7 +12,7 @@ export async function GET(r: NextRequest) {
     try { await requireStorageForOptionalWork(db); }
     catch { return NextResponse.json({ skipped: true, reason: 'database_pressure', retryable: true }, { status: 503, headers: { 'Retry-After': '60' } }); }
     try {
-        const result = await db.rpc('veo_refresh_spend_quotas');
-        return NextResponse.json(result.error ? { error: 'Quota refresh will retry' } : result.data, { status: result.error ? 503 : 200 });
+        const result = await runBackgroundJob('quotas', () => refreshQuotaSnapshots(db), db);
+        return NextResponse.json(result, { status: 'failed' in result && result.failed ? 503 : 200, headers: {'Cache-Control':'no-store'} });
     } catch { return NextResponse.json({ error: 'Quota refresh will retry' }, { status: 503 }); }
 }

@@ -27,13 +27,14 @@ describe('private photo cleanup during unrelated worker failures', () => {
         expect(m.rpc.mock.calls.map(([name]) => name)).not.toContain('veo_maintenance');expect(m.rpc.mock.calls.map(([name]) => name)).not.toContain('veo_operations_maintenance');
         expect(m.sync).toHaveBeenCalledOnce();expect(m.events).not.toHaveBeenCalled();expect(m.sourceJobs).not.toHaveBeenCalled();expect(m.budget).not.toHaveBeenCalled();
     });
-    it('refreshes Telegram eligibility even when salary maintenance fails', async () => {
+    it('keeps due delivery processing and eligibility alive when optional salary maintenance fails', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.stubEnv('CRON_SECRET', 'cron');
         m.from.mockImplementation(() => { const q: any = { select: () => q, is: () => q, or: () => q, lte: () => q, limit: async () => ({ data: [] }) };return q; });
-        m.rpc.mockImplementation(async name => name === 'veo_maintenance' ? { error: { message: 'Ledger unavailable' } } : { data: true });
+        m.rpc.mockImplementation(async name => name === 'veo_maintenance' ? { error: { message: 'Ledger unavailable' } } : { data: name==='veo_claim_submissions'?[]:true });
         m.sync.mockResolvedValue({ checked: 8 });
         const response = await GET(new NextRequest('https://veo.test/api/cron/workspace', { headers: { Authorization: 'Bearer cron' } }));
-        expect(response.status).toBe(503);expect(m.sync).toHaveBeenCalledOnce();expect(m.events).not.toHaveBeenCalled();
+        expect(response.status).toBe(200);expect(await response.json()).toMatchObject({maintenance_retry:true,optional_work_paused:true});expect(m.sync).toHaveBeenCalledOnce();expect(m.events).not.toHaveBeenCalled();
+        expect(m.rpc.mock.calls.map(([name])=>name)).toContain('veo_claim_submissions');expect(m.sourceJobs).not.toHaveBeenCalled();expect(m.budget).not.toHaveBeenCalled();
     });
     it('refreshes Telegram eligibility even when receipt cleanup is unavailable', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.stubEnv('CRON_SECRET', 'cron');

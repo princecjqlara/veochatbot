@@ -41,10 +41,10 @@ it('fails an incomplete data read rather than presenting it as empty calendar da
     const r = await GET(new NextRequest('https://veo.test/api/workspace/calendar'));
     expect(r.status).toBe(503); expect(m.build).not.toHaveBeenCalled();
 });
-it('prepares current planning once and reads authoritative salary days without redoing legacy ad-spend loops', async () => {
+it('reads recorded salary days without starting quota planning or taking its row locks', async () => {
     await GET(new NextRequest('https://veo.test/api/workspace/calendar?month=2026-11&day=2026-11-06'));
-    expect(m.rpc.mock.calls.map(c => c[0])).toEqual(['veo_calendar_prepare', 'veo_finance_days']);
-    expect(m.rpc).toHaveBeenCalledWith('veo_finance_days', expect.objectContaining({ p_actor: 'owner', p_from: '2026-11-05', p_page: null }));
+    expect(m.rpc.mock.calls.map(c => c[0])).toEqual(['veo_salary_report']);
+    expect(m.rpc).toHaveBeenCalledWith('veo_salary_report', expect.objectContaining({ p_actor: 'owner', p_from: '2026-11-05', p_page: null }));
 });
 it('keeps a chosen Page explicit and rejects accounts without assigned Pages before reading reports', async () => {
     await GET(new NextRequest('https://veo.test/api/workspace/calendar?page_id=' + page));

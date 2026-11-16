@@ -16,6 +16,14 @@ beforeEach(() => {
     m.rpc.mockResolvedValue({ data: scope, error: null });
 });
 afterEach(() => { vi.unstubAllEnvs(); });
+it('coalesces concurrent reads for one actor, keeps other actors separate, and discards results after completion',async()=>{
+    let resolve!:(value:any)=>void;m.rpc.mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+    const reads=Array.from({length:20},()=>workspaceScope('member',{}));
+    await Promise.resolve();expect(m.rpc).toHaveBeenCalledOnce();
+    await workspaceScope('other',{});expect(m.rpc).toHaveBeenCalledTimes(2);
+    resolve({data:scope,error:null});expect(await Promise.all(reads)).toEqual(Array(20).fill(scope));
+    m.rpc.mockResolvedValueOnce({data:null,error:null});expect(await workspaceScope('member',{})).toBeNull();expect(m.rpc).toHaveBeenCalledTimes(3);
+});
 it('makes one authoritative scope read for authentication and route access in one request', async () => {
     const request = new NextRequest('https://veo.test/api/workspace');
     const session = await getSessionFromRequest(request);
