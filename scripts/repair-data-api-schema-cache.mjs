@@ -8,6 +8,7 @@ import { migrationConnectionOptions } from './lib/migration-retry.mjs';
 // Supabase's authenticator timeout also bounds PostgREST's schema discovery.
 // Keep ordinary service-role queries on their existing deadline while allowing
 // metadata discovery to finish. Application RPC deadlines remain independent.
+// Discovery also reads pg_timezone_names; a cold lookup can exceed 30 seconds.
 const env = { ...parseEnv(fs.readFileSync('.env.local', 'utf8')), ...process.env };
 const apply = process.argv.includes('--apply');
 const reconnect = process.argv.includes('--reconnect');
@@ -26,9 +27,9 @@ try {
     const before = await roles(), auth = before.find(r => r.rolname === 'authenticator'), service = before.find(r => r.rolname === 'service_role');
     assert(auth && service, 'Expected Data API roles');
     const previous = timeout(auth);
-    assert(previous && /^(8s|30s)$/.test(previous), 'Review the existing authenticator deadline before changing it');
+    assert(previous && /^(8s|30s|60s)$/.test(previous), 'Review the existing authenticator deadline before changing it');
     if (!timeout(service)) await db.query("ALTER ROLE service_role SET statement_timeout='8s'");
-    await db.query("ALTER ROLE authenticator SET statement_timeout='30s'");
+    await db.query("ALTER ROLE authenticator SET statement_timeout='60s'");
     const after = await roles();
     for (const original of before) {
         const current = after.find(r => r.rolname === original.rolname);
@@ -36,11 +37,11 @@ try {
         const unrelated = settings => (settings || []).filter(s => !s.startsWith('statement_timeout=')).sort();
         assert.deepEqual(unrelated(current.rolconfig), unrelated(original.rolconfig));
     }
-    assert.equal(timeout(after.find(r => r.rolname === 'authenticator')), '30s');
+    assert.equal(timeout(after.find(r => r.rolname === 'authenticator')), '60s');
     assert.equal(timeout(after.find(r => r.rolname === 'service_role')), timeout(service) || '8s');
     await db.query("NOTIFY pgrst,'reload config';NOTIFY pgrst,'reload schema'");
     await db.query(apply ? 'COMMIT' : 'ROLLBACK');
-    Object.assign(report, { passed: true, schemaDiscoveryDeadline: '30s', serviceQueryDeadline: timeout(service) || '8s', permissionsPreserved: true });
+    Object.assign(report, { passed: true, schemaDiscoveryDeadline: '60s', serviceQueryDeadline: timeout(service) || '8s', permissionsPreserved: true });
     if (reconnect) {
         // Existing authenticator sessions retain their login-time deadline.
         // Refresh only this database's identified PostgREST connections.
