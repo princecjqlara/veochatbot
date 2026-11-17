@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
         }
         return reply(data);
     } catch (error: any) {
+        if (error.code === 'ACCOUNT_SUSPENDED') return reply({ error: error.message, code: error.code }, 403);
         const code = String(error?.code || error?.cause?.code || 'UNKNOWN');
         console.error('[WORKSPACE_CONTEXT] unavailable', { code: /^[A-Z0-9_]{1,48}$/.test(code) ? code : 'UNKNOWN' });
         return NextResponse.json({ error: 'Workspace context is temporarily unavailable. Retry shortly.' },

@@ -34,6 +34,9 @@ async function processWorkspace(request: NextRequest) {
         // Expiry is enforced independently of delivery. A failed deletion remains visible and retries.
         const receiptDeletion = await queueReceiptDeletions(db);
         await cleanupWorkspacePhotos(db);
+        let disciplineRetry = false;
+        try { const discipline = await db.rpc('veo_refresh_all_discipline');disciplineRetry = !!discipline.error; }
+        catch { disciplineRetry = true; }
 
         let optionalWorkPaused = false;
         try { await requireStorageForOptionalWork(db); } catch { optionalWorkPaused = true; }
@@ -100,6 +103,6 @@ async function processWorkspace(request: NextRequest) {
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
         }
-        return NextResponse.json({ ok: true, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: maintenanceRetry, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null });
+        return NextResponse.json({ ok: !disciplineRetry, discipline_retry: disciplineRetry, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: maintenanceRetry, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null }, { status: disciplineRetry ? 503 : 200 });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }

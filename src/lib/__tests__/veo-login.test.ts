@@ -20,6 +20,17 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 describe('stored roles and administrator-created sign-in', () => {
+    it('rejects suspended sign-in after password verification and withholds all session permissions', async () => {
+        const suspension = { id: 'suspension', reason: 'Supervisor review', ends_at: null };
+        m.rpc.mockResolvedValueOnce({ data: { id: 'member', password_hash: 'hashed', suspension } });
+        await expect(credentials({ email: 'member@example.com', password: 'valid' })).rejects.toThrow('AccountSuspended');
+        m.rpc.mockResolvedValueOnce({ data: { id: 'member', password_hash: 'hashed', suspension } });m.matches.mockResolvedValueOnce(false);
+        expect(await credentials({ email: 'member@example.com', password: 'wrong' })).toBeNull();
+        m.rpc.mockResolvedValueOnce({ data: { suspension } });
+        const session = await (authOptions.callbacks!.session as any)({ session: { user: {} }, token: { id: 'member' } });
+        expect(session.user.id).toBeUndefined();expect(session.user.role).toBeUndefined();
+        expect(session.user).toMatchObject({ suspension, workspaceUnavailable: false });
+    });
     it('retains a valid signed identity during outages while withholding role authorization', async () => {
         m.rpc.mockResolvedValueOnce({ data: null, error: { code: 'SUPABASE_CIRCUIT_OPEN' } });
         const session = await (authOptions.callbacks!.session as any)({ session: { user: {} }, token: { id: 'member' } });

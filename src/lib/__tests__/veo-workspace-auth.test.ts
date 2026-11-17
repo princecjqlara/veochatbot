@@ -6,6 +6,16 @@ import { middleware } from '@/middleware';
 import { passwordHash, passwordMatches } from '@/lib/veo-workspace';
 
 describe('VEO authentication boundary', () => {
+    it('blocks suspended old sessions on legacy messaging and data endpoints before resource work', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.mocked(getToken).mockResolvedValue({ id: 'member' });
+        const fetcher = vi.fn(async () => new Response(JSON.stringify({ suspension: { id: 'suspension', reason: 'Review' } })));
+        vi.stubGlobal('fetch', fetcher);
+        for (const path of ['/api/pages', '/api/facebook/messages/send', '/api/campaigns', '/api/exports']) {
+            const response = await middleware(new NextRequest('https://veo.test' + path));
+            expect(response.status).toBe(403);expect((await response.json()).code).toBe('ACCOUNT_SUSPENDED');
+        }
+        expect(fetcher.mock.calls).toHaveLength(4);
+    });
     beforeEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
     afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
     it('accepts one-character, whitespace and long passwords without truncating their identity', async () => {

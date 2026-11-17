@@ -31,3 +31,18 @@ export async function requireStorageForOptionalWork(db: any) {
     if (result.error || !result.data || result.data.optional_work_paused !== false) throw Object.assign(Error('Bulk processing is paused while database storage needs attention. Existing data remains available; check Collection health.'), { status: 503, code: 'STORAGE_ATTENTION' });
     return result.data;
 }
+
+/** Small, expiring receipt photos are required sales evidence. CPU pressure,
+ * stale monitoring and delayed bulk maintenance must not disable staff intake.
+ * Retain the existing critical storage limit and fail an unavailable read.
+ */
+export async function requireStorageForReceipt(db: any) {
+    const result = await db.rpc('veo_storage_status'), state = result.data;
+    if (result.error || !state || !['healthy', 'warning', 'unknown'].includes(state.status) ||
+        !Number.isSafeInteger(state.database_bytes) || state.database_bytes <= 0 || state.database_bytes >= 400000000) {
+        throw Object.assign(Error(state?.status === 'critical' || state?.database_bytes >= 400000000
+            ? 'Receipt uploads are paused because database storage is nearly full. Ask your supervisor to check Collection health.'
+            : 'Receipt upload availability could not be checked. Try again shortly.'), { status: 503, code: 'STORAGE_ATTENTION' });
+    }
+    return state;
+}

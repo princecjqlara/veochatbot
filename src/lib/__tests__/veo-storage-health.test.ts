@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { parseStorageMetrics, readStorageMetrics, requireStorageForOptionalWork } from '../veo-storage-health';
+import { parseStorageMetrics, readStorageMetrics, requireStorageForOptionalWork, requireStorageForReceipt } from '../veo-storage-health';
 const metrics = 'node_filesystem_size_bytes{mountpoint="/",device="root"} 1000\nnode_filesystem_avail_bytes{device="root",mountpoint="/"} 1\nnode_filesystem_size_bytes{device="data",mountpoint="/data"} 2e9\nnode_filesystem_avail_bytes{mountpoint="/data",device="data"} 1.5e9\npg_wal_size_mb{service_type="postgresql"} 64';
 afterEach(() => { vi.unstubAllGlobals();vi.unstubAllEnvs(); });
 it('uses the actual data disk, including reserved space, rather than database size or the OS volume', () => {
@@ -22,4 +22,17 @@ it('sends metric credentials only to the configured project and bounds the read'
 it('pauses optional growth on critical, stale, incomplete or unavailable health', async () => {
     for (const result of [{ error: { message: 'offline' } }, { data: {} }, { data: { optional_work_paused: true } }]) await expect(requireStorageForOptionalWork({ rpc: async () => result })).rejects.toMatchObject({ code: 'STORAGE_ATTENTION', status: 503 });
     expect(await requireStorageForOptionalWork({ rpc: async () => ({ data: { optional_work_paused: false } }) })).toEqual({ optional_work_paused: false });
+});
+it.each(['healthy', 'warning', 'unknown'])('accepts bounded receipt uploads during a bulk pause with %s storage', async status => {
+    const state = { status, database_bytes: 338900659, optional_work_paused: true, resource_pressure: true, metrics_fresh: false, maintenance_healthy: false };
+    expect(await requireStorageForReceipt({ rpc: async () => ({ data: state }) })).toEqual(state);
+    await expect(requireStorageForOptionalWork({ rpc: async () => ({ data: state }) })).rejects.toMatchObject({ status: 503 });
+});
+it('still stops receipt uploads at the critical storage threshold or with unavailable capacity', async () => {
+    for (const result of [{ error: { message: 'offline' } }, { data: {} },
+        { data: { status: 'unknown', database_bytes: null } },
+        { data: { status: 'critical', database_bytes: 338900659 } },
+        { data: { status: 'healthy', database_bytes: 400000000 } }]) {
+        await expect(requireStorageForReceipt({ rpc: async () => result })).rejects.toMatchObject({ code: 'STORAGE_ATTENTION', status: 503 });
+    }
 });

@@ -7,6 +7,16 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push: m.push }), usePath
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }: any) => createElement('a', { href, ...props }, children) }));
 import Layout from './layout';
 afterEach(() => { vi.unstubAllGlobals();m.params = new URLSearchParams(); });
+it('shows only suspension details and sign-out while withholding the workspace and member controls', async () => {
+    m.session.mockReturnValue({ status: 'authenticated', data: { user: { suspension: { id: 'suspension', reason: 'Supervisor conduct review', ends_at: null } } } });
+    let view: any;await act(async () => { view = create(createElement(Layout, null, createElement('div', { id: 'private-workspace' }, 'Private data'))); });
+    try {
+        expect(view.root.findAllByProps({ id: 'private-workspace' })).toHaveLength(0);
+        expect(view.root.findByType('h1').children).toContain('Account suspended');
+        expect(view.root.findAllByType('a')).toHaveLength(0);
+        expect(view.root.findByType('button').children).toContain('Sign out');
+    } finally { await act(async () => view.unmount()); }
+});
 it('gives CJ the calendar, ads performance and capacity links while keeping those financial reports off worker navigation', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ pages: [] }))));
     m.session.mockReturnValue({ status: 'authenticated', data: { user: { id: 'user', role: 'owner', telegramProfileConfirmed: true } } });

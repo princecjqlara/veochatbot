@@ -44,7 +44,8 @@ export async function middleware(request: NextRequest) {
             if (!r.ok) throw new Error('Authorization unavailable');
             return r.json();
         };
-        const scope = await read('veo_scope', { p_actor: token.id });
+        const scope = await read('veo_access_context', { p_actor: token.id });
+        if (scope?.suspension) return NextResponse.json({ error: 'Your account is suspended. Contact your Manager or Team Leader.', code: 'ACCOUNT_SUSPENDED' }, { status: 403, headers: { 'Cache-Control': 'no-store' } });
         if (!scope?.launch_at) return NextResponse.json({ error: 'Workspace access is inactive' }, { status: 403 });
         const forbidden = () => NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         if (scope.role === 'team_leader' && request.method === 'GET' && (path === '/api/ad-calendar' || /^\/api\/ad-quality(?:\/(?:connection|performance|contacts))?$/.test(path))) {

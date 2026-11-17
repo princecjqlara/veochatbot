@@ -13,6 +13,13 @@ it('saves a team-wide policy independently of the per-submission switch',async()
  const sent=fetcher.mock.calls.find(([,o])=>o?.method==='POST');expect(JSON.parse(sent![1].body)).toEqual({action:'auto_approval',enabled:true});
  expect(text(view.toJSON())).toContain('Team auto-approval is ON');
 });
+it('clearly identifies committed receipts waiting for scheduled automatic approval',async()=>{
+ const review={id:'review',client_name:'Client',seller_name:'Worker',page_name:'Page',receipt_kind:'closed',status:'pending',auto_approval_pending:true,total_price_minor:100000,closed_amount_minor:30000,currency:'PHP',occurred_at:'2026-11-17T04:00:00Z'};
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({items:[review],total:1})));
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[],compact:true}));});
+ expect(text(view.toJSON())).toContain('Waiting for automatic team approval');
+ expect(text(view.toJSON())).not.toContain('Awaiting independent supervisor review');
+});
 it.each(['manager','team_leader'])('lets %s switch between sending directly and independent review',async role=>{
  vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({items:[],total:0}))));
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'actor',role,supervisor_submissions_enabled:true},accounts:[]}));});

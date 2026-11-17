@@ -17,3 +17,14 @@ it('accepts a real NextAuth session cookie and still checks current database acc
     const tampered = new NextRequest(request.url, { headers: { cookie: '__Secure-next-auth.session-token=invalid' } });
     expect(await getSessionFromRequest(tampered)).toBeNull(); expect(m.rpc).toHaveBeenCalledOnce();
 });
+it('blocks a previously signed member cookie while suspended and restores it only after a fresh live check', async () => {
+    const secret = 'suspension-test-only-secret';
+    vi.stubEnv('NEXTAUTH_SECRET', secret);vi.stubEnv('NEXTAUTH_URL', 'https://veo.test');vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');
+    const token = await encode({ secret, token: { id: 'suspended-member' }, maxAge: 60 });
+    const request = () => new NextRequest('https://veo.test/api/workspace', { headers: { cookie: '__Secure-next-auth.session-token=' + token } });
+    m.rpc.mockResolvedValueOnce({ data: { suspension: { id: 'suspension', reason: 'Conduct review', ends_at: null } } });
+    await expect(getSessionFromRequest(request())).rejects.toMatchObject({ status: 403, code: 'ACCOUNT_SUSPENDED' });
+    m.rpc.mockResolvedValueOnce({ data: { user_id: 'suspended-member', role: 'member', launch_at: '2026-11-05' } });
+    expect((await getSessionFromRequest(request()))?.user.id).toBe('suspended-member');
+    expect(m.rpc).toHaveBeenCalledWith('veo_access_context', { p_actor: 'suspended-member' });
+});

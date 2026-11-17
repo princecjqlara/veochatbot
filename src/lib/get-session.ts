@@ -14,6 +14,7 @@ export async function getSessionFromRequest(request: NextRequest) {
         return { user: { id: token.id, name: token.name, email: token.email, image: token.picture, role: scope.role },
             expires: new Date((typeof token.exp === 'number' ? token.exp : 0) * 1000).toISOString() };
     } catch (error: any) {
+        if (error.code === 'ACCOUNT_SUSPENDED') throw error;
         if (workspaceEnabled() && (error.status === 503 || error.code === 'DATABASE_UNAVAILABLE')) {
             throw Object.assign(new Error('Workspace permissions are temporarily unavailable. Retry shortly.'), { status: 503 });
         }

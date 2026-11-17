@@ -35,6 +35,93 @@ async function evidence(kind='closed',extra:any={},actor=member){
 }
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
+const discipline=(actor:string,action:string,data:any)=>rpc('veo_discipline_action',[actor,action,JSON.stringify(data)]);
+it('allows scoped warning removal and retains its audit without warnings on supervisors',async()=>{
+ const request_id=id(seq++),warning=await discipline(manager,'issue',{user_id:member,request_id,reason:'Repeated missed handover'});
+ expect((await rpc('veo_workflow_warnings',[manager,member])).workers[0].warning_count).toBe(1);
+ expect((await discipline(manager,'issue',{user_id:member,request_id,reason:'Repeated missed handover'})).duplicate).toBe(true);
+ await discipline(leader,'remove',{user_id:member,source_key:'manual:'+request_id,reason:'Evidence corrected by the member'});
+ const read=await rpc('veo_workflow_warnings',[owner,null]);
+ expect(read.workers.find((p:any)=>p.id===member).warning_count).toBe(0);
+ for(const supervisor of [manager,leader,owner]) expect(read.workers.find((p:any)=>p.id===supervisor).warnings).toEqual([]);
+ expect((await db.query<any>('SELECT removed_by FROM veo_staff_warning_records WHERE id=$1',[warning.warning_id])).rows[0].removed_by).toBe(leader);
+ expect((await db.query("SELECT * FROM veo_audit WHERE action='member_warning_removed'")).rows).toHaveLength(1);
+ await expect(discipline(other,'issue',{user_id:member,request_id:id(seq++),reason:'Other branch warning'})).rejects.toThrow('branch');
+ await expect(discipline(manager,'issue',{user_id:manager,request_id:id(seq++),reason:'Warn myself'})).rejects.toThrow('exempt');
+});
+it('automatically suspends at the chosen warning limit and blocks current access without changing salary or Page grants',async()=>{
+ const day=(await db.query<any>('SELECT veo_today()::text d')).rows[0].d;
+ const salary=await rpc('veo_salary',[member,day]);const grants=(await db.query('SELECT * FROM user_pages WHERE user_id=$1',[member])).rows;
+ await discipline(manager,'policy',{warning_limit:2,auto_suspend:true,suspension_minutes:null});
+ await discipline(manager,'issue',{user_id:member,request_id:id(seq++),reason:'First missed obligation'});
+ expect(await rpc('veo_member_suspension',[member])).toBeNull();
+ const result=await discipline(manager,'issue',{user_id:member,request_id:id(seq++),reason:'Second missed obligation'});
+ expect(result.suspension.source).toBe('warnings');expect(result.suspension.ends_at).toBeNull();
+ expect(await rpc('veo_scope',[member])).toBeNull();expect((await rpc('veo_access_context',[member])).suspension.id).toBe(result.suspension.id);
+ expect(await rpc('veo_authorize_resources',[member,'[]'])).toBe(false);
+ await expect(rpc('veo_action',[member,'contact',JSON.stringify({contact_id:client})])).rejects.toThrow('suspended');
+ await expect(rpc('veo_deal_review_context',[member,client,member])).rejects.toThrow('suspended');
+ await expect(rpc('veo_intake_action',[member,'ready',JSON.stringify({request_id:id(seq++)})])).rejects.toThrow('suspended');
+ expect((await db.query('SELECT * FROM user_pages WHERE user_id=$1',[member])).rows).toEqual(grants);
+ expect((await db.query<any>('SELECT active FROM veo_accounts WHERE user_id=$1',[member])).rows[0].active).toBe(true);
+ const after=await rpc('veo_salary',[member,day]);for(const key of ['rate','totals','closed','done'])expect(after[key]).toEqual(salary[key]);
+ await discipline(leader,'lift',{user_id:member,suspension_id:result.suspension.id,reason:'Member completed supervisor review'});
+ expect((await rpc('veo_scope',[member])).user_id).toBe(member);
+ await rpc('veo_refresh_discipline',[manager,member]);expect(await rpc('veo_member_suspension',[member])).toBeNull();
+ expect((await rpc('veo_workflow_warnings',[manager,member])).workers[0].warning_count).toBe(0);
+ await discipline(manager,'issue',{user_id:member,request_id:id(seq++),reason:'New warning after return'});
+ expect(await rpc('veo_member_suspension',[member])).toBeNull();
+});
+it('supports timed and manual suspension with scoped early lifting, expiry and idempotent retries',async()=>{
+ const request_id=id(seq++),payload={user_id:member,request_id,duration_minutes:60,reason:'Temporary conduct review'};
+ const result=await discipline(manager,'suspend',payload);
+ expect(result.suspension.duration_minutes).toBe(60);expect(Date.parse(result.suspension.ends_at)-Date.now()).toBeGreaterThan(3500000);
+ expect((await discipline(manager,'suspend',payload)).suspension.duplicate).toBe(true);
+ await expect(discipline(manager,'suspend',{...payload,duration_minutes:120})).rejects.toThrow('already used');
+ await expect(discipline(other,'lift',{user_id:member,suspension_id:result.suspension.id,reason:'Outside branch'})).rejects.toThrow('branch');
+ await discipline(leader,'lift',{user_id:member,suspension_id:result.suspension.id,reason:'Review completed early'});
+ expect(await rpc('veo_member_suspension',[member])).toBeNull();
+ const next=await discipline(leader,'suspend',{...payload,request_id:id(seq++),duration_minutes:5});
+ await db.query("UPDATE veo_member_suspensions SET starts_at=now()-interval '2 hours',ends_at=now()-interval '1 hour' WHERE id=$1",[next.suspension.id]);
+ expect(await rpc('veo_member_suspension',[member])).toBeNull();expect((await rpc('veo_scope',[member])).user_id).toBe(member);
+ expect((await discipline(manager,'suspend',{...payload,request_id:id(seq++),duration_minutes:null})).suspension.ends_at).toBeNull();
+ for(const target of [manager,leader,owner])await expect(discipline(owner,'suspend',{...payload,user_id:target,request_id:id(seq++)})).rejects.toThrow('exempt');
+});
+it('lets a Manager set an explicit rule for their branch and denies members forged policy or lifting powers',async()=>{
+ await discipline(leader,'policy',{warning_limit:1,auto_suspend:true,suspension_minutes:30});
+ await discipline(manager,'policy',{warning_limit:3,auto_suspend:false,suspension_minutes:null});
+ expect(await rpc('veo_member_discipline_policy',[member])).toMatchObject({supervisor_id:manager,warning_limit:3,auto_suspend:false});
+ await discipline(manager,'issue',{user_id:member,request_id:id(seq++),reason:'Needs manager follow-up'});
+ expect(await rpc('veo_member_suspension',[member])).toBeNull();
+ await expect(discipline(member,'policy',{warning_limit:1,auto_suspend:true,suspension_minutes:1})).rejects.toThrow('access required');
+ await expect(discipline(manager,'policy',{warning_limit:0,auto_suspend:true,suspension_minutes:null})).rejects.toThrow('warning limit');
+ for(const fn of ['veo_discipline_action(uuid,text,jsonb)','veo_member_suspension(uuid)','veo_access_context(uuid)','veo_refresh_all_discipline()'])
+ expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed",[fn])).rows[0].exposed).toBe(false);
+});
+it('removes a computed warning durably and does not recreate it on scheduled refresh',async()=>{
+ await db.query("UPDATE veo_tenants SET launch_at=now()-interval '10 days' WHERE id=$1",[tenant]);
+ const at=(await db.query<any>("SELECT (now()-interval '3 days')::text at")).rows[0].at;
+ const closed=await approve(await submit(await evidence('closed',{occurred_at:at})));
+ const key='overdue:'+closed.order_id;
+ expect((await rpc('veo_workflow_warnings',[manager,member])).workers[0].warnings.some((w:any)=>w.key===key)).toBe(true);
+ await discipline(manager,'remove',{user_id:member,source_key:key,reason:'Excused after reviewing the situation'});
+ await rpc('veo_refresh_discipline',[manager,member]);
+ expect((await rpc('veo_workflow_warnings',[manager,member])).workers[0].warnings.some((w:any)=>w.key===key)).toBe(false);
+ expect((await db.query<any>('SELECT removed_at FROM veo_staff_warning_records WHERE source_key=$1',[key])).rows[0].removed_at).toBeTruthy();
+});
+it('suspends members from newly observed workflow warnings on the scheduled refresh without duplicate strikes',async()=>{
+ await db.query("UPDATE veo_tenants SET launch_at=now()-interval '10 days' WHERE id=$1",[tenant]);
+ await discipline(manager,'policy',{warning_limit:1,auto_suspend:true,suspension_minutes:60});
+ const at=(await db.query<any>("SELECT (now()-interval '3 days')::text at")).rows[0].at;
+ await approve(await submit(await evidence('closed',{occurred_at:at})));
+ expect(await rpc('veo_member_suspension',[member])).toBeNull();
+ const refreshed=await rpc('veo_refresh_all_discipline',[]);expect(refreshed.tenants[0].suspended).toBe(1);
+ expect((await rpc('veo_member_suspension',[member])).source).toBe('warnings');
+ const count=(await db.query<any>('SELECT count(*)::int n FROM veo_staff_warning_records WHERE user_id=$1',[member])).rows[0].n;
+ await rpc('veo_refresh_all_discipline',[]);
+ expect((await db.query<any>('SELECT count(*)::int n FROM veo_staff_warning_records WHERE user_id=$1',[member])).rows[0].n).toBe(count);
+ await expect(discipline(manager,'issue',{user_id:member,request_id:id(seq++),reason:'Another warning during suspension'})).rejects.toThrow('Lift the current suspension');
+});
 it('pays every manager 40 percent below quota consistently across salary, receipts, finance and calendar',async()=>{
  await db.query("UPDATE veo_tenants SET launch_at=now()-interval '30 days' WHERE id=$1",[tenant]);
  await db.query("UPDATE veo_accounts SET enrolled_at=now()-interval '30 days'");
@@ -322,11 +409,31 @@ it('restricts price correction to the supervisor branch and rejects totals below
  await expect(rpc('veo_close_deal_price',[manager,r.id,20000,100000,'Too low'])).rejects.toThrow('down payment');
  const changed=await rpc('veo_close_deal_price',[leader,r.id,110000,100000,'Correct package']);expect(Number(changed.total_price_minor)).toBe(110000);
 });
-it.each([manager,leader])('automatically approves staff milestones under an enabled supervisor policy',async actor=>{
+it.each([manager,leader])('commits staff milestones before their scheduled automatic approval',async actor=>{
  await rpc('veo_team_auto_approval_setting',[actor,true]);
- const cd=await submit(await evidence());expect(cd.status).toBe('approved');expect(cd.auto_approved).toBe(true);expect(cd.reviewed_by).toBe(actor);
- const dd=await submit(await evidence('done',{order_id:cd.order_id,closed_deal_id:cd.closed_deal_id}));expect(dd.status).toBe('approved');expect(dd.auto_approved).toBe(true);
+ const saved=await submit(await evidence());expect(saved.status).toBe('pending');expect(saved.auto_approval_pending).toBe(true);
+ expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(0);
+ expect((await rpc('veo_auto_approve_pending_team_reviews',[20,actor])).approved).toBe(1);
+ const cd=await rpc('veo_deal_review_access',[member,saved.id]);expect(cd.status).toBe('approved');expect(cd.auto_approved).toBe(true);expect(cd.reviewed_by).toBe(actor);
+ const next=await submit(await evidence('done',{order_id:cd.order_id,closed_deal_id:cd.closed_deal_id}));expect(next.status).toBe('pending');
+ expect((await rpc('veo_auto_approve_pending_team_reviews',[20,actor])).approved).toBe(1);
+ const dd=await rpc('veo_deal_review_access',[member,next.id]);expect(dd.status).toBe('approved');expect(dd.auto_approved).toBe(true);
  expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(2);
+});
+it('keeps a staff receipt pending when team auto-approval cannot settle its linked order',async()=>{
+ const cd=await approve(await submit(await evidence()));
+ await rpc('veo_team_auto_approval_setting',[manager,true]);
+ const e=await evidence('done',{order_id:cd.order_id,closed_deal_id:cd.closed_deal_id,received_now_minor:100000});
+ const saved=await submit(e);
+ expect(saved.status).toBe('pending');expect(saved.auto_approval_pending).toBe(true);
+ expect((await rpc('veo_auto_approve_pending_team_reviews',[20,manager])).needs_review).toBe(1);
+ expect((await rpc('veo_deal_review_access',[member,saved.id])).auto_approval_error).toContain('Review this submission');
+ expect(saved.auto_approved).toBe(false);expect(saved.delivery_submission).toBeNull();
+ expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
+ expect((await db.query('SELECT * FROM veo_deal_reviews')).rows).toHaveLength(2);
+ expect((await rpc('veo_deal_review_access',[manager,saved.id])).photos).toHaveLength(3);
+ expect(await submit(e)).toMatchObject({id:saved.id,status:'pending',duplicate:true});
+ await expect(approve(saved)).rejects.toThrow('settle the price');
 });
 it('approves pending team evidence, enforces disabling, and rejects forged supervisor settings',async()=>{
  const e=await evidence(),pending=await submit(e);expect(pending.status).toBe('pending');

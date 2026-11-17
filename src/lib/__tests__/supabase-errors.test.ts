@@ -7,6 +7,9 @@ describe('Supabase availability errors', () => {
         { code: 'SUPABASE_UPSTREAM_522' },
         { code: 'DATABASE_UNAVAILABLE' },
         { code: 'PGRST002' },
+        { code: '', message: 'The connection to the database timed out' },
+        { code: '08006', message: 'Connection failure' },
+        { message: 'timeout expired' },
         new Error('Workspace page scope unavailable', { cause: { code: 'SUPABASE_UPSTREAM_522' } })
     ])('recognizes a transport or database outage: %j', error => {
         expect(isSupabaseUnavailable(error)).toBe(true);

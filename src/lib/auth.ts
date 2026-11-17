@@ -17,6 +17,7 @@ export const authOptions: NextAuthOptions = {
                         if (row.error) throw new Error(row.error.message === 'TooManyAttempts' ? 'TooManyAttempts' : 'DatabaseUnavailable');
                         if (row.data?.limited === true) throw new Error('TooManyAttempts');
                         if (!row.data?.id || !await passwordMatches(credentials.password!, row.data.password_hash)) return null;
+                        if (row.data.suspension) throw new Error('AccountSuspended');
                         return { id: row.data.id, name: row.data.name, email: row.data.email, image: row.data.image };
                     }, 12_000);
                 } catch (error) {
@@ -44,12 +45,15 @@ export const authOptions: NextAuthOptions = {
         },
         async session({ session, token }) {
             let workspaceUnavailable = false;
-            const scope = workspaceEnabled() && token.id ? await workspaceScope(token.id).catch(() => {
+            let suspension: { id: string; reason: string; ends_at: string | null } | undefined;
+            const scope = workspaceEnabled() && token.id ? await workspaceScope(token.id).catch((error: any) => {
+                if (error.code === 'ACCOUNT_SUSPENDED') { suspension = error.suspension;return null; }
                 workspaceUnavailable = true; return null;
             }) : null;
             return { ...session,
                 user: { ...session.user, id: workspaceEnabled() && !scope && !workspaceUnavailable ? undefined : token.id, role: scope?.role,
                     workspaceUnavailable,
+                    suspension,
                     telegramUsername: scope?.telegram_username || null,
                     telegramProfileCompleted: Boolean(scope?.telegram_profile_completed_at),
                     telegramProfileConfirmed: Boolean(scope?.telegram_profile_completed_at && (!token.loginStartedAt || Date.parse(scope.telegram_profile_completed_at) >= token.loginStartedAt)) } };
@@ -63,7 +67,7 @@ declare module 'next-auth' {
     interface Session {
         accessToken?: string;
         accessTokenExpiresAt?: string;
-        user: { id?: string; role?: WorkspaceRole; name?: string | null; email?: string | null; image?: string | null; facebookId?: string; telegramUsername?: string | null; telegramProfileCompleted?: boolean; telegramProfileConfirmed?: boolean; workspaceUnavailable?: boolean };
+        user: { id?: string; role?: WorkspaceRole; name?: string | null; email?: string | null; image?: string | null; facebookId?: string; telegramUsername?: string | null; telegramProfileCompleted?: boolean; telegramProfileConfirmed?: boolean; workspaceUnavailable?: boolean; suspension?: { id: string; reason: string; ends_at: string | null } };
     }
 }
 declare module 'next-auth/jwt' {

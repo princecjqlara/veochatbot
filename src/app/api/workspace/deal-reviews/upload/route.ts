@@ -4,7 +4,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { uuid } from '@/lib/veo-workspace';
 import { receiptPhoto } from '@/lib/veo-receipts';
 import { dealChecked, dealEvidenceBucket, dealReviewScope, evidenceSlots } from '@/lib/veo-deal-review';
-import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
+import { requireStorageForReceipt } from '@/lib/veo-storage-health';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 45;
 const reply = (body: any, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -17,8 +17,8 @@ export async function POST(request: NextRequest) {
         if (photo.size > 3 * 1024 * 1024) throw Error('Each evidence photo must be 3 MB or smaller');
         const db = getSupabaseAdmin();
         const context = dealChecked(await db.rpc('veo_deal_review_context', { p_actor: scope.user_id, p_contact: contact, p_seller: seller }));
-        await requireStorageForOptionalWork(db);
         const bytes = new Uint8Array(await photo.arrayBuffer());receiptPhoto(photo, bytes);
+        await requireStorageForReceipt(db);
         const path = `${scope.tenant_id}/${scope.user_id}/deal-evidence/${randomUUID()}`;
         dealChecked(await db.from('veo_photo_objects').insert({ object_path: path }));
         dealChecked(await db.storage.from(dealEvidenceBucket).upload(path, bytes, { contentType: photo.type, upsert: false }));
