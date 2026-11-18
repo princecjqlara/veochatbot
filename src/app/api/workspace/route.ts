@@ -31,7 +31,8 @@ export async function GET(request: NextRequest) {
         const contactId = request.nextUrl.searchParams.get('contact_id');
         if (contactId) {
             const contact = await db.from('contacts').select('id,page_id,name,psid,pipeline_stage').eq('id', contactId).maybeSingle();
-            if (contact.error || !contact.data || !scope.page_ids.includes(contact.data.page_id)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+            if (contact.error) throw Object.assign(contact.error, { status: isSupabaseUnavailable(contact.error) ? 503 : 400 });
+            if (!contact.data || !scope.page_ids.includes(contact.data.page_id)) throw Object.assign(new Error('Forbidden'), { status: 403 });
             const profile = await db.rpc('veo_profile_detail_access', { p_actor: scope.user_id, p_contact: contactId });
             if (profile.error || !Array.isArray(profile.data?.branch_worker_ids)) throw Object.assign(new Error('Contact financial history unavailable'), { status: profile.error?.code === '42501' ? 403 : 503 });
             const workers = profile.data.branch_worker_ids;
@@ -41,12 +42,12 @@ export async function GET(request: NextRequest) {
                 db.rpc('get_contact_finance_records', { p_page_id: contact.data.page_id, p_contact_id: contactId }),
                 db.from('veo_closed_deals').select('id,order_id,amount_minor,currency,occurred_at,verified_payment_id,seller_id').eq('contact_id', contactId).is('voided_at', null).in('seller_id', workers)
             ]);
-            if (details.error || orders.error || legacy.error || closedDeals.error) throw new Error('Contact financial history unavailable');
+            if (details.error || orders.error || legacy.error || closedDeals.error) throw Object.assign(new Error('Contact financial history unavailable'), { status: 503 });
             const payments = orders.data?.length ? await db.from('veo_payments').select('*').in('order_id', orders.data.map(o => o.id)).order('occurred_at') : { data: [], error: null };
-            if (payments.error) throw new Error('Payment history unavailable');
+            if (payments.error) throw Object.assign(new Error('Payment history unavailable'), { status: 503 });
             const sellerIds = [...new Set((orders.data || []).map(o => o.seller_id))];
             const sellers = sellerIds.length ? await db.from('users').select('id,name').in('id', sellerIds) : { data: [], error: null };
-            if (sellers.error) throw new Error('Seller identities unavailable');
+            if (sellers.error) throw Object.assign(new Error('Seller identities unavailable'), { status: 503 });
             const names = new Map((sellers.data || []).map(s => [s.id, s.name]));
             const ltv: Record<string, number> = {};
             const retainedPayments = (legacy.data?.payments || []).filter((p: any) => scope.role === 'owner' || workers.includes(p.verified_by));

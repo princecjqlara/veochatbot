@@ -8,6 +8,7 @@ const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modul
     'src/lib/__tests__/veo-photo-cleanup.test.ts', 'src/lib/__tests__/veo-reviewed-delivery.test.ts',
     'src/app/api/cron/receipt-photos/route.test.ts',
     'src/app/api/cron/workspace/route.test.ts',
+    'src/app/api/workspace/route.test.ts',
     'src/lib/__tests__/temporary-background-pause.test.ts',
     'src/components/VeoDealEvidenceInbox.test.ts',
     'src/lib/__tests__/veo-deal-review-sql.test.ts',

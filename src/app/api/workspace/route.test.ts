@@ -1,17 +1,39 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m = vi.hoisted(() => ({ rpc: vi.fn(), verifyMapping: vi.fn(), jaucianRead: vi.fn(), directory: vi.fn() }));
+const m = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), verifyMapping: vi.fn(), jaucianRead: vi.fn(), directory: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => m }));
 vi.mock('@/lib/get-session', () => ({ getSessionFromRequest: async () => ({ user: { id: 'owner' } }) }));
 vi.mock('@/lib/veo-jaucian', () => ({ verifyWorkerMapping: m.verifyMapping, jaucianRead: m.jaucianRead }));
 vi.mock('@/lib/veo-account-directory', () => ({ loadVeoAccountDirectory: m.directory }));
 import { GET, POST } from './route';
 import { philippineDate } from '@/lib/veo-workspace';
-afterEach(() => { vi.clearAllMocks(); });
+afterEach(() => { vi.clearAllMocks();m.from.mockReset(); });
+
+const clientId='00000000-0000-4000-8000-000000000001',pageId='00000000-0000-4000-8000-000000000002';
+function contactReads(failure?: string, foreignPage=false) {
+    m.rpc.mockImplementation(async name=>({data:name==='veo_access_context'?{user_id:'owner',role:'member',launch_at:new Date(Date.now()-86400000).toISOString(),page_ids:[pageId]}:name==='veo_profile_detail_access'?{branch_worker_ids:['owner']}:{payments:[]}}));
+    m.from.mockImplementation(table=>{
+        const result=table===failure?{error:{code:'57014',message:'Query deadline'}}:{data:table==='contacts'?{id:clientId,page_id:foreignPage?'other':pageId,name:'Client'}:table==='veo_contact_details'?{}:[]};
+        const q:any={select:()=>q,eq:()=>q,in:()=>q,is:()=>q,order:()=>q,maybeSingle:async()=>result,then:(resolve:any,reject:any)=>Promise.resolve(result).then(resolve,reject)};
+        return q;
+    });
+}
+it('reports a temporary client read as retryable and permits a fresh authorized reload',async()=>{
+    const request=()=>new NextRequest('https://veo.test/api/workspace?contact_id='+clientId);
+    contactReads('contacts');const failed=await GET(request());expect(failed.status).toBe(503);expect(failed.headers.get('Retry-After')).toBe('30');
+    contactReads();const recovered=await GET(request());expect(recovered.status).toBe(200);expect(await recovered.json()).toMatchObject({contact:{id:clientId},orders:[],closed_deals:[]});
+});
+it('does not mislabel a temporary order-history failure as invalid form input',async()=>{
+    contactReads('veo_order_facts');expect((await GET(new NextRequest('https://veo.test/api/workspace?contact_id='+clientId))).status).toBe(503);
+});
+it('continues denying a client outside the current permitted Pages',async()=>{
+    contactReads(undefined,true);expect((await GET(new NextRequest('https://veo.test/api/workspace?contact_id='+clientId))).status).toBe(403);
+    expect(m.rpc.mock.calls.some(([name])=>name==='veo_profile_detail_access')).toBe(false);
+});
 describe('workspace work-date boundaries', () => {
     it('finishes the dashboard calculation before starting the competing capacity report', async () => {
         let finish!: (value: any) => void;
-        m.rpc.mockImplementation(async name => name === 'veo_scope'
+        m.rpc.mockImplementation(async name => name === 'veo_access_context'
             ? { data: { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } }
             : name === 'veo_dashboard_summary' ? new Promise(resolve => { finish = resolve; })
             : { data: { teams: [] } });
@@ -24,38 +46,38 @@ describe('workspace work-date boundaries', () => {
         expect(m.rpc).toHaveBeenCalledWith('veo_team_capacity', { p_actor: 'owner', p_day: philippineDate() });
     });
     it('loads collection health without recalculating salary, capacity or the dashboard',async()=>{
-        const day=philippineDate();m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'owner',launch_at:day+'T00:00:00+08:00'}:name==='veo_collection_status'?[{page_id:'page',pending:3}]:null}));
+        const day=philippineDate();m.rpc.mockImplementation(async name=>({data:name==='veo_access_context'?{user_id:'owner',role:'owner',launch_at:day+'T00:00:00+08:00'}:name==='veo_collection_status'?[{page_id:'page',pending:3}]:null}));
         const r=await GET(new NextRequest('https://veo.test/api/workspace?view=sync&date='+day));expect(r.status).toBe(200);expect((await r.json()).sync).toEqual([{page_id:'page',pending:3}]);
         expect(m.rpc.mock.calls.some(c=>['veo_dashboard','veo_dashboard_summary','veo_team_capacity','veo_salary'].includes(c[0]))).toBe(false);
     });
     it('scopes existing-member supervisor changes and reports stale edits as conflicts',async()=>{
         const user='00000000-0000-4000-8000-000000000002',parent='00000000-0000-4000-8000-000000000003',old='00000000-0000-4000-8000-000000000004';
         const request=()=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify({action:'member_supervisor',user_id:user,parent_id:parent,expected_parent_id:old,actor:'foreign'})});
-        m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'team_leader',launch_at:'launched'}:{saved:true}}));expect((await POST(request())).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_change_member_supervisor',{p_actor:'owner',p_user:user,p_parent:parent,p_expected_parent:old});
-        m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'40001',message:'Refresh Accounts'}});expect((await POST(request())).status).toBe(409);
-        m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'23505',message:'Supervisor changed'}});expect((await POST(request())).status).toBe(409);
-        m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'SUPABASE_REQUEST_TIMEOUT',message:'Error: Supabase request timed out'}});expect((await POST(request())).status).toBe(503);
+        m.rpc.mockImplementation(async name=>({data:name==='veo_access_context'?{user_id:'owner',role:'team_leader',launch_at:'launched'}:{saved:true}}));expect((await POST(request())).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_change_member_supervisor',{p_actor:'owner',p_user:user,p_parent:parent,p_expected_parent:old});
+        m.rpc.mockImplementation(async name=>name==='veo_access_context'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'40001',message:'Refresh Accounts'}});expect((await POST(request())).status).toBe(409);
+        m.rpc.mockImplementation(async name=>name==='veo_access_context'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'23505',message:'Supervisor changed'}});expect((await POST(request())).status).toBe(409);
+        m.rpc.mockImplementation(async name=>name==='veo_access_context'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'SUPABASE_REQUEST_TIMEOUT',message:'Error: Supabase request timed out'}});expect((await POST(request())).status).toBe(503);
         m.rpc.mockResolvedValue({data:{user_id:'owner',role:'manager',launch_at:'launched'}});expect((await POST(request())).status).toBe(403);
     });
     it('uses the atomic password reset and cooldown cleanup without trusting a browser actor', async () => {
-        const user='00000000-0000-4000-8000-000000000002';m.rpc.mockImplementation(async name=>({data:name==='veo_scope'?{user_id:'owner',role:'owner',launch_at:'launched'}:{password_changed:true}}));
+        const user='00000000-0000-4000-8000-000000000002';m.rpc.mockImplementation(async name=>({data:name==='veo_access_context'?{user_id:'owner',role:'owner',launch_at:'launched'}:{password_changed:true}}));
         const request=()=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify({action:'password',user_id:user,password:'test password',actor:'foreign'})});
         expect((await POST(request())).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_set_account_password',{p_actor:'owner',p_user:user,p_password_hash:expect.stringMatching(/^veo-sha256:/)});
         expect(m.rpc.mock.calls.some(([name])=>name==='veo_action')).toBe(false);
-        m.rpc.mockImplementation(async name=>name==='veo_scope'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'42501',message:'Forbidden'}});expect((await POST(request())).status).toBe(403);
+        m.rpc.mockImplementation(async name=>name==='veo_access_context'?{data:{user_id:'owner',role:'owner',launch_at:'launched'}}:{error:{code:'42501',message:'Forbidden'}});expect((await POST(request())).status).toBe(403);
     });
     it('returns the complete directory without calculating finances, orders or capacity for Accounts', async () => {
         m.rpc.mockResolvedValue({ data: { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } });
         m.directory.mockResolvedValue(Array.from({ length: 601 }, (_, i) => ({ id: String(i) })));
         const response = await GET(new NextRequest('https://veo.test/api/workspace?view=accounts'));
         expect(response.status).toBe(200);expect((await response.json()).accounts).toHaveLength(601);
-        expect(m.rpc.mock.calls.every(([name]) => name === 'veo_scope')).toBe(true);
+        expect(m.rpc.mock.calls.every(([name]) => name === 'veo_access_context')).toBe(true);
         expect(response.headers.get('Cache-Control')).toBe('no-store');
     });
     it('requires Facebook sourced order selection and rejects manually supplied order totals',async()=>{
         m.rpc.mockResolvedValue({data:{user_id:'owner',role:'owner',launch_at:'launched'}});
         const request=(body:any)=>new NextRequest('https://veo.test/api/workspace',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify(body)});
-        const r=await POST(request({action:'order',amount:'1.00'}));expect(r.status).toBe(400);expect((await r.json()).error).toContain('Facebook Business Suite');expect(m.rpc.mock.calls.every(([name])=>name==='veo_scope')).toBe(true);
+        const r=await POST(request({action:'order',amount:'1.00'}));expect(r.status).toBe(400);expect((await r.json()).error).toContain('Facebook Business Suite');expect(m.rpc.mock.calls.every(([name])=>name==='veo_access_context')).toBe(true);
         const id='00000000-0000-4000-8000-000000000001';
         expect((await POST(request({action:'import_business_order',business_order_id:id,seller_id:id,deal_mode:'new'}))).status).toBe(200);
         expect(m.rpc).toHaveBeenCalledWith('veo_action',expect.objectContaining({p_actor:'owner',p_action:'import_business_order',p_data:expect.objectContaining({business_order_id:id})}));
@@ -68,14 +90,14 @@ describe('workspace work-date boundaries', () => {
         m.rpc.mockResolvedValue({ data: { user_id: 'owner', tenant_id: 'tenant', role: 'owner', launch_at: 'launched' } });
         m.verifyMapping.mockRejectedValue(Object.assign(new Error('Not a current human member'), { status: 400 }));
         expect((await POST(request())).status).toBe(400);
-        expect(m.rpc.mock.calls.every(([name]) => name === 'veo_scope')).toBe(true);
+        expect(m.rpc.mock.calls.every(([name]) => name === 'veo_access_context')).toBe(true);
         m.verifyMapping.mockResolvedValue({ verified: true, user_id: 42, chat_id: -123 });
         expect((await POST(request())).status).toBe(200);
         expect(m.rpc).toHaveBeenCalledWith('veo_map_staff_telegram', expect.objectContaining({ p_user: 'worker', p_telegram: 42, p_chat: -123 }));
     });
     it('rejects future target freezing and dates before launch without calculating a salary', async () => {
         const launch = new Date(Date.now() - 86400000).toISOString();
-        m.rpc.mockImplementation(async name => ({ data: name === 'veo_scope' ? { user_id: 'owner', role: 'owner', launch_at: launch } : {} }));
+        m.rpc.mockImplementation(async name => ({ data: name === 'veo_access_context' ? { user_id: 'owner', role: 'owner', launch_at: launch } : {} }));
         const future = philippineDate(new Date(Date.now() + 30 * 86400000));
         for (const date of ['1970-01-01', future]) expect((await GET(new NextRequest(`https://veo.test/api/workspace?date=${date}`))).status).toBe(400);
         expect(m.rpc.mock.calls.some(([name]) => name === 'veo_dashboard_summary')).toBe(false);
@@ -84,7 +106,7 @@ describe('workspace work-date boundaries', () => {
     });
     it('passes complete server-side deal filters and pagination to the authoritative scoped query', async () => {
         const launch = new Date(Date.now() - 86400000).toISOString(), page = '00000000-0000-4000-8000-000000000001';
-        m.rpc.mockImplementation(async name => ({ data: name === 'veo_scope' ? { user_id: 'owner', role: 'owner', launch_at: launch } : name === 'veo_orders_page' ? { orders: [{ id: 'older-order' }], total: 501, offset: 500, limit: 50 } : { orders: [] } }));
+        m.rpc.mockImplementation(async name => ({ data: name === 'veo_access_context' ? { user_id: 'owner', role: 'owner', launch_at: launch } : name === 'veo_orders_page' ? { orders: [{ id: 'older-order' }], total: 501, offset: 500, limit: 50 } : { orders: [] } }));
         const response = await GET(new NextRequest(`https://veo.test/api/workspace?view=done&offset=500&page_id=${page}&search=client`));
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ orders: [{ id: 'older-order' }], order_page: { total: 501, offset: 500 } });
@@ -92,12 +114,12 @@ describe('workspace work-date boundaries', () => {
         expect(m.rpc.mock.calls.some(([name]) => name === 'veo_team_capacity')).toBe(false);
     });
     it('does not silently omit team capacity when the authoritative aggregate is unavailable', async () => {
-        m.rpc.mockImplementation(async name => name === 'veo_team_capacity' ? { error: { message: 'Team aggregate unavailable' } } : { data: name === 'veo_scope' ? { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } : {} });
+        m.rpc.mockImplementation(async name => name === 'veo_team_capacity' ? { error: { message: 'Team aggregate unavailable' } } : { data: name === 'veo_access_context' ? { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } : {} });
         const response = await GET(new NextRequest('https://veo.test/api/workspace'));
         expect(response.status).toBe(400); expect((await response.json()).error).toBe('Team aggregate unavailable');
     });
     it('reports an open database circuit as retryable service failure without leaking transport details', async () => {
-        m.rpc.mockImplementation(async name => name === 'veo_scope'
+        m.rpc.mockImplementation(async name => name === 'veo_access_context'
             ? { data: { user_id: 'owner', role: 'owner', launch_at: new Date(Date.now() - 86400000).toISOString() } }
             : { error: { code: 'SUPABASE_CIRCUIT_OPEN', message: 'internal transport detail' } });
         const response = await GET(new NextRequest('https://veo.test/api/workspace'));

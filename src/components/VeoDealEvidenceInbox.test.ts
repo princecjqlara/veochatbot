@@ -13,6 +13,19 @@ it('saves a team-wide policy independently of the per-submission switch',async()
  const sent=fetcher.mock.calls.find(([,o])=>o?.method==='POST');expect(JSON.parse(sent![1].body)).toEqual({action:'auto_approval',enabled:true});
  expect(text(view.toJSON())).toContain('Team auto-approval is ON');
 });
+it('recovers failed client details without losing entered amounts or automatically submitting',async()=>{
+ let reads=0;
+ const fetcher=vi.fn(async(url:string)=>url.includes('/api/workspace?contact_id=client')?(++reads===1?Response.json({error:'Temporarily unavailable'},{status:503}):Response.json({contact:{id:'client',page_id:'page',name:'Client'},orders:[],closed_deals:[]})):Response.json({items:[],total:0}));
+ vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[{id:'worker',name:'Worker',role:'member'}],initialContactId:'client'}));});
+ const price=()=>view.root.findAllByType('label').find(l=>text(l).startsWith('Total deal price'))!.findByType('input');
+ await act(async()=>price().props.onChange({target:{value:'1200'}}));
+ const retry=view.root.findAllByType('button').find(b=>text(b)==='Retry client details')!;expect(retry).toBeTruthy();
+ await act(async()=>retry.props.onClick());
+ expect(reads).toBe(2);expect(price().props.value).toBe('1200');expect(text(view.toJSON())).toContain('Client');
+ expect(view.root.findAllByType('button').some(b=>text(b)==='Retry client details')).toBe(false);
+ expect(fetcher.mock.calls.every(([,options]:any)=>!options?.method)).toBe(true);
+});
 it('clearly identifies committed receipts waiting for scheduled automatic approval',async()=>{
  const review={id:'review',client_name:'Client',seller_name:'Worker',page_name:'Page',receipt_kind:'closed',status:'pending',auto_approval_pending:true,total_price_minor:100000,closed_amount_minor:30000,currency:'PHP',occurred_at:'2026-11-17T04:00:00Z'};
  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({items:[review],total:1})));
