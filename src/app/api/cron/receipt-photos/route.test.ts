@@ -7,7 +7,7 @@ vi.mock('@/lib/veo-photo-cleanup', () => ({ cleanupWorkspacePhotos: m.expiry }))
 import { GET } from './route';
 const request = (authorized = true) => new NextRequest('https://veo.test/api/cron/receipt-photos', { headers: authorized ? { Authorization: 'Bearer cron' } : {} });
 beforeEach(() => { vi.resetAllMocks();vi.stubEnv('CRON_SECRET', 'cron');vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');m.admin.mockReturnValue({});m.delivered.mockResolvedValue({ removed: 3 });m.expiry.mockResolvedValue(undefined); });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); });
 it('authenticates before accessing storage or SQL', async () => {
     expect((await GET(request(false))).status).toBe(401);expect(m.admin).not.toHaveBeenCalled();
 });
