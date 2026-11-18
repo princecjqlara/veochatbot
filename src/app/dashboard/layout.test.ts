@@ -6,6 +6,23 @@ vi.mock('next-auth/react', () => ({ useSession: m.session, signOut: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: m.push }), usePathname: () => '/dashboard/workspace', useSearchParams: () => m.params }));
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }: any) => createElement('a', { href, ...props }, children) }));
 import Layout from './layout';
+it('withholds private tools during an outage and rechecks the session on reconnect', async () => {
+    const update = vi.fn().mockResolvedValue({ user: { workspaceUnavailable: true } });
+    m.session.mockReturnValue({ status: 'authenticated', update, data: { user: { id: 'member', workspaceUnavailable: true } } });
+    let view: any;await act(async () => { view = create(createElement(Layout, null, createElement('div', { id: 'private-workspace' }, 'Private data'))); });
+    try {
+        expect(view.root.findAllByProps({ id: 'private-workspace' })).toHaveLength(0);
+        expect(view.root.findAllByType('a')).toHaveLength(0);
+        expect(view.root.findByType('h1').children).toContain('VEO is temporarily unavailable');
+        await act(async () => view.root.findAllByType('button').find((b: any) => b.children.includes('Reconnect')).props.onClick());
+        expect(update).toHaveBeenCalledOnce();
+        expect(JSON.stringify(view.toJSON())).toContain('The connection is still unavailable. Please try again shortly.');
+        m.session.mockReturnValue({ status: 'authenticated', update, data: { user: { id: 'member', role: 'member', telegramProfileConfirmed: true } } });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ linked: true })));
+        await act(async () => view.update(createElement(Layout, null, createElement('div', { id: 'private-workspace' }, 'Private data'))));
+        expect(view.root.findAllByProps({ id: 'private-workspace' })).toHaveLength(1);
+    } finally { await act(async () => view.unmount()); }
+});
 afterEach(() => { vi.unstubAllGlobals();m.params = new URLSearchParams(); });
 it('shows only suspension details and sign-out while withholding the workspace and member controls', async () => {
     m.session.mockReturnValue({ status: 'authenticated', data: { user: { suspension: { id: 'suspension', reason: 'Supervisor conduct review', ends_at: null } } } });

@@ -13,6 +13,24 @@ import { GET } from './route';
 beforeEach(() => { m.guard.mockReset().mockResolvedValue({ optional_work_paused: false }); });
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 describe('private photo cleanup during unrelated worker failures', () => {
+    it.each(['busy', 'transport'])('still checkpoints due receipt deliveries when auto-approval needs a retry: %s', async failure => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.stubEnv('CRON_SECRET', 'cron');
+        m.guard.mockRejectedValue(Error('Database pressure'));
+        m.from.mockImplementation(() => { const q: any = { select: () => q, is: () => q, or: () => q, lte: () => q, limit: async () => ({ data: [] }) };return q; });
+        m.rpc.mockImplementation(async name => {
+            if (name === 'veo_auto_approve_pending_team_reviews') {
+                if (failure === 'transport') throw Error('Network unavailable');
+                return { error: { code: '55P03', message: 'Background capacity busy' } };
+            }
+            return { data: name === 'veo_claim_submissions' ? [{ id: 'submission', claim_token: 'lease' }]
+                : name === 'veo_handoff' ? null : name === 'veo_submission_requirements' ? { blockers: ['page_access_changed'] } : true };
+        });
+        m.sync.mockResolvedValue({ checked: 8 });
+        const response = await GET(new NextRequest('https://veo.test/api/cron/workspace', { headers: { Authorization: 'Bearer cron' } }));
+        expect(response.status).toBe(503);expect(await response.json()).toMatchObject({ ok: false, auto_approval_retry: true, submissions: 1 });
+        expect(m.rpc).toHaveBeenCalledWith('veo_enqueue_approved_deal_reviews', { p_limit: 20 });
+        expect(m.rpc).toHaveBeenCalledWith('veo_finish_submission', { p_id: 'submission', p_claim: 'lease', p_status: 'blocked', p_error: 'Eligibility or page access changed; review and resubmit' });
+    });
     it('defers heavy optional work during pressure while keeping eligibility, expiry cleanup and due deliveries running', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.stubEnv('CRON_SECRET', 'cron');
         m.guard.mockRejectedValue(Error('Database pressure'));

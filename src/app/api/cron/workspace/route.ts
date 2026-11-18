@@ -60,8 +60,9 @@ async function processWorkspace(request: NextRequest) {
         // The independent workspace-events worker continues live collection.
         // Avoid a second bulk drain while the database is recovering.
         const processed = optionalWorkPaused ? 0 : await processWorkspaceEvents(processFacebookWebhook, request.nextUrl.origin, Math.max(0, 210000 - (Date.now() - startedAt)));
-        const autoApproved = await db.rpc('veo_auto_approve_pending_team_reviews', { p_limit: 20 });
-        if (autoApproved.error) throw new Error('Team auto-approval queue unavailable');
+        let autoApprovalRetry = false;
+        try { const autoApproved = await db.rpc('veo_auto_approve_pending_team_reviews', { p_limit: 20 });autoApprovalRetry = !!autoApproved.error; }
+        catch { autoApprovalRetry = true; }
         const approved = await db.rpc('veo_enqueue_approved_deal_reviews', { p_limit: 20 });
         if (approved.error) throw new Error('Approved receipt queue unavailable');
         const claimed = await db.rpc('veo_claim_submissions');
@@ -103,6 +104,6 @@ async function processWorkspace(request: NextRequest) {
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
         }
-        return NextResponse.json({ ok: !disciplineRetry, discipline_retry: disciplineRetry, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: maintenanceRetry, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null }, { status: disciplineRetry ? 503 : 200 });
+        return NextResponse.json({ ok: !disciplineRetry && !autoApprovalRetry, discipline_retry: disciplineRetry, auto_approval_retry: autoApprovalRetry, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: maintenanceRetry, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null }, { status: disciplineRetry || autoApprovalRetry ? 503 : 200 });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }
