@@ -4,7 +4,7 @@ import { afterEach, it, expect, vi } from 'vitest';
 import Inbox from './VeoDealEvidenceInbox';
 let view:ReactTestRenderer;
 const text=(v:any):string=>typeof v==='string'?v:(v?.children||[]).map(text).join('');
-afterEach(async()=>{if(view)await act(async()=>view.unmount());vi.unstubAllGlobals();});
+afterEach(async()=>{if(view)await act(async()=>view.unmount());vi.useRealTimers();vi.unstubAllGlobals();});
 it('saves a team-wide policy independently of the per-submission switch',async()=>{
  const fetcher=vi.fn(async(url:string,options?:any)=>new Response(JSON.stringify(options?.method==='POST'?{enabled:true,pending:{approved:0}}:url.includes('auto_approval=1')?{enabled:false}:{items:[],total:0})));
  vi.stubGlobal('fetch',fetcher);await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'manager',role:'manager',supervisor_submissions_enabled:true},accounts:[]}));});
@@ -15,7 +15,7 @@ it('saves a team-wide policy independently of the per-submission switch',async()
 });
 it('recovers failed client details without losing entered amounts or automatically submitting',async()=>{
  let reads=0;
- const fetcher=vi.fn(async(url:string)=>url.includes('/api/workspace?contact_id=client')?(++reads===1?Response.json({error:'Temporarily unavailable'},{status:503}):Response.json({contact:{id:'client',page_id:'page',name:'Client'},orders:[],closed_deals:[]})):Response.json({items:[],total:0}));
+ const fetcher=vi.fn(async(url:string)=>url.includes('/api/workspace/deal-reviews/client?contact_id=client')?(++reads===1?Response.json({error:'Temporarily unavailable'},{status:503}):Response.json({contact:{id:'client',page_id:'page',name:'Client'},orders:[],closed_deals:[]})):Response.json({items:[],total:0}));
  vi.stubGlobal('fetch',fetcher);
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[{id:'worker',name:'Worker',role:'member'}],initialContactId:'client'}));});
  const price=()=>view.root.findAllByType('label').find(l=>text(l).startsWith('Total deal price'))!.findByType('input');
@@ -25,6 +25,41 @@ it('recovers failed client details without losing entered amounts or automatical
  expect(reads).toBe(2);expect(price().props.value).toBe('1200');expect(text(view.toJSON())).toContain('Client');
  expect(view.root.findAllByType('button').some(b=>text(b)==='Retry client details')).toBe(false);
  expect(fetcher.mock.calls.every(([,options]:any)=>!options?.method)).toBe(true);
+});
+it('automatically reloads temporary client failures while retaining amounts and selected photos',async()=>{
+ vi.useFakeTimers();let reads=0;
+ const fetcher=vi.fn(async(url:string)=>url.includes('/deal-reviews/client?')?(++reads===1?Response.json({error:'Unavailable'},{status:503}):Response.json({contact:{id:'client',name:'Client'},orders:[],closed_deals:[]})):Response.json({items:[],total:0}));
+ vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[{id:'worker',role:'member'}],initialContactId:'client'}));});
+ const price=()=>view.root.findAllByType('label').find(l=>text(l).startsWith('Total deal price'))!.findByType('input');
+ await act(async()=>price().props.onChange({target:{value:'1200'}}));
+ const photo={size:1,name:'receipt.jpg'};
+ const fileInput=view.root.findAllByProps({type:'file'})[0];
+ await act(async()=>fileInput.props.onChange({target:{files:[photo]}}));
+ expect(text(view.toJSON())).toContain('Retrying automatically');
+ expect(view.root.findByProps({type:'submit'}).props.disabled).toBe(true);
+ await act(async()=>{await vi.advanceTimersByTimeAsync(2000);});
+ expect(reads).toBe(2);expect(price().props.value).toBe('1200');expect(view.root.findAllByProps({type:'file'})[0]).toBe(fileInput);
+ expect(view.root.findByProps({type:'submit'}).props.disabled).toBe(false);
+ expect(fetcher.mock.calls.every(([,options]:any)=>!options?.method)).toBe(true);
+});
+it('does not automatically retry a denied client or seller',async()=>{
+ vi.useFakeTimers();let reads=0;
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>url.includes('/deal-reviews/client?')?(reads++,Response.json({error:'Page access denied'},{status:403})):Response.json({items:[],total:0})));
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[],initialContactId:'client'}));});
+ await act(async()=>{await vi.advanceTimersByTimeAsync(10000);});
+ expect(reads).toBe(1);expect(text(view.toJSON())).toContain('Page access denied');expect(view.root.findByProps({type:'submit'}).props.disabled).toBe(true);
+});
+it('rechecks the selected seller and rejects a stale response from the previous selection',async()=>{
+ let finishOld!:(value:Response)=>void;
+ const fetcher=vi.fn(async(url:string)=>url.includes('/deal-reviews/client?')?url.includes('seller_id=worker')?new Promise<Response>(resolve=>{finishOld=resolve;}):Response.json({contact:{id:'client',name:'Current client'},orders:[{id:'new-order',seller_id:'other',description:'Current seller order'}],closed_deals:[]}):Response.json({items:[],total:0}));
+ vi.stubGlobal('fetch',fetcher);
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'manager'},accounts:[{id:'worker',role:'manager'},{id:'other',role:'member'}],initialContactId:'client'}));});
+ const sellerSelect=view.root.findAllByType('label').find(l=>text(l).startsWith('Selling staff'))!.findByType('select');
+ await act(async()=>sellerSelect.props.onChange({target:{value:'other'}}));
+ await act(async()=>finishOld(Response.json({contact:{id:'client',name:'Old client'},orders:[{id:'old-order',seller_id:'other',description:'Stale order'}],closed_deals:[]})));
+ expect(text(view.toJSON())).toContain('Current seller order');expect(text(view.toJSON())).not.toContain('Stale order');
+ expect(fetcher.mock.calls.some(([url])=>url.includes('seller_id=other'))).toBe(true);
 });
 it('clearly identifies committed receipts waiting for scheduled automatic approval',async()=>{
  const review={id:'review',client_name:'Client',seller_name:'Worker',page_name:'Page',receipt_kind:'closed',status:'pending',auto_approval_pending:true,total_price_minor:100000,closed_amount_minor:30000,currency:'PHP',occurred_at:'2026-11-17T04:00:00Z'};
@@ -60,7 +95,7 @@ it('keeps Salary compact with the approval list and a link to the full receipt f
  expect(fetcher.mock.calls).toHaveLength(1);
 });
 it('keeps client and Page selection and links the existing order with the right remaining amount',async()=>{
- const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.includes('/api/workspace?contact_id=client')?{contact:{id:'client',page_id:'page',name:'Selected Client'},orders:[{id:'order',seller_id:'worker',total_minor:100000,paid_minor:0,currency:'PHP',description:'Earlier order'},{id:'other-order',seller_id:'other',total_minor:900000,currency:'PHP'}],closed_deals:[{id:'cd',seller_id:'worker',order_id:'order',amount_minor:30000}]}:{items:[],total:0,pages:[{id:'page',name:'Page A'}]})));vi.stubGlobal('fetch',fetcher);
+ const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.includes('/api/workspace/deal-reviews/client?contact_id=client')?{contact:{id:'client',page_id:'page',name:'Selected Client'},orders:[{id:'order',seller_id:'worker',total_minor:100000,paid_minor:0,currency:'PHP',description:'Earlier order'},{id:'other-order',seller_id:'other',total_minor:900000,currency:'PHP'}],closed_deals:[{id:'cd',seller_id:'worker',order_id:'order',amount_minor:30000}]}:{items:[],total:0,pages:[{id:'page',name:'Page A'}]})));vi.stubGlobal('fetch',fetcher);
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[{id:'worker',role:'member',name:'Worker'}],initialContactId:'client',initialKind:'done'}));});
  const label=(prefix:string)=>view.root.findAllByType('label').find(l=>text(l).startsWith(prefix))!;
  expect(label('Client').findByType('select').props.value).toBe('client');expect(text(view.toJSON())).toContain('Selected Client');expect(label('Filter Page')).toBeTruthy();
@@ -75,7 +110,7 @@ it('clears the earlier order amounts when switching to a direct Done Deal and su
  vi.stubGlobal('fetch',vi.fn(async(url:string,options?:any)=>{
   if(url.endsWith('/upload'))return new Response(JSON.stringify({photo:{id:'photo-'+(++uploads)}}));
   if(options?.method==='POST'){saves.push(JSON.parse(options.body));return new Response(JSON.stringify({review:{status:'approved',approval_mode:'supervisor_submission'},delivery_dispatch:{state:'queued'}}));}
-  return new Response(JSON.stringify(url.includes('/api/workspace?contact_id=client')?{contact:{id:'client',page_id:'page',name:'Client'},orders:[{id:'old-order',seller_id:'manager',total_minor:100000,paid_minor:0,currency:'PHP'}],closed_deals:[{id:'old-cd',seller_id:'manager',order_id:'old-order',amount_minor:30000}]}:{items:[],total:0}));
+  return new Response(JSON.stringify(url.includes('/api/workspace/deal-reviews/client?contact_id=client')?{contact:{id:'client',page_id:'page',name:'Client'},orders:[{id:'old-order',seller_id:'manager',total_minor:100000,paid_minor:0,currency:'PHP'}],closed_deals:[{id:'old-cd',seller_id:'manager',order_id:'old-order',amount_minor:30000}]}:{items:[],total:0}));
  }));
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'manager',role:'manager',supervisor_submissions_enabled:true},accounts:[{id:'manager',role:'manager'}],initialContactId:'client',initialKind:'done'}));});
  const label=(prefix:string)=>view.root.findAllByType('label').find(l=>text(l).startsWith(prefix))!;
@@ -96,7 +131,7 @@ it('clears the earlier order amounts when switching to a direct Done Deal and su
 });
 it('checks the direct Done Deal amount before uploading photos and allows correcting it',async()=>{
  let writes=0;
- vi.stubGlobal('fetch',vi.fn(async(url:string,options?:any)=>{if(options?.method==='POST')writes++;return new Response(JSON.stringify(url.includes('/api/workspace?contact_id=client')?{contact:{id:'client',page_id:'page'},orders:[],closed_deals:[]}:{items:[],total:0}));}));
+ vi.stubGlobal('fetch',vi.fn(async(url:string,options?:any)=>{if(options?.method==='POST')writes++;return new Response(JSON.stringify(url.includes('/api/workspace/deal-reviews/client?contact_id=client')?{contact:{id:'client',page_id:'page'},orders:[],closed_deals:[]}:{items:[],total:0}));}));
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'manager',role:'manager',supervisor_submissions_enabled:true},accounts:[{id:'manager',role:'manager'}],initialContactId:'client',initialKind:'done'}));});
  const input=(prefix:string)=>view.root.findAllByType('label').find(l=>text(l).startsWith(prefix))!.findByType('input');
  await act(async()=>input('Total deal price').props.onChange({target:{value:'1000'}}));
@@ -131,7 +166,7 @@ it('allows correcting a confirmed validation failure while reusing its already u
  const fetcher=vi.fn(async(url:string,options?:any)=>{
   if(url.endsWith('/upload')){uploads++;return new Response(JSON.stringify({photo:{id:'photo-'+uploads}}));}
   if(options?.method==='POST'){saves.push(JSON.parse(options.body));return saves.length===1?new Response(JSON.stringify({error:'Check the payment date'}),{status:422}):new Response(JSON.stringify({review:{duplicate:false}}));}
-  return new Response(JSON.stringify(url.includes('/api/workspace?contact_id=client')?{contact:{id:'client',page_id:'page',name:'Client'},orders:[],closed_deals:[]}:{items:[],total:0}));
+  return new Response(JSON.stringify(url.includes('/api/workspace/deal-reviews/client?contact_id=client')?{contact:{id:'client',page_id:'page',name:'Client'},orders:[],closed_deals:[]}:{items:[],total:0}));
  });vi.stubGlobal('fetch',fetcher);
  await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[{id:'worker',role:'member'}],initialContactId:'client'}));});
  const label=(prefix:string)=>view.root.findAllByType('label').find(l=>text(l).startsWith(prefix))!;
