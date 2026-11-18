@@ -4,6 +4,7 @@ export type ReviewedDeliveryState = 'awaiting_review' | 'waiting_for_setup' | 'q
  * the album; the existing workspace worker remains the durable retry path. */
 export async function queueReviewedDelivery(db: any, review: any): Promise<{ state: ReviewedDeliveryState }> {
     if (review?.status !== 'approved') return { state: 'awaiting_review' };
+    if (review.delivery_status === 'delivered') return { state: 'delivered' };
     if (!review.delivery_submission) return { state: 'waiting_for_setup' };
     try {
         const target = new URL('/api/veo/handoff', process.env.VEO_JAUCIAN_URL);

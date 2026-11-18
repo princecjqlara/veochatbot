@@ -4,6 +4,11 @@ vi.mock('../veo-report-read',()=>({readVeoRpc:m.read}));
 import { queueReviewedDelivery } from '../veo-reviewed-delivery';
 afterEach(()=>{vi.resetAllMocks();vi.unstubAllGlobals();vi.unstubAllEnvs();});
 const configured=()=>{vi.stubEnv('VEO_JAUCIAN_URL','https://jaucian.test');vi.stubEnv('VEO_JAUCIAN_SECRET','test-key');};
+it('retains a delivered result on save retries after temporary photos were cleaned',async()=>{
+ const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+ expect(await queueReviewedDelivery({}, {status:'approved',delivery_submission:'saved',delivery_status:'delivered'})).toEqual({state:'delivered'});
+ expect(m.read).not.toHaveBeenCalled();expect(fetcher).not.toHaveBeenCalled();
+});
 it('keeps staff pending and missing-setup receipts out of the bot queue',async()=>{
  const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);expect(await queueReviewedDelivery({}, {status:'pending'})).toEqual({state:'awaiting_review'});
  expect(await queueReviewedDelivery({}, {status:'approved'})).toEqual({state:'waiting_for_setup'});expect(m.read).not.toHaveBeenCalled();expect(fetcher).not.toHaveBeenCalled();

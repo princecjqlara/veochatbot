@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 // scope this override to the child so the subsequent app build stays production.
 const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url)), 'run',
     'src/lib/__tests__/veo-delivered-photo-cleanup.test.ts',
-    'src/lib/__tests__/veo-photo-cleanup.test.ts',
+    'src/lib/__tests__/veo-photo-cleanup.test.ts', 'src/lib/__tests__/veo-reviewed-delivery.test.ts',
     'src/app/api/cron/receipt-photos/route.test.ts',
     'src/app/api/cron/workspace/route.test.ts',
     'src/lib/__tests__/temporary-background-pause.test.ts',
