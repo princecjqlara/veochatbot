@@ -37,6 +37,17 @@ describe('runContactSyncToCompletion', () => {
         }));
     });
 
+    it('uses bounded workspace batches with the assigned Page instead of the disabled historical endpoint',async()=>{
+        const fetcher=vi.fn().mockResolvedValueOnce(Response.json({inserted:2,updated_names:1,complete:false,next_cursor:'next-batch'})).mockResolvedValueOnce(Response.json({inserted:1,updated_names:0,complete:true,next_cursor:null}));
+        vi.stubGlobal('fetch',fetcher);const result=await runContactSyncToCompletion('assigned-page',{workspace:true});
+        expect(result.completed).toBe(true);expect(result.totalSynced).toBe(4);
+        expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['/api/workspace/contacts/sync','/api/workspace/contacts/sync']);
+        expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({page_id:'assigned-page',cursor:'next-batch'});
+    });
+    it('shows a workspace suspension error and stops without retrying or changing cursors',async()=>{
+        const fetcher=vi.fn(async()=>Response.json({error:'Account suspended',code:'ACCOUNT_SUSPENDED'},{status:403}));vi.stubGlobal('fetch',fetcher);
+        await expect(runContactSyncToCompletion('assigned-page',{workspace:true})).rejects.toThrow('Account suspended');expect(fetcher).toHaveBeenCalledOnce();
+    });
     it('uses the saved incremental checkpoint when reconnect asks to resume sync', async () => {
         const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, partial: false, synced: 2 }), { status: 200 }));
         vi.stubGlobal('fetch', fetchMock);

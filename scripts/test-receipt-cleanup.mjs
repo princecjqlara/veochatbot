@@ -12,6 +12,15 @@ const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modul
     'src/lib/__tests__/temporary-background-pause.test.ts',
     'src/components/VeoDealEvidenceInbox.test.ts',
     'src/lib/__tests__/veo-deal-review-sql.test.ts',
+    'src/app/api/workspace/contacts/sync/route.test.ts',
+    'src/lib/__tests__/contact-sync-client.test.ts',
+    'src/lib/__tests__/workspace-service.test.ts',
+    'src/lib/__tests__/workspace-session-jwt.test.ts',
+    'src/lib/__tests__/veo-login.test.ts',
+    'src/lib/__tests__/veo-workspace-auth.test.ts',
+    'src/components/VeoDisciplineControls.test.ts',
+    'src/app/api/workspace/warnings/route.test.ts',
+    'src/app/dashboard/workspace/page.test.ts',
     '--maxWorkers=1', '--minWorkers=1'], { stdio: 'inherit', env: { ...process.env, NODE_ENV: 'test' } });
 if (result.error) console.error(result.error);
 process.exit(result.status ?? 1);

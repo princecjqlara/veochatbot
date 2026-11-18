@@ -1,6 +1,7 @@
 import { DatabaseReadTimeout, requestDeadline } from './request-deadline';
 
 export type ContactSyncResponse = {
+    error?: string;
     success?: boolean;
     partial?: boolean;
     synced?: number;
@@ -70,7 +71,7 @@ async function parseSyncResponse(response: Response): Promise<ContactSyncRespons
 
     if (!response.ok || !data.success) {
         throw new ContactSyncRequestError(
-            data.message || `Sync failed with status ${response.status}`,
+            data.message || data.error || `Sync failed with status ${response.status}`,
             response.status
         );
     }
@@ -86,15 +87,16 @@ async function postSync(
         syncStartedAt: string | null;
         syncRunId: string;
         forceFullSync: boolean;
+        workspace?: boolean;
     }
 ): Promise<ContactSyncResponse> {
     try { return await requestDeadline(async signal => {
-    const response = await fetch(`/api/pages/${pageId}/sync`, {
+    const response = await fetch(options.workspace ? '/api/workspace/contacts/sync' : `/api/pages/${pageId}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         signal,
-        body: JSON.stringify({
+        body: JSON.stringify(options.workspace ? { page_id: pageId, cursor: options.cursor } : {
             forceFullSync: options.forceFullSync,
             paged: true,
             ...(options.resumePsids.length > 0 ? { resumePsids: options.resumePsids } : {}),
@@ -104,6 +106,10 @@ async function postSync(
         })
     });
 
+    if (options.workspace && response.ok) {
+        const result = await response.json();
+        return { success: true, partial: result.complete !== true, synced: Number(result.inserted || 0) + Number(result.updated_names || 0), failed: 0, nextCursor: result.next_cursor || null, message: result.complete ? 'Assigned Page contact sync complete.' : 'Reading the next contact batch.' };
+    }
     return parseSyncResponse(response);
     }, 90000); } catch (error) {
         if (error instanceof DatabaseReadTimeout) throw new ContactSyncRequestError('Contact sync timed out. Retry from Contacts to continue.', 504);
@@ -117,6 +123,8 @@ export async function runContactSyncToCompletion(
         onProgress?: (progress: ContactSyncProgress) => void;
         /** Defaults to a full scan for manual sync actions; reconnects should use the incremental checkpoint. */
         forceFullSync?: boolean;
+        /** Use the connected Owner Page token and bounded identity-only workspace API. */
+        workspace?: boolean;
     } = {}
 ): Promise<ContactSyncResult> {
     let resumePsids: string[] = [];
@@ -133,7 +141,7 @@ export async function runContactSyncToCompletion(
 
         for (let retry = 1; retry <= MAX_TIMEOUT_RETRIES_PER_STEP; retry++) {
             try {
-                data = await postSync(pageId, { resumePsids, cursor, syncStartedAt, syncRunId, forceFullSync: options.forceFullSync ?? true });
+                data = await postSync(pageId, { resumePsids, cursor, syncStartedAt, syncRunId, forceFullSync: options.forceFullSync ?? true, workspace: options.workspace });
                 break;
             } catch (error) {
                 if (error instanceof ContactSyncRequestError && error.status >= 400 && error.status < 500) {

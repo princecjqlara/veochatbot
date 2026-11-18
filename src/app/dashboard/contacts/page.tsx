@@ -792,6 +792,7 @@ export default function ContactsPage() {
         syncingRef.current = true;
         try {
             const result = await runContactSyncToCompletion(selectedPageId, {
+                workspace: !!session?.user.role,
                 onProgress: ({ attempt, totalSynced, totalFailed, remainingPsids, cursor }) => {
                     if (remainingPsids.length > 0) {
                         console.warn(`Sync slice ${attempt} finished. Continuing ${remainingPsids.length} remaining contacts automatically.`);

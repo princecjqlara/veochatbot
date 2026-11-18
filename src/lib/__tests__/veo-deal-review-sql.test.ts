@@ -36,6 +36,36 @@ async function evidence(kind='closed',extra:any={},actor=member){
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
 const discipline=(actor:string,action:string,data:any)=>rpc('veo_discipline_action',[actor,action,JSON.stringify(data)]);
+it('lets every active workspace role seed only assigned Page identities without historical activity or jobs',async()=>{
+ const jobs=(await db.query('SELECT contact_id FROM veo_source_jobs ORDER BY contact_id')).rows;
+ const stages=(await db.query('SELECT contact_id FROM ad_lead_stage_events ORDER BY contact_id')).rows;
+ for(const actor of [member,manager,leader,owner]){
+  const psid=String(seq++),batch=JSON.stringify([{psid,name:'Synced name'}]);
+  expect(await rpc('veo_seed_contact_identities',[actor,page,batch])).toMatchObject({received:1,inserted:1});
+  expect(await rpc('veo_seed_contact_identities',[actor,page,batch])).toMatchObject({inserted:0});
+  expect((await db.query<any>('SELECT name,first_interaction_at,last_inbound_at FROM contacts WHERE page_id=$1 AND psid=$2',[page,psid])).rows[0]).toEqual({name:'Synced name',first_interaction_at:null,last_inbound_at:null});
+ }
+ expect((await db.query('SELECT contact_id FROM veo_source_jobs ORDER BY contact_id')).rows).toEqual(jobs);
+ expect((await db.query('SELECT contact_id FROM ad_lead_stage_events ORDER BY contact_id')).rows).toEqual(stages);
+ for(const signature of ['veo_seed_contact_identities(uuid,uuid,jsonb)','veo_seed_contact_identities_before_names(uuid,uuid,jsonb)'])expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed",[signature])).rows[0].exposed).toBe(false);
+});
+it('blocks sync after Page revocation, deactivation, cross-tenant selection or suspension, including the base function',async()=>{
+ const batch=JSON.stringify([{psid:'987654321',name:'Not permitted'}]);
+ await db.query('DELETE FROM user_pages WHERE user_id=$1 AND page_id=$2',[member,page]);
+ await expect(rpc('veo_seed_contact_identities',[member,page,batch])).rejects.toThrow('Page access');
+ await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)',[member,page]);
+ await db.query('UPDATE users SET is_active=false WHERE id=$1',[member]);
+ await expect(rpc('veo_seed_contact_identities',[member,page,batch])).rejects.toThrow('Page access');
+ await db.query('UPDATE users SET is_active=true WHERE id=$1',[member]);
+ const foreign=id(seq++);await db.query("INSERT INTO pages(id,fb_page_id,name,access_token) VALUES($1,'333','Other tenant','private')",[foreign]);
+ await db.query('INSERT INTO user_pages(user_id,page_id) VALUES($1,$2)',[member,foreign]);
+ await expect(rpc('veo_seed_contact_identities',[member,foreign,batch])).rejects.toThrow('Page access');
+ const suspended=await discipline(manager,'suspend',{user_id:member,request_id:id(seq++),duration_minutes:null,reason:'Sync suspension test'});
+ for(const fn of ['veo_seed_contact_identities','veo_seed_contact_identities_before_names'])await expect(rpc(fn,[member,page,batch])).rejects.toThrow('Page access');
+ expect((await db.query("SELECT id FROM contacts WHERE psid='987654321'")).rows).toHaveLength(0);
+ await discipline(leader,'lift',{user_id:member,suspension_id:suspended.suspension.id,reason:'Restore after sync test'});
+ expect(await rpc('veo_seed_contact_identities',[member,page,batch])).toMatchObject({inserted:1});
+});
 it('allows scoped warning removal and retains its audit without warnings on supervisors',async()=>{
  const request_id=id(seq++),warning=await discipline(manager,'issue',{user_id:member,request_id,reason:'Repeated missed handover'});
  expect((await rpc('veo_workflow_warnings',[manager,member])).workers[0].warning_count).toBe(1);

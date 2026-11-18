@@ -11,7 +11,7 @@ vi.mock('next/link', () => ({ default: ({ href, children, ...props }: any) => cr
 import Page from './page';
 let view: ReactTestRenderer;
 function dashboard(role = 'member') {
-    return { scope: { user_id: 'worker', role, launch_at: '2026-11-05T00:00:00Z' }, accounts: [{ id: 'worker', name: 'Worker', role: 'member' }],
+    return { scope: { user_id: 'worker', role, launch_at: '2026-11-05T00:00:00Z', page_ids:['page-1'] }, accounts: [{ id: 'worker', name: 'Worker', role: 'member' }],
         orders: [], teams: [], tomorrow: [], salary: [], submissions: [], sync: [], order_page: { total: 0 } };
 }
 beforeEach(async () => { await Promise.all(m.imports);vi.clearAllMocks(); vi.useFakeTimers(); vi.stubGlobal('fetch', m.fetch); });
@@ -38,6 +38,11 @@ async function render(role = 'member', params = 'view=dashboard') {
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
 }
 describe('workspace contacts, unified deals and Owner separation', () => {
+    it.each(['member','manager','team_leader','owner'])('offers %s sync only for their currently assigned Pages',async role=>{
+        await render(role,'view=sync');
+        const control=view.root.findAllByType('section').find(s=>s.findAllByType('h2').some(h=>h.children.includes('Sync contacts')))!;
+        expect(control).toBeTruthy();expect(control.findByType('select').findAllByType('option').map(o=>o.props.value)).toEqual(['','page-1']);
+    });
     it('displays API items as searchable contacts across all assigned pages even when no orders exist, and allows selecting a client', async () => {
         await render();
         expect(JSON.stringify(view.toJSON())).toContain('Searchable Client');
