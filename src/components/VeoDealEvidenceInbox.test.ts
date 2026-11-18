@@ -93,6 +93,15 @@ it('checks the direct Done Deal amount before uploading photos and allows correc
  await act(async()=>view.root.findByType('form').props.onSubmit({preventDefault(){},currentTarget:{reset(){}}}));
  expect(writes).toBe(0);expect(text(view.toJSON())).toContain('PHP 1200.00');
 });
+it('explains delivered photo removal while keeping approved receipt details available',async()=>{
+ const review={id:'review',client_name:'Client',page_name:'Page',seller_name:'Worker',receipt_kind:'done',status:'approved',delivery_status:'delivered',total_price_minor:100000,received_now_minor:70000,currency:'PHP',occurred_at:'2026-11-18',photos:['stage','payment','order'].map(slot=>({slot,available:false}))};
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>Response.json(url.includes('review_id=')?{review}:{items:[review],total:1})));
+ await act(async()=>{view=create(createElement(Inbox,{scope:{user_id:'worker',role:'member'},accounts:[],compact:true}));});
+ await act(async()=>view.root.findAllByType('button').find(b=>text(b)==='View evidence')!.props.onClick());
+ expect(text(view.toJSON())).toContain('Photo removed from VEO after Telegram delivery. View the photo in Telegram.');
+ expect(text(view.toJSON())).not.toContain('Ask for a new submission');expect(text(view.toJSON())).toContain('approved');
+ expect(view.root.findAllByType('img')).toHaveLength(0);
+});
 it('requires checking every photo before an independent supervisor can approve',async()=>{
  const review={id:'review',client_name:'Client',page_name:'Page',seller_name:'Worker',receipt_kind:'closed',status:'pending',can_review:true,total_price_minor:100000,closed_amount_minor:30000,currency:'PHP',photos:['stage','payment','order'].map(slot=>({slot,available:true,photo_url:'https://example.test/'+slot}))};
  const fetcher=vi.fn(async(url:string,options?:any)=>new Response(JSON.stringify(options?.method==='POST'?{review:{...review,status:'approved'}}:url.includes('review_id=')?{review}:{items:[review],total:1,pages:[]})));vi.stubGlobal('fetch',fetcher);

@@ -10,6 +10,7 @@ import { cleanupWorkspacePhotos } from '@/lib/veo-photo-cleanup';
 import { runBackgroundJob } from '@/lib/background-run';
 import { queueReceiptDeletions } from '@/lib/veo-receipt-deletion';
 import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
+import { cleanupDeliveredReceiptPhotos } from '@/lib/veo-delivered-photo-cleanup';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -67,6 +68,7 @@ async function processWorkspace(request: NextRequest) {
         if (approved.error) throw new Error('Approved receipt queue unavailable');
         const claimed = await db.rpc('veo_claim_submissions');
         if (claimed.error) throw new Error('Delivery queue unavailable');
+        let photoCleanupRetry = false;
         for (const s of claimed.data || []) {
             let status = 'queued', failure: string | null = null;
             try {
@@ -103,7 +105,11 @@ async function processWorkspace(request: NextRequest) {
             } catch { failure = 'Delivery pending; automatic retry scheduled'; }
             const finished = await db.rpc('veo_finish_submission', { p_id: s.id, p_claim: s.claim_token, p_status: status, p_error: failure });
             if (finished.error || !finished.data) throw new Error('Delivery lease lost');
+            if (status === 'delivered') {
+                try { await cleanupDeliveredReceiptPhotos(db, s.id); }
+                catch { photoCleanupRetry = true; } // Independent photo cron retries without replaying delivery.
+            }
         }
-        return NextResponse.json({ ok: !disciplineRetry && !autoApprovalRetry, discipline_retry: disciplineRetry, auto_approval_retry: autoApprovalRetry, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: maintenanceRetry, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null }, { status: disciplineRetry || autoApprovalRetry ? 503 : 200 });
+        return NextResponse.json({ ok: !disciplineRetry && !autoApprovalRetry && !photoCleanupRetry, discipline_retry: disciplineRetry, auto_approval_retry: autoApprovalRetry, photo_cleanup_retry: photoCleanupRetry, processed, submissions: claimed.data?.length || 0, integration, receipt_deletion: receiptDeletion, optional_work_paused: optionalWorkPaused, maintenance_retry: maintenanceRetry, event_collection_deferred: optionalWorkPaused, budget_retry: budgetRetry, intake_retry: intakeRetry, source_retry: sourceRetry, operations_retry: !!operations.error, cleanup: operations.data || null }, { status: disciplineRetry || autoApprovalRetry || photoCleanupRetry ? 503 : 200 });
     } catch (e: any) { return NextResponse.json({ ok: false, error: e.message }, { status: 503 }); }
 }

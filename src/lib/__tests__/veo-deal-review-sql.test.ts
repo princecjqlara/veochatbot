@@ -363,6 +363,21 @@ it('queues both milestones only after approval and current Telegram mapping, wit
  const submissions=(await db.query<any>('SELECT * FROM veo_submissions ORDER BY receipt_kind')).rows;expect(submissions).toHaveLength(2);
  for(const s of submissions){const h=await rpc('veo_handoff',[s.id]);expect(h.review_status).toBe('approved');expect(h.evidence_photos).toHaveLength(3);expect(h.contact_id).toBe(client);expect(h.reviewed_by).toBe(owner);if(s.receipt_kind==='done'){expect(Number(h.total_received_minor)).toBe(105000);expect(Number(h.done_amount_minor)).toBe(70000);}else expect(Number(h.total_received_minor)).toBe(30000);}
 });
+it('preserves approved receipt and salary history when delivered evidence photos are removed',async()=>{
+ const cd=await approve(await submit(await evidence()));
+ const dd=await approve(await submit(await evidence('done',{order_id:cd.order_id,closed_deal_id:cd.closed_deal_id,tip_minor:5000})));
+ const day=(await db.query<any>('SELECT veo_today()::text d')).rows[0].d;
+ const salary=await rpc('veo_salary',[member,day]);
+ const ledger=async()=>({orders:(await db.query('SELECT * FROM veo_orders ORDER BY id')).rows,payments:(await db.query('SELECT * FROM veo_payments ORDER BY id')).rows,tips:(await db.query('SELECT * FROM veo_deal_tips ORDER BY review_id')).rows,audit:(await db.query('SELECT * FROM veo_audit ORDER BY id')).rows});
+ const before=await ledger();
+ await db.query('UPDATE veo_photo_objects SET deleted_at=clock_timestamp() WHERE object_path IN(SELECT object_path FROM veo_deal_review_photos WHERE review_id=ANY($1::uuid[]))',[[cd.id,dd.id]]);
+ for(const receipt of [cd,dd]){
+  const review=await rpc('veo_deal_review_access',[member,receipt.id]);expect(review.status).toBe('approved');expect(review.deleted_at).toBeNull();
+  expect(review.photos).toHaveLength(3);expect(review.photos.every((p:any)=>p.available===false)).toBe(true);
+ }
+ expect(await ledger()).toEqual(before);expect(await rpc('veo_salary',[member,day])).toEqual(salary);
+ for(const constraint of ['veo_deal_review_photos_review_id_fkey','veo_deal_reviews_delivery_submission_fkey'])expect((await db.query('SELECT 1 FROM pg_constraint WHERE conname=$1',[constraint])).rows).toHaveLength(1);
+});
 it('keeps evidence and review functions private and respects the rollout switch',async()=>{
  for(const fn of ['veo_review_deal(uuid,uuid,text,boolean,boolean,boolean,text)','veo_deal_review_access(uuid,uuid)','veo_submit_deal_review(uuid,jsonb,uuid[])'])expect((await db.query<any>("SELECT has_function_privilege('authenticated',$1,'EXECUTE') exposed",[fn])).rows[0].exposed).toBe(false);
  await db.query('UPDATE veo_deal_review_settings SET enabled=false WHERE tenant_id=$1',[tenant]);expect((await rpc('veo_scope',[owner])).reviewed_deals_enabled).toBe(false);await expect(submit(await evidence())).rejects.toThrow('permitted contact');

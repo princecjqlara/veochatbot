@@ -15,6 +15,11 @@ it('defers authorized scheduled work without opening a database connection or re
 it('retains cron authentication during the pause', async () => {
     expect((await middleware(new NextRequest('https://veo.test/api/cron/workspace'))).status).toBe(401);
 });
+it('allows authenticated photo reclamation during a temporary background pause', async () => {
+    const url = 'https://veo.test/api/cron/receipt-photos';
+    expect((await middleware(new NextRequest(url))).status).toBe(401);
+    expect((await middleware(new NextRequest(url, { headers: { Authorization: 'Bearer cron' } }))).headers.get('x-middleware-next')).toBe('1');
+});
 it('keeps staff requests, sign-in and webhook intake on their normal authorization paths', async () => {
     token.mockResolvedValue({ id: 'member' });
     for (const path of ['/api/workspace/context', '/api/auth/session', '/api/auth/callback/credentials', '/api/facebook/webhook']) {

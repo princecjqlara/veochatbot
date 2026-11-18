@@ -20,7 +20,7 @@ export async function middleware(request: NextRequest) {
         }
     }
     const backgroundResumeAt = Date.parse(process.env.VEO_BACKGROUND_PAUSED_UNTIL || '');
-    if (path.startsWith('/api/cron/') && Number.isFinite(backgroundResumeAt) && backgroundResumeAt > Date.now()) {
+    if (path.startsWith('/api/cron/') && path !== '/api/cron/receipt-photos' && Number.isFinite(backgroundResumeAt) && backgroundResumeAt > Date.now()) {
         if (!process.env.CRON_SECRET || request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         return NextResponse.json({ ok: false, skipped: true, reason: 'temporary_background_pause', resumes_at: new Date(backgroundResumeAt).toISOString() },
             { status: 503, headers: { 'Cache-Control': 'no-store', 'Retry-After': String(Math.min(60, Math.max(1, Math.ceil((backgroundResumeAt - Date.now()) / 1000)))) } });
