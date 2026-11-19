@@ -1,0 +1,18 @@
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import {NextRequest} from 'next/server';
+const m=vi.hoisted(()=>({session:vi.fn(),scope:vi.fn(),rpc:vi.fn()}));
+vi.mock('@/lib/get-session',()=>({getSessionFromRequest:m.session}));
+vi.mock('@/lib/supabase',()=>({getSupabaseAdmin:()=>({rpc:m.rpc})}));
+vi.mock('@/lib/veo-workspace',async()=>({...await vi.importActual<any>('@/lib/veo-workspace'),workspaceScope:m.scope}));
+import {GET,POST} from './route';
+const actor='00000000-0000-4000-8000-000000000001',contact='00000000-0000-4000-8000-000000000002',seller='00000000-0000-4000-8000-000000000003';
+const body={contact_id:contact,seller_id:seller,expected_owner_id:null,reason:'Correct assignment'};
+const get=()=>GET(new NextRequest('https://veo.test/api/workspace/client-assignment?contact_id='+contact));
+const post=(data:any=body,origin='https://veo.test')=>POST(new NextRequest('https://veo.test/api/workspace/client-assignment',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(data)}));
+beforeEach(()=>{m.session.mockResolvedValue({user:{id:actor}});m.scope.mockResolvedValue({user_id:actor,role:'manager',launch_at:'2026-11-09'});m.rpc.mockResolvedValue({data:{saved:true}});});
+afterEach(()=>{vi.clearAllMocks();});
+it('loads only the scoped assignment and active targets',async()=>{const r=await get();expect(r.status).toBe(200);expect(r.headers.get('Cache-Control')).toBe('no-store');expect(m.rpc).toHaveBeenCalledWith('veo_client_assignment_context',{p_actor:actor,p_contact:contact});});
+it.each(['manager','team_leader','owner'])('lets %s submit a fenced assignment using the session actor',async role=>{m.scope.mockResolvedValue({role,launch_at:'2026-11-09'});expect((await post({...body,p_actor:seller})).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('veo_manual_client_assignment',{p_actor:actor,p_contact:contact,p_seller:seller,p_expected_owner:null,p_reason:body.reason});});
+it('rejects members, anonymous requests and cross-origin mutations before SQL',async()=>{m.scope.mockResolvedValue({role:'member',launch_at:'2026-11-09'});expect((await get()).status).toBe(403);expect((await post()).status).toBe(403);m.session.mockResolvedValue(null);expect((await get()).status).toBe(401);expect((await post(body,'https://other.test')).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();});
+it('requires the loaded owner and a valid explanation',async()=>{for(const data of [{...body,expected_owner_id:undefined},{...body,expected_owner_id:'bad'},{...body,reason:'x'},{...body,reason:'x'.repeat(501)}])expect((await post(data)).status).toBe(400);expect(m.rpc).not.toHaveBeenCalled();});
+it.each([['42501',403],['PT409',409],['57014',503]] as const)('preserves %s without retrying the assignment write',async(code,status)=>{m.rpc.mockResolvedValue({error:{code,message:'Assignment changed'}});expect((await post()).status).toBe(status);expect(m.rpc).toHaveBeenCalledTimes(1);});

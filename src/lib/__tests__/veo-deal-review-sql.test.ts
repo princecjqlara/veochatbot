@@ -37,6 +37,69 @@ const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
 const discipline=(actor:string,action:string,data:any)=>rpc('veo_discipline_action',[actor,action,JSON.stringify(data)]);
 const resourceSample=(extra:any={})=>({available:true,disk_size_bytes:2000000000,disk_available_bytes:1500000000,resource_metrics_available:true,memory_total_bytes:400000000,memory_available_bytes:150000000,swap_total_bytes:1000000000,swap_free_bytes:800000000,cpu_count:2,load_5m:0.5,load_1m:0.5,resource_sample_epoch:Date.now()/1000,...extra});
+const manualAssignment=(actor:string,target:string,expected:string|null,reason='Correct client assignment')=>rpc('veo_manual_client_assignment',[actor,client,target,expected,reason]);
+it('lets Managers manually assign a client to their active Page workers without a Ready offer',async()=>{
+ const context=await rpc('veo_client_assignment_context',[manager,client]);
+ expect(context.owner).toBeNull();expect(context.targets.map((t:any)=>t.id)).toContain(member);
+ expect(await manualAssignment(manager,member,null)).toMatchObject({saved:true,unchanged:false,owner:{id:member}});
+ expect((await db.query<any>('SELECT previous_user_id,user_id FROM veo_client_claims WHERE contact_id=$1',[client])).rows[0]).toEqual({previous_user_id:null,user_id:member});
+ expect((await db.query<any>("SELECT after_value->>'method' method,reason FROM veo_audit WHERE action='client_assignment' AND entity_id=$1 ORDER BY created_at DESC LIMIT 1",[client])).rows[0]).toEqual({method:'supervisor_manual',reason:'Correct client assignment'});
+ expect((await db.query<any>('SELECT chatbot_enabled FROM contacts WHERE id=$1',[client])).rows[0].chatbot_enabled).toBe(false);
+});
+it('requires supervisor access and denies changing another branch even on a shared Page',async()=>{
+ await expect(rpc('veo_client_assignment_context',[member,client])).rejects.toThrow('Manager or Team Leader');
+ await expect(manualAssignment(member,member,null)).rejects.toThrow('Manager or Team Leader');
+ await db.query('INSERT INTO veo_client_claims(contact_id,tenant_id,page_id,user_id,claimed_at) VALUES($1,$2,$3,$4,now())',[client,tenant,page,other]);
+ await expect(rpc('veo_client_assignment_context',[manager,client])).rejects.toThrow('another branch');
+ await expect(manualAssignment(manager,member,other)).rejects.toThrow('another branch');
+ expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1',[client])).rows[0].user_id).toBe(other);
+});
+it('lets a Team Leader transfer between their Manager branches and the Owner transfer across branches',async()=>{
+ const second=id(seq++);
+ await rpc('veo_action',[leader,'create_account',JSON.stringify({user_id:second,parent_id:leader,role:'manager',name:'Other branch manager',email:second+'@example.com',password_hash:stored,page_ids:[page]})]);
+ await manualAssignment(manager,member,null);
+ expect(await manualAssignment(leader,second,member)).toMatchObject({saved:true,owner:{id:second}});
+ expect(await manualAssignment(owner,other,second)).toMatchObject({saved:true,owner:{id:other}});
+});
+it('checks expected ownership and makes a repeated successful assignment a no-op',async()=>{
+ await manualAssignment(owner,other,null);
+ await expect(manualAssignment(owner,member,null)).rejects.toThrow('assignment changed');
+ const before=(await db.query("SELECT count(*)::int n FROM veo_audit WHERE action='client_assignment'")).rows;
+ expect(await manualAssignment(owner,other,null)).toMatchObject({saved:true,unchanged:true});
+ expect((await db.query("SELECT count(*)::int n FROM veo_audit WHERE action='client_assignment'")).rows).toEqual(before);
+});
+it('requires a reason and an active permitted seller, keeping assignment RPCs service-only',async()=>{
+ await expect(manualAssignment(manager,member,null,'x')).rejects.toThrow('3 to 500');
+ await expect(manualAssignment(manager,other,null)).rejects.toThrow('active selling worker');
+ await db.query('UPDATE users SET is_active=false WHERE id=$1',[member]);
+ await expect(manualAssignment(manager,member,null)).rejects.toThrow('active selling worker');
+ for(const signature of ['veo_client_assignment_context(uuid,uuid)','veo_manual_client_assignment(uuid,uuid,uuid,uuid,text)'])expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') OR has_function_privilege('authenticated',$1,'EXECUTE') exposed",[signature])).rows[0].exposed).toBe(false);
+});
+it('rejects suspended recipients and clients on a Page outside supervisor access',async()=>{
+ await discipline(manager,'suspend',{user_id:member,request_id:id(seq++),duration_minutes:null,reason:'Manual assignment suspension test'});
+ await expect(manualAssignment(manager,member,null)).rejects.toThrow('active selling worker');
+ const foreignPage=id(seq++);
+ await db.query("INSERT INTO pages(id,fb_page_id,name,access_token,veo_enabled,veo_tenant_id) VALUES($1,'222','Foreign Page','test',true,$2)",[foreignPage,tenant]);
+ await db.query('UPDATE contacts SET page_id=$1 WHERE id=$2',[foreignPage,client]);
+ await expect(rpc('veo_client_assignment_context',[manager,client])).rejects.toThrow('outside your assigned Pages');
+});
+it('ends pending offers and marks the chosen worker Busy without requiring acceptance',async()=>{
+ const offer=id(seq++);
+ await db.query("INSERT INTO veo_intake_readiness(user_id,tenant_id,status,expires_at,request_id) VALUES($1,$2,'ready',now()+interval '1 hour',$3)",[member,tenant,id(seq++)]);
+ await db.query("INSERT INTO veo_client_offers(id,tenant_id,page_id,contact_id,offered_to,offered_by,status,expires_at) VALUES($1,$2,$3,$4,$5,$6,'pending',now()+interval '1 hour')",[offer,tenant,page,client,member,manager]);
+ await manualAssignment(manager,member,null);
+ expect((await db.query<any>('SELECT status FROM veo_client_offers WHERE id=$1',[offer])).rows[0].status).toBe('cancelled');
+ expect((await db.query<any>('SELECT status FROM veo_intake_readiness WHERE user_id=$1',[member])).rows[0].status).toBe('busy');
+});
+it('preserves existing seller orders, payments and receipts when correcting client service assignment',async()=>{
+ const close=await approve(await submit(await evidence()));
+ const tables=['veo_orders','veo_payments','veo_closed_deals','veo_deal_reviews'];
+ const before=[];for(const table of tables)before.push((await db.query('SELECT to_jsonb(t) row FROM '+table+' t ORDER BY id')).rows);
+ await manualAssignment(owner,other,null);
+ for(let n=0;n<tables.length;n++)expect((await db.query('SELECT to_jsonb(t) row FROM '+tables[n]+' t ORDER BY id')).rows).toEqual(before[n]);
+ expect(await rpc('veo_deal_review_context',[member,client,member])).toMatchObject({seller_id:member});
+ expect(close.seller_id).toBe(member);
+});
 async function healthyDisk(){await db.exec(`CREATE OR REPLACE FUNCTION veo_storage_status_before_resources() RETURNS jsonb LANGUAGE sql AS $$SELECT '{"status":"healthy","metrics_fresh":true,"maintenance_healthy":true,"optional_work_paused":false,"database_bytes":100000000}'::jsonb$$`);}
 it('pauses optional work on a new one-minute load spike and keeps a cooldown after the spike clears',async()=>{
  await healthyDisk();

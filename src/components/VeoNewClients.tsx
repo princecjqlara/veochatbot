@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { startAdaptivePolling } from '@/lib/adaptive-polling';
 import { createSearchSchedule } from '@/lib/search-schedule';
+import VeoClientAssignment from './VeoClientAssignment';
 const field = 'block w-full rounded border border-slate-300 bg-white p-2 text-sm';
 const button = 'rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-40';
 const stamp = (v: string | null) => v ? new Date(v).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' }) + ' PHT' : 'Not set';
@@ -11,6 +12,8 @@ export default function VeoNewClients({ scope, pages, initialContactId = '', onO
     const [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [version, setVersion] = useState(0);
     const [targets, setTargets] = useState<Record<string, string>>({}), requests = useRef(new Map<string, string>());
     const [sourceContact, setSourceContact] = useState(''), [sourceData, setSourceData] = useState<any>(null), [sourceBusy, setSourceBusy] = useState(false);
+    const [manualContact, setManualContact] = useState<string | null>(null);
+    const canAssignManually = ['owner', 'manager', 'team_leader'].includes(scope.role);
     const hasData = Boolean(data);
     const loadedQuery = useRef('');
     const [readError, setReadError] = useState(false);
@@ -56,6 +59,8 @@ export default function VeoNewClients({ scope, pages, initialContactId = '', onO
     const canSell = ['member', 'manager'].includes(scope.role), ready = data?.readiness?.ready === true && !readError;
     return <section aria-label="New client assignments" className="space-y-4 rounded-xl border bg-white p-5">
         <div className="flex flex-wrap justify-between gap-3"><h2 className="text-xl font-bold">New clients</h2><button className="text-sm underline" disabled={busy} onClick={() => setVersion(v => v + 1)}>Refresh assignments</button></div>
+        {canAssignManually && <button type="button" className={button} onClick={() => setManualContact('')}>Assign client manually</button>}
+        {canAssignManually && manualContact !== null && <VeoClientAssignment key={manualContact} initialContactId={manualContact} onClose={() => setManualContact(null)} onSaved={() => setVersion(v => v + 1)} />}
         <p className="text-sm">Fresh inquiries are assigned here before a sale is recorded. Assigning or accepting a client does not create a Closed Deal, Done Deal or commission. Choose Ready, then accept an available client or an offer from your team leader.</p>
         {data?.auto_policy?.enabled && <p className="rounded border bg-slate-50 p-3 text-sm">New inquiries appear in the configured Telegram group. Automatic editor offers start after {data.auto_policy.wait_minutes} minutes {data.auto_policy.wait_anchor === 'ready' ? 'of editor Ready time' : 'from the inquiry arriving'}. The selected Ready editor has {data.auto_policy.accept_minutes} minutes to accept; a missed offer moves to another Ready editor. Use /ready or /busy in Telegram or the controls below.</p>}
         <p className="text-sm">Offers last up to 15 minutes. Accepting makes you Busy and pauses the chatbot for that client so you can handle the conversation. Ready/Busy is separate from Jaucian’s active-for-tomorrow poll.</p>
@@ -72,6 +77,7 @@ export default function VeoNewClients({ scope, pages, initialContactId = '', onO
             const detailCount = c.intake?.detail_count || 0, detailsReady = c.intake?.eligible === true;
             return <article key={c.id} className="space-y-2 rounded border p-4"><div className="flex flex-wrap justify-between gap-2"><Link href={`/dashboard/contacts/${c.id}?pageId=${c.page_id}`} onClick={e => { if (onOpenClient) { e.preventDefault();onOpenClient(c.id); } }} className="font-semibold underline">{c.name || 'Unknown client'}</Link><span className="text-xs">{c.page_name} · Lead: {c.pipeline_stage?.replaceAll('_', ' ') || 'Unknown'}</span></div>
                 <p className="text-sm">Assigned to: {c.owner_name || 'Unassigned'}</p>
+                {canAssignManually && <button type="button" className="text-sm underline" onClick={() => setManualContact(c.id)}>Correct assignment</button>}
                 <button className="text-sm underline" onClick={() => void showSource(c.id)}>{sourceContact === c.id ? 'Hide source status' : 'Source status & order'}</button>
                 {sourceContact === c.id && <div className="rounded border bg-slate-50 p-3 space-y-2 text-sm">{sourceBusy && <p>Loading saved Facebook source status…</p>}{sourceData && <><p>Lead stage: <strong>{sourceData.evidence?.stage || 'No current explicit Facebook evidence'}</strong> · {sourceData.evidence?.source || 'unavailable'}</p><p>{sourceData.evidence?.coverage}</p><p>Order: {sourceData.draft?.status || 'No order draft'}{sourceData.draft?.note ? ` · ${sourceData.draft.note}` : ''}</p><p>Facebook refresh: {sourceData.sync?.status || 'not queued'}{sourceData.sync?.last_error ? ` · ${sourceData.sync.last_error}` : ''}</p><button className="underline" disabled={sourceBusy} onClick={() => void sourceAction({ action: 'refresh' })}>Refresh Facebook in background</button>{sourceData.can_review && <form className="grid gap-2 border-t pt-2 sm:grid-cols-2" onSubmit={e => { e.preventDefault();const form = e.currentTarget,f = new FormData(form);void sourceAction({ action: 'review',stage: f.get('stage'),reference: f.get('reference'),reason: f.get('reason') }); }}><label>Reviewed stage<select required name="stage" className={field}><option value="qualified">Qualified</option><option value="converted">Converted</option></select></label><label>Source reference<input required minLength={5} maxLength={500} name="reference" className={field} placeholder="Link or specific Business Suite source" /></label><label className="sm:col-span-2">Review explanation<textarea required minLength={10} maxLength={1000} name="reason" className={field} rows={2} /></label><button disabled={sourceBusy} className={button}>Save supervisor review</button></form>}</>}</div>}
                 {!c.owner_id && <p className={`text-sm ${detailsReady ? 'text-green-800' : 'text-amber-800'}`}>Client details: {detailCount}/3 valid answers collected. {detailsReady ? 'Available for a worker offer.' : 'Collect three valid details before offering or accepting.'}{c.intake?.fields?.length ? ` Saved: ${c.intake.fields.join(', ')}.` : ''}</p>}

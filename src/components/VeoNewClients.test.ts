@@ -49,6 +49,18 @@ it('gives Owner assignment controls without personal Ready buttons and filters r
     expect(select.findAllByType('option').map(o => o.props.value)).toEqual(['', 'ready']);
     expect(view.root.findByProps({ name: 'reason' }).props.required).toBe(true);
 });
+it.each(['manager','team_leader','owner'])('shows %s an immediate manual assignment control separate from Ready offers',async role=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({items:[],readiness:{ready:false},roster:[],total:0})));
+ await act(async()=>{view=create(createElement(Clients,{scope:{user_id:'supervisor',role},pages:[]}));});await tick();
+ const button=view.root.findAllByType('button').find(b=>text(b)==='Assign client manually')!;expect(button).toBeTruthy();
+ await act(async()=>button.props.onClick());expect(view.root.findByProps({'aria-label':'Manual client assignment'})).toBeTruthy();
+ expect(text(view.toJSON())).toContain('Past receipts, payments and sales credit');
+});
+it('keeps supervisor manual assignment controls hidden from members',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({items:[],readiness:{ready:false},roster:[],total:0})));
+ await act(async()=>{view=create(createElement(Clients,{scope,pages:[]}));});await tick();
+ expect(view.root.findAllByType('button').some(b=>text(b)==='Assign client manually')).toBe(false);
+});
 it('shows assigned offers and acceptance expiry with decline and refresh actions', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [{ ...item, offer_id: 'offer', offered_to: 'worker', offered_to_name: 'Worker', offer_expires_at: new Date().toISOString(), offer_authorized: false }], readiness: { ready: true }, roster: [], total: 1 }))));
     await act(async () => { view = create(createElement(Clients, { scope, pages: [] })); });await tick();
