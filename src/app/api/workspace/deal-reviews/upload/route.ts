@@ -5,6 +5,7 @@ import { uuid } from '@/lib/veo-workspace';
 import { receiptPhoto } from '@/lib/veo-receipts';
 import { dealChecked, dealEvidenceBucket, dealReviewScope, evidenceSlots } from '@/lib/veo-deal-review';
 import { requireStorageForReceipt } from '@/lib/veo-storage-health';
+import { isSupabaseUnavailable } from '@/lib/supabase-errors';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 45;
 const reply = (body: any, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -24,5 +25,5 @@ export async function POST(request: NextRequest) {
         dealChecked(await db.storage.from(dealEvidenceBucket).upload(path, bytes, { contentType: photo.type, upsert: false }));
         const saved = dealChecked(await db.from('veo_deal_review_photos').insert({ request_id: batch, tenant_id: scope.tenant_id, page_id: context.page_id, contact_id: contact, seller_id: seller, uploaded_by: scope.user_id, receipt_kind: kind, slot, object_path: path, photo_sha256: createHash('sha256').update(bytes).digest('hex') }).select('id,slot').single());
         return reply({ photo: saved }, 201);
-    } catch (e: any) { return reply({ error: e.message || 'Evidence upload failed' }, e.status || 400); }
+    } catch (e: any) { return reply({ error: e.message || 'Evidence upload failed' }, isSupabaseUnavailable(e) ? 503 : e.status || 400); }
 }

@@ -32,9 +32,13 @@ type GenericSupabaseClient = SupabaseClient<any, 'public', any>;
 
 let supabaseBrowserClient: GenericSupabaseClient | null = null;
 let supabaseAdminClient: GenericSupabaseClient | null = null;
+let supabaseAccessClient: GenericSupabaseClient | null = null;
 // A server request makes one attempt. Retrying at every layer multiplies load
 // during an outage; the gate allows one recovery probe after a short cooldown.
 const adminFetch = createSupabaseAvailabilityGate((input, init) => supabaseFetch(input, init, 1));
+// A failed report or background batch must not open the sign-in/permission
+// circuit. Access still checks the live database and has its own outage gate.
+const accessFetch = createSupabaseAvailabilityGate((input, init) => supabaseFetch(input, init, 1));
 
 export function getSupabaseClient(): GenericSupabaseClient {
     if (!supabaseBrowserClient) {
@@ -43,19 +47,21 @@ export function getSupabaseClient(): GenericSupabaseClient {
     return supabaseBrowserClient;
 }
 
-export function getSupabaseAdmin(signal?: AbortSignal): GenericSupabaseClient {
-    if (signal || !supabaseAdminClient) {
-        const client = createClient(getSupabaseUrl(), getSupabaseServiceKey(), {
-            global: { fetch: signal ? (input, init) => adminFetch(input, {
-                ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal
-            }) : adminFetch },
-            auth: {
-                autoRefreshToken: false,
-                persistSession: false
-            }
-        });
-        if (signal) return client;
-        supabaseAdminClient = client;
-    }
-    return supabaseAdminClient;
+export function getSupabaseAdmin(signal?: AbortSignal, purpose: 'default' | 'access' = 'default'): GenericSupabaseClient {
+    const existing = purpose === 'access' ? supabaseAccessClient : supabaseAdminClient;
+    if (existing && !signal) return existing;
+    const fetcher = purpose === 'access' ? accessFetch : adminFetch;
+    const client = createClient(getSupabaseUrl(), getSupabaseServiceKey(), {
+        global: { fetch: signal ? (input, init) => fetcher(input, {
+            ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal
+        }) : fetcher },
+        auth: {
+            autoRefreshToken: false,
+            persistSession: false
+        }
+    });
+    if (signal) return client;
+    if (purpose === 'access') supabaseAccessClient = client;
+    else supabaseAdminClient = client;
+    return client;
 }

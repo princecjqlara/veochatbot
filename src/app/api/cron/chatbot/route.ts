@@ -5,6 +5,8 @@ import { processOneMessagingAutoTagPage } from '@/lib/messaging-auto-tag-worker'
 import { processChatbotContinuationReviews } from '@/lib/chatbot-continuation';
 import { processDueChatbotFollowUps } from '@/lib/chatbot-follow-ups';
 import { isSupabaseUnavailable } from '@/lib/supabase-errors';
+import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
+import { runBackgroundJob } from '@/lib/background-run';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -19,6 +21,16 @@ export async function GET(request: NextRequest) {
     if (process.env.VEO_WORKSPACE_ENABLED === 'true' && process.env.VEO_CHATBOT_ENABLED !== 'true') {
         return NextResponse.json({ success: true, skipped: true, reason: 'workspace_mode' });
     }
+    const db = getSupabaseAdmin();
+    try {
+        if (process.env.VEO_WORKSPACE_ENABLED === 'true') await requireStorageForOptionalWork(db);
+        const result = await runBackgroundJob('chatbot', () => processChatbotSchedule(), process.env.VEO_WORKSPACE_ENABLED === 'true' ? db : undefined);
+        return result instanceof NextResponse ? result : NextResponse.json({ success: true, ...result });
+    } catch {
+        return NextResponse.json({ success: false, deferred: true, retryable: true, reason: 'database_recovery', error: 'Scheduled chatbot work will retry after database recovery.' }, { status: 503, headers: { 'Cache-Control': 'no-store', 'Retry-After': '60' } });
+    }
+}
+async function processChatbotSchedule() {
     const results: Record<string, unknown> = {};
     let success = true;
     const run = async (name: string, operation: () => Promise<unknown>) => {

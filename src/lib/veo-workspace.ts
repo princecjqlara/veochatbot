@@ -22,7 +22,7 @@ export async function passwordMatches(password: string, stored: string) {
 const requestScopes = new WeakMap<object, Map<string, Promise<WorkspaceScope | null>>>();
 const pendingScopes = new Map<string, Promise<WorkspaceScope | null>>();
 async function readWorkspaceScope(userId: string): Promise<WorkspaceScope | null> {
-    const { data, error } = await readVeoRpc(getSupabaseAdmin(), 'veo_access_context', { p_actor: userId }, 20000);
+    const { data, error } = await readVeoRpc(getSupabaseAdmin(undefined, 'access'), 'veo_access_context', { p_actor: userId }, 20000);
     if (error) throw Object.assign(new Error('Workspace permissions are temporarily unavailable. Retry shortly.'), { status: 503 });
     if (data?.suspension) throw Object.assign(new Error('Your account is suspended. Contact your Manager or Team Leader.'), { status: 403, code: 'ACCOUNT_SUSPENDED', suspension: data.suspension });
     return data;

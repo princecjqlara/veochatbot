@@ -1,9 +1,27 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { getSupabaseAdmin } from '../supabase';
+let getSupabaseAdmin: typeof import('../supabase')['getSupabaseAdmin'];
 
-beforeEach(() => {
+beforeEach(async () => {
+    vi.resetModules();
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://vhtbmdizugnxkgocmruq.supabase.co');
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test-service-key');
+    vi.stubEnv('VEO_PAGE_SCOPE_ENFORCED', 'false');
+    ({getSupabaseAdmin} = await import('../supabase'));
+});
+
+it('keeps live permission reads available when a background query opens the ordinary circuit',async()=>{
+    const fetcher=vi.fn().mockResolvedValueOnce(Response.json({code:'57014',message:'Statement timed out'},{status:503})).mockResolvedValueOnce(Response.json({user_id:'member',role:'member',launch_at:'2026-11-05'}));
+    vi.stubGlobal('fetch',fetcher);
+    expect((await getSupabaseAdmin().rpc('veo_maintenance')).error).not.toBeNull();
+    expect((await getSupabaseAdmin().rpc('veo_maintenance')).error?.code).toBe('SUPABASE_CIRCUIT_OPEN');
+    const access=getSupabaseAdmin(undefined,'access');expect(access).toBe(getSupabaseAdmin(undefined,'access'));
+    expect((await access.rpc('veo_access_context',{p_actor:'member'})).data).toMatchObject({role:'member'});
+    expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('still fails closed when the permission database itself is unavailable',async()=>{
+    const fetcher=vi.fn(async()=>Response.json({code:'PGRST002',message:'Database unavailable'},{status:503}));vi.stubGlobal('fetch',fetcher);
+    const access=getSupabaseAdmin(undefined,'access');expect((await access.rpc('veo_access_context',{p_actor:'member'})).error).not.toBeNull();
+    expect((await access.rpc('veo_access_context',{p_actor:'member'})).error?.code).toBe('SUPABASE_CIRCUIT_OPEN');expect(fetcher).toHaveBeenCalledOnce();
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 

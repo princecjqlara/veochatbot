@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const mocks = vi.hoisted(() => ({ db: {}, recover: vi.fn(), tag: vi.fn(), review: vi.fn(), followUp: vi.fn() }));
+const mocks = vi.hoisted(() => ({ db: {}, recover: vi.fn(), tag: vi.fn(), review: vi.fn(), followUp: vi.fn(), storage: vi.fn(), lease: vi.fn() }));
+vi.mock('@/lib/veo-storage-health', () => ({ requireStorageForOptionalWork: mocks.storage }));
+vi.mock('@/lib/background-run', () => ({ runBackgroundJob: mocks.lease }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => mocks.db }));
 vi.mock('@/lib/chatbot-inbound-recovery', () => ({ recoverMissingChatbotMessages: mocks.recover }));
 vi.mock('@/lib/messaging-auto-tag-worker', () => ({ processOneMessagingAutoTagPage: mocks.tag }));
@@ -13,6 +15,7 @@ const request = (token?: string) => new NextRequest('https://app.test/api/cron/c
 beforeEach(() => {
     vi.stubEnv('CRON_SECRET', 'scheduled-bot-secret');
     vi.clearAllMocks();
+    mocks.storage.mockResolvedValue({});mocks.lease.mockImplementation(async (_name,operation)=>operation());
     mocks.recover.mockResolvedValue({ pages: 1, scanned: 4, recovered: 0, failed: 0 });
     mocks.tag.mockResolvedValue({ pages: 1, tagged: 0 });
     mocks.review.mockResolvedValue({ reviewed: 0 });
@@ -21,6 +24,17 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe('scheduled live chatbot worker', () => {
+    it('defers every scheduled batch before database pressure can affect staff intake',async()=>{
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','true');vi.stubEnv('VEO_CHATBOT_ENABLED','true');
+        mocks.storage.mockRejectedValueOnce(Object.assign(Error('Database pressure'),{code:'STORAGE_ATTENTION'}));
+        const response=await GET(request('scheduled-bot-secret'));expect(response.status).toBe(503);expect(response.headers.get('Retry-After')).toBe('60');expect(await response.json()).toMatchObject({success:false,deferred:true,retryable:true});
+        for(const worker of [mocks.recover,mocks.tag,mocks.review,mocks.followUp,mocks.lease])expect(worker).not.toHaveBeenCalled();
+    });
+    it('uses the shared lease and skips a duplicate invocation without claiming work',async()=>{
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','true');vi.stubEnv('VEO_CHATBOT_ENABLED','true');mocks.lease.mockResolvedValueOnce({skipped:true,reason:'already_running'});
+        const response=await GET(request('scheduled-bot-secret'));expect(response.status).toBe(200);expect(await response.json()).toMatchObject({skipped:true,reason:'already_running'});
+        expect(mocks.lease).toHaveBeenCalledWith('chatbot',expect.any(Function),mocks.db);for(const worker of [mocks.recover,mocks.tag,mocks.review,mocks.followUp])expect(worker).not.toHaveBeenCalled();
+    });
     it('runs recovery and follow-ups when workspace chatbots are explicitly enabled', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.stubEnv('VEO_CHATBOT_ENABLED', 'true');
         const response = await GET(request('scheduled-bot-secret'));

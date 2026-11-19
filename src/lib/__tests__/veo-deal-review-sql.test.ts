@@ -36,6 +36,17 @@ async function evidence(kind='closed',extra:any={},actor=member){
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
 const discipline=(actor:string,action:string,data:any)=>rpc('veo_discipline_action',[actor,action,JSON.stringify(data)]);
+it('coordinates scheduled chatbots and refuses a review scan before work when resources are unavailable',async()=>{
+ const first=id(seq++),second=id(seq++);
+ expect(await rpc('veo_claim_background_job',['chatbot',first])).toBe(true);expect(await rpc('veo_claim_background_job',['chatbot',second])).toBe(false);
+ expect(await rpc('veo_release_background_job',['chatbot',second])).toBe(false);expect(await rpc('veo_release_background_job',['chatbot',first])).toBe(true);
+ const before=(await db.query('SELECT * FROM chatbot_continuation_reviews')).rows;
+ await expect(rpc('claim_chatbot_continuation_reviews',[2,new Date().toISOString()])).rejects.toThrow('deferred');
+ expect((await db.query('SELECT * FROM chatbot_continuation_reviews')).rows).toEqual(before);
+ await db.exec("CREATE OR REPLACE FUNCTION veo_storage_status() RETURNS jsonb LANGUAGE sql AS $$SELECT '{\"optional_work_paused\":false}'::jsonb$$");
+ expect((await db.query<any>('SELECT count(*)::int n FROM claim_chatbot_continuation_reviews()')).rows[0].n).toBe(0);
+ expect((await db.query<any>("SELECT has_function_privilege('authenticated','claim_chatbot_continuation_reviews(integer,timestamptz)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+});
 it('lets every active workspace role seed only assigned Page identities without historical activity or jobs',async()=>{
  const jobs=(await db.query('SELECT contact_id FROM veo_source_jobs ORDER BY contact_id')).rows;
  const stages=(await db.query('SELECT contact_id FROM ad_lead_stage_events ORDER BY contact_id')).rows;

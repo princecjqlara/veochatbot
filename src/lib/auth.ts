@@ -12,7 +12,7 @@ export const authOptions: NextAuthOptions = {
                 if (!credentials || !credentials.password || !credentials.email) return null;
                 try {
                     return await requestDeadline(async signal => {
-                        const db = getSupabaseAdmin(signal), email = credentials.email.trim().toLowerCase();
+                        const db = getSupabaseAdmin(signal, 'access'), email = credentials.email.trim().toLowerCase();
                         const row = await db.rpc('veo_login_context', { p_email: email });
                         if (row.error) throw new Error(row.error.message === 'TooManyAttempts' ? 'TooManyAttempts' : 'DatabaseUnavailable');
                         if (row.data?.limited === true) throw new Error('TooManyAttempts');

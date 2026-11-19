@@ -4,7 +4,7 @@ const m=vi.hoisted(()=>({scope:vi.fn(),rpc:vi.fn(),queue:vi.fn()}));
 vi.mock('@/lib/supabase',()=>({getSupabaseAdmin:()=>({rpc:m.rpc})}));
 vi.mock('@/lib/veo-deal-review',async original=>({...await original<any>(),dealReviewScope:m.scope}));
 vi.mock('@/lib/veo-reviewed-delivery',()=>({queueReviewedDelivery:m.queue}));
-import { POST } from './route';
+import { GET, POST } from './route';
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const request=(body:any)=>new NextRequest('https://veo.test/api/workspace/deal-reviews',{method:'POST',headers:{Origin:'https://veo.test','Content-Type':'application/json'},body:JSON.stringify(body)});
 const submission=()=>({action:'submit',request_id:id(1),contact_id:id(2),seller_id:id(3),receipt_kind:'closed',photo_ids:[id(4),id(5),id(6)],total_price:'1000',closed_amount:'300',currency:'PHP',occurred_at:'2026-11-12T00:00:00+08:00'});
@@ -15,6 +15,12 @@ it('saves a manager receipt without an invoice reference and immediately queues 
  const response=await POST(request(submission()));expect(response.status).toBe(202);expect(await response.json()).toEqual({review,delivery_dispatch:{state:'queued'}});
  expect(m.rpc).toHaveBeenCalledWith('veo_submit_deal_review',expect.objectContaining({p_actor:id(3),p_data:expect.objectContaining({closed_amount_minor:30000,total_price_minor:100000,invoice_reference:''})}));
  expect(m.queue).toHaveBeenCalledOnce();expect(m.queue.mock.calls[0][1]).toBe(review);
+});
+it('reports a database read timeout as retryable rather than invalid receipt input',async()=>{
+ m.scope.mockRejectedValueOnce(Object.assign(Error('The database is not responding'),{code:'DATABASE_UNAVAILABLE'}));
+ expect((await GET(new NextRequest('https://veo.test/api/workspace/deal-reviews'))).status).toBe(503);
+ m.rpc.mockRejectedValueOnce(Object.assign(Error('The database is not responding'),{code:'DATABASE_UNAVAILABLE'}));
+ expect((await POST(request(submission()))).status).toBe(503);expect(m.queue).not.toHaveBeenCalled();
 });
 it('submits a fully paid direct Done Deal without a Close Deal, existing order or optional tip',async()=>{
  m.rpc.mockResolvedValue({data:{id:id(7),status:'approved',approval_mode:'supervisor_submission',order_id:id(8)}});m.queue.mockResolvedValue({state:'queued'});
