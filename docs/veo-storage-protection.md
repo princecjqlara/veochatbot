@@ -41,6 +41,22 @@ Both jobs must remain enabled. Monitor the owner notice and scheduler failures;
 review retained business-data growth before reaching the app budget. This
 release changes neither the account plan nor the single-database configuration.
 
+Migration `202611200001` removes three redundant ordinary indexes. Contact
+inquiry searches retain `idx_contacts_calendar_inquiry`, which has the same
+three search keys plus the pipeline stage. Page identifiers and user emails
+retain their unique indexes. The migration checks keys, ordering, collations,
+included columns and constraints before removing anything. It changes no
+business records, receipt images, retention periods or access rules.
+
+For an existing production database, run
+`node scripts/release-storage-index-consolidation.mjs preflight`, then `apply`.
+The release removes indexes individually using the online operation before
+recording the migration; it never falls back to blocking table maintenance.
+Recheck owner storage health afterwards. Index consolidation reduces recurring
+write overhead, but essential message metadata and duplicate-protection keys
+still grow with real traffic. Space compaction should remain a supervised,
+resource-limited operation rather than another frequent background job.
+
 References: [Supabase database and disk size](https://supabase.com/docs/guides/platform/database-size),
 [Metrics API](https://supabase.com/docs/guides/observability/metrics),
 [Cron](https://supabase.com/docs/guides/cron).

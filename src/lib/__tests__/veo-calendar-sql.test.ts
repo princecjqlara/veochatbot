@@ -29,6 +29,29 @@ beforeAll(async () => {
     const dates = (await db.query<any>('SELECT veo_today()::text AS today,(veo_today()-2)::text AS earlier')).rows[0]; today = dates.today; earlier = dates.earlier;
 }, 180000);
 afterAll(async () => { await db?.close(); });
+it('keeps the covering inquiry index and identical ordered rows after consolidating redundant indexes', async () => {
+    await db.exec('BEGIN');
+    try {
+        await db.exec('CREATE INDEX idx_contacts_conversion_first ON contacts(page_id,first_interaction_at,id)');
+        const sql = 'SELECT id,first_interaction_at,pipeline_stage FROM contacts WHERE page_id=$1 ORDER BY first_interaction_at,id';
+        const before = (await db.query(sql, [page])).rows;
+        const migration = schemaMigrationPlan().find(m => m.name === '202611200001_veo_storage_index_consolidation.sql')!;
+        await db.exec(migration.sql);
+        expect((await db.query(sql, [page])).rows).toEqual(before);
+        expect((await db.query<any>("SELECT to_regclass('public.idx_contacts_conversion_first') old,to_regclass('public.idx_contacts_calendar_inquiry') retained")).rows[0]).toEqual({ old: null, retained: 'idx_contacts_calendar_inquiry' });
+        await db.exec('SET LOCAL enable_seqscan=off; SET LOCAL enable_bitmapscan=off');
+        expect(JSON.stringify((await db.query('EXPLAIN (FORMAT JSON) ' + sql, [page])).rows)).toContain('idx_contacts_calendar_inquiry');
+        expect((await db.query<any>("SELECT count(*)::int n FROM pg_index WHERE indexrelid IN('public.pages_fb_page_id_key'::regclass,'public.users_email_key'::regclass) AND indisunique AND indisvalid")).rows[0].n).toBe(2);
+    } finally { await db.exec('ROLLBACK'); }
+});
+it('refuses index consolidation if the supposedly redundant index has different search keys', async () => {
+    await db.exec('BEGIN');
+    try {
+        await db.exec('CREATE INDEX idx_contacts_conversion_first ON contacts(page_id,id,first_interaction_at)');
+        const migration = schemaMigrationPlan().find(m => m.name === '202611200001_veo_storage_index_consolidation.sql')!;
+        await expect(db.exec(migration.sql)).rejects.toThrow('Redundant index is not fully covered');
+    } finally { await db.exec('ROLLBACK'); }
+});
 it('prioritizes waiting customer lanes without letting a customer message overtake its earlier staff handoff',async()=>{
     await db.exec('BEGIN');try{
         await db.exec("UPDATE veo_event_inbox SET status='done'");
@@ -100,7 +123,8 @@ it('preserves first-inquiry cohorts while exact paid-order salary stays on the a
     await action(manager, 'payment', { request_id: id(11), order_id: o.id, kind: 'deposit', confirmed: true, reference: 'deposit', amount_minor: 50, occurred_at: `${earlier}T12:00:00+08:00` });
     await action(manager, 'payment', { request_id: id(12), order_id: o.id, kind: 'balance', confirmed: true, reference: 'balance', amount_minor: 153, occurred_at: new Date(Date.now() - 1000).toISOString() });
     const report = (await db.query<any>('SELECT veo_calendar_inputs($1,$2,$3,$2) AS r', [owner, earlier, today])).rows[0].r;
-    expect(report.leads).toHaveLength(1); expect(report.orders[0]).toMatchObject({ financial_source: 'workspace', paid_minor: 203, commission_minor: 71, closed_date: earlier, done_date: today });
+    // Managers retain the 40% base rate; calendar allocation rounds to cents.
+    expect(report.leads).toHaveLength(1); expect(report.orders[0]).toMatchObject({ financial_source: 'workspace', paid_minor: 203, commission_minor: 81, closed_date: earlier, done_date: today });
     expect(report.cash).toHaveLength(2);
     expect(report.selected_clients[0].id).toBe(client);
     expect(JSON.stringify(report)).not.toContain('Suno');
