@@ -34,3 +34,24 @@ authorization outage, scheduler pressure/lease behavior, SQL deferral before que
 changes and retryable receipt failures. Production verification must check fresh
 signed sessions, current client data and temporary evidence uploads with cleanup.
 Existing receipt retries alone do not verify a new submission from the member.
+
+Live inspection also found five business-state conflicts raised with SQLSTATE
+`40001` across Telegram relinking, manual suspension and warning management.
+The API connections identify themselves as PostgREST 14.18. Supabase documents
+that [PostgREST 14 can retry this code indefinitely](https://supabase.com/kb/troubleshooting/high-cpu-and-infinite-transaction-retries-when-using-custom-error-codes-in-rpc-functions-77326b).
+Migration `202611190003` changes only those explicit raises to `PT409`, retaining
+the same stale-state rejection, owner, arguments, settings and private grants.
+The HTTP routes recognize that conflict and retain compatibility with old codes.
+
+Regression tests exercise all five actual conflict branches, verify no partial
+suspension, warning, audit or Telegram identity writes, and keep the functions
+service-only. A project-bound live preflight returned `PT409` for a stale lifting
+selection and rolled back. The observed database rollback count does not show an
+active retry storm; this fixes a verified risk without claiming it explains the
+current outage.
+
+Recovery checks must continue to distinguish pooled SQL connectivity from the
+REST, Auth and Storage services. An idle PostgREST listener was refreshed without
+terminating active transactions. Subsequent staff checks still failed, and no
+provider-level restart has been performed. Do not report the workspace or Troy's
+new receipt submission as recovered until the live HTTP checks pass.

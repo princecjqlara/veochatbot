@@ -36,6 +36,43 @@ async function evidence(kind='closed',extra:any={},actor=member){
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
 const discipline=(actor:string,action:string,data:any)=>rpc('veo_discipline_action',[actor,action,JSON.stringify(data)]);
+it('rejects stale suspension and warning changes with a nonretryable conflict and no partial writes',async()=>{
+ const suspension=await discipline(manager,'suspend',{user_id:member,request_id:id(seq++),duration_minutes:null,reason:'Review conduct'});
+ const snapshot=async()=>({
+  suspensions:(await db.query('SELECT * FROM veo_member_suspensions ORDER BY id')).rows,
+  warnings:(await db.query('SELECT * FROM veo_staff_warning_records ORDER BY id')).rows,
+  audit:(await db.query('SELECT * FROM veo_audit ORDER BY id')).rows
+ });
+ const before=await snapshot();
+ for(const [action,data] of [
+  ['suspend',{request_id:id(seq++),duration_minutes:null,reason:'Already under review'}],
+  ['issue',{request_id:id(seq++),reason:'Another warning during suspension'}],
+  ['lift',{suspension_id:id(seq++),reason:'Stale suspension selection'}]
+ ] as const){
+  await expect(discipline(manager,action,{user_id:member,...data})).rejects.toMatchObject({code:'PT409'});
+  expect(await snapshot()).toEqual(before);
+ }
+ await discipline(manager,'lift',{user_id:member,suspension_id:suspension.suspension.id,reason:'Review completed'});
+ const lifted=await snapshot();
+ await expect(discipline(manager,'remove',{user_id:member,source_key:'manual:missing',reason:'Stale warning selection'})).rejects.toMatchObject({code:'PT409'});
+ expect(await snapshot()).toEqual(lifted);
+});
+it('rejects a stale Telegram relink without consuming proof or replacing the current identity',async()=>{
+ await db.query("INSERT INTO veo_telegram_groups(tenant_id,chat_id,name) VALUES($1,-123,'Test group')",[tenant]);
+ await db.query('INSERT INTO veo_worker_mappings(user_id,telegram_user_id) VALUES($1,42)',[member]);
+ await rpc('veo_issue_telegram_pairing',[tenant,'a'.repeat(64),84,-123,'new_name']);
+ await expect(rpc('veo_relink_telegram_pairing',[member,'a'.repeat(64),41])).rejects.toMatchObject({code:'PT409'});
+ expect((await db.query<any>('SELECT telegram_user_id FROM veo_worker_mappings WHERE user_id=$1',[member])).rows[0].telegram_user_id).toBe(42);
+ expect((await db.query<any>('SELECT consumed_at FROM veo_telegram_pairing_codes WHERE code_hash=$1',['a'.repeat(64)])).rows[0].consumed_at).toBeNull();
+ expect((await db.query("SELECT id FROM veo_audit WHERE action='telegram_self_relink'")).rows).toHaveLength(0);
+});
+it('keeps service-only business conflicts out of PostgREST serialization retry handling',async()=>{
+ const risky=await db.query("SELECT proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND p.prosrc ~ '40001|40P01'");
+ expect(risky.rows).toEqual([]);
+ for(const fn of ['veo_suspend_member(uuid,uuid,text,integer,text,uuid)','veo_discipline_action(uuid,text,jsonb)','veo_relink_telegram_pairing(uuid,text,bigint)']){
+  expect((await db.query<any>("SELECT has_function_privilege('anon',$1,'EXECUTE') anon,has_function_privilege('authenticated',$1,'EXECUTE') authenticated,has_function_privilege('service_role',$1,'EXECUTE') service",[fn])).rows[0]).toEqual({anon:false,authenticated:false,service:true});
+ }
+});
 it('coordinates scheduled chatbots and refuses a review scan before work when resources are unavailable',async()=>{
  const first=id(seq++),second=id(seq++);
  expect(await rpc('veo_claim_background_job',['chatbot',first])).toBe(true);expect(await rpc('veo_claim_background_job',['chatbot',second])).toBe(false);

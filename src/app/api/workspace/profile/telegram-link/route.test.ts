@@ -39,8 +39,9 @@ it.each(['mismatched', 'unavailable', 'foreign', 'unapproved'])('cannot change a
     if (kind === 'unapproved') vi.stubEnv('VEO_APPROVED_TELEGRAM_CHAT_IDS', '-999');
     expect((await POST(relinkRequest())).status).not.toBe(200); expect(m.rpc).not.toHaveBeenCalled();
 });
-it.each(['23505', '40001'])('keeps the existing link when the database reports %s conflict', async code => {
-    proof(); m.rpc.mockResolvedValue({ error: { code } }); expect((await POST(relinkRequest())).status).toBe(409);
+it.each(['23505', 'PT409', '40001'])('keeps the existing link when the database reports %s conflict', async code => {
+    proof(); m.rpc.mockResolvedValue({ error: { code } }); const response=await POST(relinkRequest());expect(response.status).toBe(409);
+    expect(m.rpc).toHaveBeenCalledTimes(1);if(code==='PT409')expect((await response.json()).error).toContain('Refresh your profile');
 });
 it('rejects malformed replacement requests before reading identity proof', async () => {
     proof(); for (const body of [null, [], { relink: 'yes' }, { relink: true, code: 'a'.repeat(48) }]) expect((await POST(relinkRequest(body))).status).toBe(400);

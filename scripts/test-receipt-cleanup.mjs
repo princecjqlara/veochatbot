@@ -20,6 +20,7 @@ const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modul
     'src/lib/__tests__/veo-workspace-auth.test.ts',
     'src/components/VeoDisciplineControls.test.ts',
     'src/app/api/workspace/warnings/route.test.ts',
+    'src/app/api/workspace/profile/telegram-link/route.test.ts',
     'src/app/dashboard/workspace/page.test.ts',
     'src/lib/__tests__/supabase-client.test.ts',
     'src/app/api/cron/chatbot/route.test.ts',

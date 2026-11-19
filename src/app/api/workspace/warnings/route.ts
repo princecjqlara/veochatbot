@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
         const result = await getSupabaseAdmin().rpc('veo_discipline_action', { p_actor: scope.user_id, p_action: body.action, p_data: data });
         if (result.error) {
             if (isSupabaseUnavailable(result.error)) return reply({ error: 'The change could not be confirmed. Refresh this member’s warning and suspension status before retrying.' }, 503);
-            return reply({ error: result.error.message || 'Could not save this change' }, result.error.code === '42501' ? 403 : ['23505', '40001'].includes(result.error.code) ? 409 : 400);
+            return reply({ error: result.error.message || 'Could not save this change' }, result.error.code === '42501' ? 403 : ['23505', 'PT409', '40001'].includes(result.error.code) ? 409 : 400);
         }
         return reply(result.data);
     } catch (error: any) { return reply({ error: error.message || 'Could not save this change' }, error.status || 400); }

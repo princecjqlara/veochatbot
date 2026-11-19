@@ -41,6 +41,12 @@ it('preserves branch denials and uncertain-save errors instead of declaring succ
     m.rpc.mockResolvedValueOnce({ error: { message: 'The connection to the database timed out' } });
     const response = await POST(request(suspend()));expect(response.status).toBe(503);expect((await response.json()).error).toContain('could not be confirmed');
 });
+it.each(['PT409', '23505', '40001'])('returns a %s conflict once without replaying the suspension change', async code => {
+    m.rpc.mockResolvedValue({ error: { code, message: 'Suspension changed. Refresh this member.' } });
+    const response = await POST(request(suspend()));
+    expect(response.status).toBe(409);expect((await response.json()).error).toContain('Refresh this member');
+    expect(m.rpc).toHaveBeenCalledTimes(1);
+});
 it('still allows authenticated scoped warning reads and never exposes management actions to members', async () => {
     m.scope.mockResolvedValue({ user_id: id(1), role: 'member', launch_at: '2026-11-05' });
     m.rpc.mockResolvedValue({ data: { workers: [], can_manage_discipline: false } });
