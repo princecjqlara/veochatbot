@@ -1,11 +1,39 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => mocks }));
 import { processWorkspaceEvents } from '@/lib/veo-events';
 import { veoEventReplay } from '@/lib/veo-event-context';
-afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+beforeEach(() => { vi.stubEnv('VEO_WORKSPACE_ENABLED','false'); });
+afterEach(() => { vi.resetAllMocks(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe('durable launch-period webhook processing', () => {
+    it('does not claim or replay events when another serverless drain owns the shared lease', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','true');mocks.rpc.mockResolvedValue({data:false});
+        const handler=vi.fn();expect(await processWorkspaceEvents(handler,'https://veo.test')).toBe(0);
+        expect(mocks.rpc).toHaveBeenCalledTimes(1);expect(mocks.rpc).toHaveBeenCalledWith('veo_claim_background_job',{p_job:'event-drain',p_owner:expect.any(String)});
+        expect(handler).not.toHaveBeenCalled();expect(mocks.from).not.toHaveBeenCalled();
+    });
+    it('rechecks pressure between leases and reduces four conversation lanes to one without dropping events', async () => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','true');vi.stubEnv('FACEBOOK_APP_SECRET','test-secret');
+        let healthReads=0,claims=0;
+        mocks.rpc.mockImplementation(async name=>{
+            if(name==='veo_storage_status')return{data:{optional_work_paused:healthReads++>0}};
+            if(name==='veo_claim_events'){const batch=claims++;return{data:batch<2?Array.from({length:batch===0?4:2},(_,i)=>({event_key:batch+':'+i,attempts:1,payload:{batch}})):[]};}
+            return{data:true};
+        });
+        mocks.from.mockImplementation(()=>{const q:any={update:()=>q,eq:()=>q,then:(done:any)=>Promise.resolve({error:null}).then(done)};return q;});
+        let inFlight=0;const maximum=[0,0];
+        const handler=vi.fn(async request=>{const {batch}=await request.json();inFlight++;maximum[batch]=Math.max(maximum[batch],inFlight);await Promise.resolve();inFlight--;return new Response('');});
+        expect(await processWorkspaceEvents(handler,'https://veo.test')).toBe(6);expect(maximum).toEqual([4,1]);
+        expect(mocks.rpc.mock.calls.filter(([name])=>name==='veo_claim_events').map(([,args])=>args.p_limit)).toEqual([20,4,4]);
+        expect(mocks.rpc).toHaveBeenCalledWith('veo_release_background_job',{p_job:'event-drain',p_owner:expect.any(String)});
+    });
+    it('releases the run lease without claiming events when capacity cannot be checked',async()=>{
+        vi.stubEnv('VEO_WORKSPACE_ENABLED','true');mocks.rpc.mockImplementation(async name=>name==='veo_storage_status'?{error:{message:'offline'}}:{data:true});
+        await expect(processWorkspaceEvents(vi.fn(),'https://veo.test')).rejects.toThrow('capacity');
+        expect(mocks.rpc.mock.calls.some(([name])=>name==='veo_claim_events')).toBe(false);
+        expect(mocks.rpc).toHaveBeenCalledWith('veo_release_background_job',{p_job:'event-drain',p_owner:expect.any(String)});
+    });
     it('retains failed events for retry while committing successful events and fences acknowledgments by attempt', async () => {
         vi.stubEnv('FACEBOOK_APP_SECRET', 'test-secret');
         const events = [{ event_key: 'success', attempts: 1, payload: { object: 'page', entry: [] } }, { event_key: 'retry', attempts: 2, payload: { object: 'page', entry: [] } }];

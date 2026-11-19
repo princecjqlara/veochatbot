@@ -55,3 +55,36 @@ REST, Auth and Storage services. An idle PostgREST listener was refreshed withou
 terminating active transactions. Subsequent staff checks still failed, and no
 provider-level restart has been performed. Do not report the workspace or Troy's
 new receipt submission as recovered until the live HTTP checks pass.
+
+After the user restarted Supabase, signed-member permissions, receipt context,
+client search and all three temporary photo uploads recovered. A subsequent
+sample showed a one-minute load of 5.16 while the five-minute average was 2.31
+on two reported CPUs. The prior five-minute threshold (2.50) still admitted
+optional work. Concurrent saved-tag repairs for three Pages were also visible.
+These observations identify concrete admission gaps; query execution duration
+alone is not a measurement of per-process CPU time.
+
+Migration `202611190004` adds a one-minute load brake at one queued/running task
+per reported CPU and preserves the three-minute recovery cooldown. Monitoring
+records the exporter's sample time when supplied, so fetching an old cached
+sample does not refresh its age. Older monitor payloads remain compatible during
+deployment. Memory, swap, disk and five-minute load checks continue to apply.
+Rollback preflight verified the new spike denial, stale-sample denial, cooldown,
+private grants and fencing of the new job leases on the production project.
+
+Auto-tag recovery claims one Page by default, processes Pages sequentially,
+rechecks resource availability before each conversation and checkpoints a
+pressure deferral without advancing its cursor. Its SQL tag repair also joins
+the existing nonblocking shared background capacity lock and has a five-second
+deadline. A shared scheduler lease prevents duplicate auto-tag invocations.
+
+Both callers of the live-event drain now share one run lease. Between small
+event batches, the drain rechecks resource state and reduces four independent
+conversation lanes to one while optional work is paused. Incoming signed
+webhooks still persist to the durable inbox. Event order, attempt fencing,
+retry state, staff authorization and receipt storage checks are preserved.
+
+These controls reduce preventable application pressure. They cannot guarantee
+uninterrupted provider availability or make a small instance handle unlimited
+traffic. Continue observing real load, memory, swap and service latency before
+deciding whether additional compute is needed; no paid capacity change is made.

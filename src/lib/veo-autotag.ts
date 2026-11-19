@@ -1,6 +1,7 @@
 import { getSupabaseAdmin } from './supabase';
 import { syncMessengerStageHistory } from './messenger-stage-sync';
 import { normalizeContactName } from './contact-names';
+import { requireStorageForOptionalWork } from './veo-storage-health';
 
 type PageScan = { page_id: string; fb_page_id: string; access_token: string; launch_at: string; owner_id: string; lease_token: string; checked_at: string; cursor: string | null };
 const failure = (code: string) => Object.assign(new Error('Auto-tag recovery is temporarily unavailable'), { scanCode: code });
@@ -12,10 +13,15 @@ export async function scanVeoAutoTags(page: PageScan, db = getSupabaseAdmin()) {
     const counts = { conversations: 0, stage_events: 0, repaired_tags: 0 };
     let nextCursor: string | null = null;
     let auditedContact: string | null = null;
+    async function requireCapacity() {
+        try { await requireStorageForOptionalWork(db); }
+        catch { throw failure('DATABASE_PRESSURE'); }
+    }
     try {
         if (!/^\d{1,100}$/.test(page.fb_page_id) || !page.access_token || !Number.isFinite(cutoff)) throw failure('PAGE_CONNECTION_REQUIRED');
+        await requireCapacity();
         const repair = await db.rpc('veo_repair_autotag_history', { p_page: page.page_id, p_limit: 250 });
-        if (repair.error) throw failure('TAG_REPAIR_UNAVAILABLE'); counts.repaired_tags = Number(repair.data || 0);
+        if (repair.error) throw failure(repair.error.code === '55P03' ? 'DATABASE_PRESSURE' : 'TAG_REPAIR_UNAVAILABLE'); counts.repaired_tags = Number(repair.data || 0);
         async function graph(path: string, params: Record<string, string>) {
             if (Date.now() >= deadline) throw failure('SCAN_DEADLINE');
             const url = new URL('https://graph.facebook.com/v21.0/' + path);
@@ -29,6 +35,7 @@ export async function scanVeoAutoTags(page: PageScan, db = getSupabaseAdmin()) {
         }
         const processed = new Set<string>();
         async function readStages(conversationId: string, contactId: string) {
+            await requireCapacity();
             const history = await graph(encodeURIComponent(conversationId) + '/messages', { fields: 'id,message,from,created_time', limit: '100' });
             if (history.data.some((m: any) => m.from?.id === page.fb_page_id && /^Lead stage set to /i.test(m.message?.trim() || '') && (!m.id || !Number.isFinite(Date.parse(m.created_time))))) throw failure('META_STAGE_EVIDENCE_INCOMPLETE');
             const messages = history.data.filter((m: any) => Date.parse(m.created_time) >= Date.parse(page.launch_at) && Date.parse(m.created_time) <= Date.now());
@@ -107,10 +114,14 @@ export async function scanVeoAutoTags(page: PageScan, db = getSupabaseAdmin()) {
     }
 }
 
-export async function processVeoAutoTags(limit = 3) {
+export async function processVeoAutoTags(limit = 1) {
     const db = getSupabaseAdmin(), claim = await db.rpc('veo_claim_autotag_pages', { p_limit: limit });
     if (claim.error || !Array.isArray(claim.data)) throw failure('SCAN_CLAIM_UNAVAILABLE');
-    const results = await Promise.allSettled(claim.data.map((page: PageScan) => scanVeoAutoTags(page, db)));
+    const results: PromiseSettledResult<Awaited<ReturnType<typeof scanVeoAutoTags>>>[] = [];
+    for (const page of claim.data as PageScan[]) {
+        try { results.push({ status: 'fulfilled', value: await scanVeoAutoTags(page, db) }); }
+        catch (reason) { results.push({ status: 'rejected', reason }); }
+    }
     const completed = results.filter(result => result.status === 'fulfilled' && result.value.complete).length;
     return { pages: results.length, completed, failed: results.length - completed };
 }

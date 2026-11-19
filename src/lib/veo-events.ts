@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from './supabase';
 import { verifyWebhookSignature } from './facebook';
 import { messengerTimestamp } from './messenger-timestamp';
 import { veoEventReplay } from './veo-event-context';
+import { runBackgroundJob } from './background-run';
 
 export async function receiveWorkspaceEvents(request: Request) {
     const raw = await request.text(), secret = process.env.FACEBOOK_APP_SECRET;
@@ -26,6 +27,13 @@ export async function receiveWorkspaceEvents(request: Request) {
     } catch { return NextResponse.json({ error: 'Event persistence failed; retry required' }, { status: 503 }); }
 }
 export async function processWorkspaceEvents(handler: (request: NextRequest) => Promise<Response>, origin: string, processingBudgetMs = 210000, options: { maxEvents?: number } = {}) {
+    if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+        const result = await runBackgroundJob('event-drain', () => drainWorkspaceEvents(handler, origin, processingBudgetMs, options), getSupabaseAdmin());
+        return typeof result === 'number' ? result : 0;
+    }
+    return drainWorkspaceEvents(handler, origin, processingBudgetMs, options);
+}
+async function drainWorkspaceEvents(handler: (request: NextRequest) => Promise<Response>, origin: string, processingBudgetMs: number, options: { maxEvents?: number }) {
     const db = getSupabaseAdmin();
     const deadline = Date.now() + Math.max(0, Math.min(210000, processingBudgetMs));
     let processed = 0;
@@ -35,7 +43,13 @@ export async function processWorkspaceEvents(handler: (request: NextRequest) => 
     // oldest outstanding event per conversation, including across cron runs.
     // Four separate conversations can progress together; each stays serial.
     while (processed < maxEvents && Date.now() < deadline) {
-        const claimed = await db.rpc('veo_claim_events', { p_limit: Math.min(20, maxEvents - processed) });
+        let concurrency = 4;
+        if (process.env.VEO_WORKSPACE_ENABLED === 'true') {
+            const health = await db.rpc('veo_storage_status');
+            if (health.error || !health.data) throw new Error('Event processing capacity is temporarily unavailable');
+            if (health.data.optional_work_paused !== false) concurrency = 1;
+        }
+        const claimed = await db.rpc('veo_claim_events', { p_limit: Math.min(concurrency === 1 ? 4 : 20, maxEvents - processed) });
         if (claimed.error) throw new Error('Event queue unavailable');
         if (!claimed.data?.length) break;
         const lanes = new Map<string, any[]>();
@@ -66,7 +80,7 @@ export async function processWorkspaceEvents(handler: (request: NextRequest) => 
                 processed++;
             }
         }
-        const workers = await Promise.allSettled(Array.from({ length: Math.min(4, jobs.length) }, () => worker()));
+        const workers = await Promise.allSettled(Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker()));
         const failed = workers.find((result): result is PromiseRejectedResult => result.status === 'rejected');
         if (failed) throw failed.reason;
     }

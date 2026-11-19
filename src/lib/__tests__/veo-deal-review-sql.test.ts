@@ -36,6 +36,48 @@ async function evidence(kind='closed',extra:any={},actor=member){
 const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data),e.photos]);
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
 const discipline=(actor:string,action:string,data:any)=>rpc('veo_discipline_action',[actor,action,JSON.stringify(data)]);
+const resourceSample=(extra:any={})=>({available:true,disk_size_bytes:2000000000,disk_available_bytes:1500000000,resource_metrics_available:true,memory_total_bytes:400000000,memory_available_bytes:150000000,swap_total_bytes:1000000000,swap_free_bytes:800000000,cpu_count:2,load_5m:0.5,load_1m:0.5,resource_sample_epoch:Date.now()/1000,...extra});
+async function healthyDisk(){await db.exec(`CREATE OR REPLACE FUNCTION veo_storage_status_before_resources() RETURNS jsonb LANGUAGE sql AS $$SELECT '{"status":"healthy","metrics_fresh":true,"maintenance_healthy":true,"optional_work_paused":false,"database_bytes":100000000}'::jsonb$$`);}
+it('pauses optional work on a new one-minute load spike and keeps a cooldown after the spike clears',async()=>{
+ await healthyDisk();
+ let state=await rpc('veo_record_storage_metrics',[JSON.stringify(resourceSample({load_1m:5.16}))]);
+ expect(state).toMatchObject({resource_pressure:true,resource_metrics_fresh:true,optional_work_paused:true});expect(state.resource_pressure_reasons).toContain('load_spike');
+ expect(state.resources.load_5m).toBe(0.5);
+ state=await rpc('veo_record_storage_metrics',[JSON.stringify(resourceSample())]);
+ expect(state.optional_work_paused).toBe(true);expect(state.resource_pressure_reasons).toContain('recovery_cooldown');
+ await db.exec("UPDATE app_private.veo_storage_state SET resource_paused_until=now()-interval '1 second'");
+ state=await rpc('veo_record_storage_metrics',[JSON.stringify(resourceSample())]);
+ expect(state).toMatchObject({resource_pressure:false,resource_metrics_fresh:true,optional_work_paused:false});
+});
+it('uses the exporter sample age instead of calling a freshly fetched stale sample healthy',async()=>{
+ await healthyDisk();
+ const state=await rpc('veo_record_storage_metrics',[JSON.stringify(resourceSample({resource_sample_epoch:Date.now()/1000-600}))]);
+ expect(state).toMatchObject({resource_metrics_fresh:false,optional_work_paused:true});
+ expect(Date.parse(state.resource_metrics_at)).toBeLessThan(Date.now()-500000);
+});
+it('rejects malformed spike and future-time samples atomically and accepts older monitor payloads during deployment',async()=>{
+ await healthyDisk();
+ const old:any=resourceSample();delete old.load_1m;delete old.resource_sample_epoch;
+ expect(await rpc('veo_record_storage_metrics',[JSON.stringify(old)])).toMatchObject({resource_metrics_fresh:true,optional_work_paused:false});
+ const before=(await db.query('SELECT * FROM app_private.veo_storage_state')).rows;
+ for(const extra of [{load_1m:null},{load_1m:'5'},{load_1m:-1},{resource_sample_epoch:Date.now()/1000+3600}]){
+  await expect(rpc('veo_record_storage_metrics',[JSON.stringify(resourceSample(extra))])).rejects.toThrow(/Invalid|future/);
+  expect((await db.query('SELECT * FROM app_private.veo_storage_state')).rows).toEqual(before);
+ }
+});
+it('defers saved tag repairs before writes and coordinates the auto-tag and event-drain run leases',async()=>{
+ const before=(await db.query('SELECT id,pipeline_stage FROM contacts ORDER BY id')).rows;
+ await db.exec(`CREATE OR REPLACE FUNCTION veo_storage_status() RETURNS jsonb LANGUAGE sql AS $$SELECT '{"optional_work_paused":true}'::jsonb$$`);
+ await expect(rpc('veo_repair_autotag_history',[page,250])).rejects.toMatchObject({code:'55P03'});
+ await db.exec(`CREATE OR REPLACE FUNCTION veo_storage_status() RETURNS jsonb LANGUAGE sql AS $$SELECT '{"optional_work_paused":false}'::jsonb$$;CREATE OR REPLACE FUNCTION veo_require_background_capacity() RETURNS void LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'busy' USING ERRCODE='55P03';END$$;`);
+ await expect(rpc('veo_repair_autotag_history',[page,250])).rejects.toMatchObject({code:'55P03'});
+ expect((await db.query('SELECT id,pipeline_stage FROM contacts ORDER BY id')).rows).toEqual(before);
+ for(const job of ['messaging-auto-tag','event-drain']){
+  const first=id(seq++),second=id(seq++);
+  expect(await rpc('veo_claim_background_job',[job,first])).toBe(true);expect(await rpc('veo_claim_background_job',[job,second])).toBe(false);
+  expect(await rpc('veo_release_background_job',[job,second])).toBe(false);expect(await rpc('veo_release_background_job',[job,first])).toBe(true);
+ }
+});
 it('rejects stale suspension and warning changes with a nonretryable conflict and no partial writes',async()=>{
  const suspension=await discipline(manager,'suspend',{user_id:member,request_id:id(seq++),duration_minutes:null,reason:'Review conduct'});
  const snapshot=async()=>({

@@ -18,3 +18,8 @@ it('rejects missing, impossible and ambiguous samples instead of reporting healt
     expect(parseDatabaseResourceMetrics(metrics.replace('5e8', '5e9'))).toEqual({ resource_metrics_available: false });
     expect(() => parseDatabaseResourceMetrics(metrics + '\nnode_load5 0')).toThrow('Ambiguous');
 });
+it('reports a new load spike and the exporter sample time independently of the five-minute average', () => {
+    const result=parseDatabaseResourceMetrics(metrics+'\nnode_load1{service_type="db"} 5.16\nnode_time_seconds{service_type="db"} 1795084808.75');
+    expect(result).toMatchObject({resource_metrics_available:true,load_1m:5.16,load_5m:1.8,resource_sample_epoch:1795084808.75});
+    expect(()=>parseDatabaseResourceMetrics(metrics+'\nnode_load1 1\nnode_load1 2')).toThrow('Ambiguous');
+});

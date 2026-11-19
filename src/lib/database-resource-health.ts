@@ -2,7 +2,7 @@
 export function parseDatabaseResourceMetrics(source: string) {
     const values = new Map<string, number>(), cpus = new Set<string>();
     for (const line of source.split('\n')) {
-        const sample = /^(node_memory_(?:MemTotal|MemAvailable|SwapTotal|SwapFree)_bytes|node_load5|node_cpu_seconds_total)(?:\{([^}]*)\})?\s+([\d.eE+-]+)(?:\s|$)/.exec(line);
+        const sample = /^(node_memory_(?:MemTotal|MemAvailable|SwapTotal|SwapFree)_bytes|node_load[15]|node_time_seconds|node_cpu_seconds_total)(?:\{([^}]*)\})?\s+([\d.eE+-]+)(?:\s|$)/.exec(line);
         if (!sample) continue;
         const value = Number(sample[3]);
         if (!Number.isFinite(value) || value < 0) continue;
@@ -20,5 +20,7 @@ export function parseDatabaseResourceMetrics(source: string) {
     const swapTotal = values.get('node_memory_SwapTotal_bytes'), swapFree = values.get('node_memory_SwapFree_bytes'), load = values.get('node_load5');
     if (!total || available == null || available > total || swapTotal == null || swapFree == null || swapFree > swapTotal || load == null || !cpus.size) return { resource_metrics_available: false as const };
     return { resource_metrics_available: true as const, memory_total_bytes: Math.round(total), memory_available_bytes: Math.round(available),
-        swap_total_bytes: Math.round(swapTotal), swap_free_bytes: Math.round(swapFree), cpu_count: cpus.size, load_5m: load };
+        swap_total_bytes: Math.round(swapTotal), swap_free_bytes: Math.round(swapFree), cpu_count: cpus.size, load_5m: load,
+        ...(values.has('node_load1') ? { load_1m: values.get('node_load1')! } : {}),
+        ...(values.has('node_time_seconds') ? { resource_sample_epoch: values.get('node_time_seconds')! } : {}) };
 }

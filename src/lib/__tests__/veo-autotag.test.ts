@@ -1,16 +1,43 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const mock = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn() }));
+const mock = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), guard: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ getSupabaseAdmin: () => mock }));
+vi.mock('@/lib/veo-storage-health',()=>({requireStorageForOptionalWork:mock.guard}));
 import { scanVeoAutoTags, processVeoAutoTags } from '../veo-autotag';
 const page = { page_id: 'page', fb_page_id: '111', access_token: 'secret-token', launch_at: '2026-11-09T00:00:00Z', owner_id: 'owner', lease_token: 'lease', checked_at: '2026-11-09T00:00:00Z', cursor: null };
 const conversation = (id = 'thread', psid = 'customer') => ({ id, updated_time: '2026-11-11T00:00:00Z', participants: { data: [{ id: '111' }, { id: psid }] } });
 const stage = (text = 'Qualified', from = '111', at = '2026-11-10T00:00:00Z') => ({ id: text + at, message: 'Lead stage set to ' + text, from: { id: from }, created_time: at });
 beforeEach(() => {
+    mock.guard.mockReset().mockResolvedValue({optional_work_paused:false});
     vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');mock.rpc.mockReset().mockImplementation(async name => ({ data: name === 'veo_autotag_audit_contact' ? null : name === 'veo_repair_autotag_history' ? 1 : name === 'apply_messenger_lead_stage' ? { applied: true } : true }));
     mock.from.mockReset().mockImplementation(() => { const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { id: 'contact' } }) };return q; });
 });
 afterEach(() => { vi.unstubAllGlobals();vi.unstubAllEnvs(); });
 const finish = () => mock.rpc.mock.calls.filter(([name]) => name === 'veo_finish_autotag_page').at(-1)?.[1];
+it('checkpoints a pressure deferral before Page repair or Meta reads',async()=>{
+    mock.guard.mockRejectedValue(Error('CPU pressure'));const fetch=vi.fn();vi.stubGlobal('fetch',fetch);
+    expect((await scanVeoAutoTags(page)).complete).toBe(false);
+    expect(finish().p_result.error).toBe('DATABASE_PRESSURE');expect(fetch).not.toHaveBeenCalled();
+    expect(mock.rpc.mock.calls.some(([name])=>name==='veo_repair_autotag_history')).toBe(false);
+});
+it('treats a busy shared SQL capacity lock as a pressure deferral without starting a Meta scan',async()=>{
+    mock.rpc.mockImplementation(async name=>name==='veo_repair_autotag_history'?{error:{code:'55P03'}}:{data:true});
+    const fetch=vi.fn();vi.stubGlobal('fetch',fetch);expect((await scanVeoAutoTags(page)).complete).toBe(false);
+    expect(finish().p_result.error).toBe('DATABASE_PRESSURE');expect(fetch).not.toHaveBeenCalled();
+});
+it('stops before the next conversation read if pressure appears mid-scan and retains the old checkpoint',async()=>{
+    mock.guard.mockResolvedValueOnce({}).mockRejectedValue(Error('CPU spike'));
+    const fetch=vi.fn(async()=>Response.json({data:[conversation()]}));vi.stubGlobal('fetch',fetch);
+    expect((await scanVeoAutoTags(page)).complete).toBe(false);expect(fetch).toHaveBeenCalledTimes(1);
+    expect(finish().p_result.error).toBe('DATABASE_PRESSURE');expect(finish().p_result.next_cursor).toBeUndefined();
+    expect(mock.rpc.mock.calls.some(([name])=>name==='apply_messenger_lead_stage')).toBe(false);
+});
+it('claims one Page by default and handles returned Pages sequentially',async()=>{
+    mock.rpc.mockImplementation(async name=>({data:name==='veo_autotag_audit_contact'?null:name==='veo_claim_autotag_pages'?[page,{...page,page_id:'second'}]:true}));
+    let active=0,maximum=0;
+    vi.stubGlobal('fetch',vi.fn(async()=>{active++;maximum=Math.max(maximum,active);await Promise.resolve();active--;return Response.json({data:[]});}));
+    expect(await processVeoAutoTags()).toEqual({pages:2,completed:2,failed:0});expect(maximum).toBe(1);
+    expect(mock.rpc).toHaveBeenCalledWith('veo_claim_autotag_pages',{p_limit:1});
+});
 it('saves only Page-authored launch-period stages without importing transcripts or inferring payment', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(Response.json({ data: [conversation()] })).mockResolvedValueOnce(Response.json({ data: [stage(), stage('Converted', 'customer'), stage('Converted', '111', '2026-11-01T00:00:00Z'), { ...stage(), id: 'invoice', message: 'You created an order for PHP100. View: fb-pma://payments/orderdetails/?invoice_id=123' }] }));
     vi.stubGlobal('fetch', fetch);
