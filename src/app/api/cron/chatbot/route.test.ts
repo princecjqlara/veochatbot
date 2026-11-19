@@ -14,6 +14,7 @@ import { GET } from './route';
 const request = (token?: string) => new NextRequest('https://app.test/api/cron/chatbot', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
 beforeEach(() => {
     vi.stubEnv('CRON_SECRET', 'scheduled-bot-secret');
+    vi.stubEnv('VEO_WORKSPACE_ENABLED', 'false');vi.stubEnv('VEO_CHATBOT_ENABLED', 'false');
     vi.clearAllMocks();
     mocks.storage.mockResolvedValue({});mocks.lease.mockImplementation(async (_name,operation)=>operation());
     mocks.recover.mockResolvedValue({ pages: 1, scanned: 4, recovered: 0, failed: 0 });
