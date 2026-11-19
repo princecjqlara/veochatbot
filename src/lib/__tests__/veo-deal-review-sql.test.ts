@@ -519,7 +519,20 @@ it('preserves accepted client ownership on new sales and rechecks reassignment b
  await db.query('INSERT INTO veo_client_claims(contact_id,tenant_id,page_id,user_id,claimed_at) VALUES($1,$2,$3,$4,now())',[client,tenant,page,other]);
  await expect(submit(await evidence())).rejects.toThrow('assigned seller');await db.query('UPDATE veo_client_claims SET user_id=$1 WHERE contact_id=$2',[member,client]);
  const pending=await submit(await evidence());await db.query('UPDATE veo_client_claims SET user_id=$1 WHERE contact_id=$2',[other,client]);
- await expect(approve(pending)).rejects.toThrow('assigned seller changed');expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(0);
+ await expect(approve(pending)).rejects.toThrow('This client is assigned to manager.');expect((await db.query('SELECT * FROM veo_orders')).rows).toHaveLength(0);
+});
+it('explains an assigned-seller conflict in the receipt context before evidence can be uploaded',async()=>{
+ await db.query("UPDATE users SET name='Shielo' WHERE id=$1",[other]);
+ await db.query('INSERT INTO veo_client_claims(contact_id,tenant_id,page_id,user_id,claimed_at) VALUES($1,$2,$3,$4,now())',[client,tenant,page,other]);
+ const before=(await db.query('SELECT count(*)::int n FROM veo_deal_review_photos')).rows;
+ await expect(rpc('veo_deal_review_context',[member,client,member])).rejects.toThrow('This client is assigned to Shielo.');
+ expect((await db.query('SELECT count(*)::int n FROM veo_deal_review_photos')).rows).toEqual(before);
+ expect((await db.query<any>('SELECT user_id FROM veo_client_claims WHERE contact_id=$1',[client])).rows[0].user_id).toBe(other);
+ expect(await rpc('veo_deal_review_context',[owner,client,other])).toMatchObject({contact_id:client,seller_id:other});
+});
+it('keeps a released client blocked before upload until a supervisor assigns the client',async()=>{
+ await db.query('INSERT INTO veo_client_claims(contact_id,tenant_id,page_id,user_id,released_at) VALUES($1,$2,$3,NULL,now())',[client,tenant,page]);
+ await expect(rpc('veo_deal_review_context',[member,client,member])).rejects.toThrow('This client has been released.');
 });
 it('allows the original seller to finish an existing Close Deal after client service is reassigned',async()=>{
  const cd=await approve(await submit(await evidence()));await db.query('INSERT INTO veo_client_claims(contact_id,tenant_id,page_id,user_id,claimed_at) VALUES($1,$2,$3,$4,now())',[client,tenant,page,other]);

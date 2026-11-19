@@ -34,6 +34,7 @@ const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modul
     'src/app/api/cron/messaging-auto-tag/route.test.ts',
     'src/app/api/cron/chatbot/route.test.ts',
     'src/app/api/workspace/deal-reviews/route.test.ts',
+    'src/app/api/workspace/deal-reviews/client/route.test.ts',
     'src/app/api/workspace/deal-reviews/upload/route.test.ts',
     '--maxWorkers=1', '--minWorkers=1'], { stdio: 'inherit', env: { ...process.env, NODE_ENV: 'test' } });
 if (result.error) console.error(result.error);

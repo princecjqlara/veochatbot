@@ -34,6 +34,12 @@ it('rejects unauthorized clients or sellers before reading their records',async(
  m.rpc.mockResolvedValue({error:{code:'42501',message:'Choose a permitted contact and selling staff account'}});
  expect((await read()).status).toBe(403);expect(m.from).not.toHaveBeenCalled();
 });
+it('shows the saved seller-assignment explanation without retrying unrelated client reads',async()=>{
+ const message='This client is assigned to Shielo. Select the assigned seller or ask your Manager or Team Leader to reassign the client before submitting a new sale.';
+ m.rpc.mockResolvedValue({error:{code:'42501',message}});
+ const r=await read();expect(r.status).toBe(403);expect(await r.json()).toEqual({error:message});
+ expect(m.from).not.toHaveBeenCalled();expect(m.rpc).toHaveBeenCalledTimes(1);
+});
 it('requires current sign-in and suspension checks before reading records',async()=>{
  m.scope.mockRejectedValue(Object.assign(Error('Account suspended'),{status:403}));
  expect((await read()).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();expect(m.from).not.toHaveBeenCalled();
