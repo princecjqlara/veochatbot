@@ -15,8 +15,8 @@ planning, Facebook and AI. Autovacuum thresholds are lowered for the event inbox
 and contacts so dead tuple space can be reused sooner. No blocking VACUUM FULL,
 database reset or replication-slot deletion is performed.
 
-A Vercel cron separately checks Supabase's authenticated Metrics API every five
-minutes. It reads `/data` available bytes (including filesystem reservations),
+A Vercel cron separately checks Supabase's authenticated Metrics API every
+minute. It reads `/data` available bytes (including filesystem reservations),
 disk capacity and WAL size, and saves only one private health checkpoint. Missing
 or failed metrics remain unknown/stale; database size never substitutes for disk
 space. The checkpoint does not accumulate a new history row each time.
@@ -56,6 +56,24 @@ Recheck owner storage health afterwards. Index consolidation reduces recurring
 write overhead, but essential message metadata and duplicate-protection keys
 still grow with real traffic. Space compaction should remain a supervised,
 resource-limited operation rather than another frequent background job.
+
+Migration `202611200002` narrows the completed-event cleanup index to
+`received_at`. Long event keys remain unchanged in the inbox and its primary
+key; they no longer need another copy in this working index. Cleanup retains
+its seven-day policy, 500-row limit, row locking and event-key tie ordering.
+The release command `node scripts/release-compact-retention-index.mjs preflight`
+checks the live definition and a bounded read sample. `apply` builds the
+replacement online with 16 MB maintenance memory and no parallel workers,
+checks fresh host capacity, then swaps indexes without rewriting the table.
+It verifies unchanged cleanup functions, duplicate protection and read results.
+
+Automatic contact/name reconciliation runs every five minutes, offset from
+other periodic imports. This reduces that scheduled worker from 1,440 to 288
+invocations per day. It claims at most two Pages, processes Pages serially,
+rechecks pressure before each 50-contact write batch, and leaves time to save
+checkpoints. Unfinished batches retain their saved historical cursor and retry;
+background backfill takes longer. Live webhook intake, the one-minute event
+drain, receipt submission and interactive staff sync retain their current timing.
 
 References: [Supabase database and disk size](https://supabase.com/docs/guides/platform/database-size),
 [Metrics API](https://supabase.com/docs/guides/observability/metrics),

@@ -340,6 +340,22 @@ it('cleans only old completed payloads in bounded batches and keeps business rec
     expect((await db.query<any>('SELECT (SELECT count(*) FROM contacts)::int contacts,(SELECT count(*) FROM tags)::int tags,(SELECT count(*) FROM veo_orders)::int orders,(SELECT count(*) FROM veo_payments)::int payments')).rows[0]).toEqual(before);
     expect((await db.query<any>("SELECT count(*)::int n FROM cron.job WHERE jobname='veo-storage-protection'")).rows[0].n).toBe(1);
 });
+it('uses a compact retention index and retains the deterministic 500-row cleanup when timestamps tie', async () => {
+    await db.exec('BEGIN');
+    try {
+        const index = (await db.query<any>("SELECT pg_get_indexdef(indexrelid) definition,indnkeyatts keys FROM pg_index WHERE indexrelid='public.veo_event_retention_due'::regclass")).rows[0];
+        expect(index.keys).toBe(1);
+        expect(index.definition).toContain('(received_at)');
+        expect(index.definition).not.toContain('(received_at, event_key)');
+        await db.query("INSERT INTO veo_event_inbox(event_key,page_id,occurred_at,received_at,status,payload) SELECT 'compact-retention:'||lpad(i::text,4,'0'),$1,now()-interval '9 days',now()-interval '9 days','done','{\"retained_until_expiry\":true}' FROM generate_series(1,501) i", [page]);
+        const before = (await db.query<any>("SELECT event_key FROM veo_event_inbox WHERE status='done' AND received_at<now()-interval '7 days' AND payload<>'{}'::jsonb ORDER BY received_at,event_key LIMIT 500")).rows.map(r => r.event_key);
+        const result = (await db.query<any>('SELECT veo_storage_maintenance() r')).rows[0].r;
+        expect(result.completed_event_payloads_cleared).toBe(500);
+        expect((await db.query<any>("SELECT event_key FROM veo_event_inbox WHERE event_key=ANY($1::text[]) AND payload='{}'::jsonb ORDER BY event_key", [before])).rows.map(r => r.event_key)).toEqual([...before].sort());
+        expect((await db.query<any>("SELECT count(*)::int n FROM veo_event_inbox WHERE event_key LIKE 'compact-retention:%'")).rows[0].n).toBe(501);
+        expect((await db.query<any>("SELECT payload FROM veo_event_inbox WHERE event_key='compact-retention:0501'")).rows[0].payload).toEqual({retained_until_expiry:true});
+    } finally { await db.exec('ROLLBACK'); }
+});
 it('pauses historical growth for memory, swap or sustained load and resumes after a cooldown', async () => {
     await db.exec('BEGIN');try {
         await db.exec('SELECT veo_storage_maintenance()');

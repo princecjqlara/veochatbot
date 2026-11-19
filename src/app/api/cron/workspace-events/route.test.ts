@@ -20,7 +20,8 @@ it('processes live events independently of salary and planning and starts by rec
  expect(m.rpc).toHaveBeenCalledWith('veo_recover_queued_contact_identities',{p_limit:1000});expect(m.events).toHaveBeenCalledWith(expect.any(Function),'https://veo.test',140000,{maxEvents:1000});
  expect(m.rpc.mock.invocationCallOrder[0]).toBeLessThan(m.events.mock.invocationCallOrder[0]);
 });
-it('schedules both independent collectors every minute',()=>{
+it('keeps live collection every minute and staggers background identity scans every five minutes',()=>{
  const config=JSON.parse(fs.readFileSync('vercel.json','utf8'));
- for(const path of ['/api/cron/workspace-events','/api/cron/contact-identities'])expect(config.crons).toContainEqual({path,schedule:'* * * * *'});
+ expect(config.crons).toContainEqual({path:'/api/cron/workspace-events',schedule:'* * * * *'});
+ expect(config.crons).toContainEqual({path:'/api/cron/contact-identities',schedule:'4-59/5 * * * *'});
 });

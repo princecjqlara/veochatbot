@@ -13,7 +13,7 @@
     { "path": "/api/cron/meta-ads-sync", "schedule": "2-59/5 * * * *" },
     { "path": "/api/cron/workspace", "schedule": "* * * * *" },
     { "path": "/api/cron/workspace-events", "schedule": "* * * * *" },
-    { "path": "/api/cron/contact-identities", "schedule": "* * * * *" },
+    { "path": "/api/cron/contact-identities", "schedule": "4-59/5 * * * *" },
     { "path": "/api/cron/contact-profiles", "schedule": "0-58/2 * * * *" },
     {
       "path": "/api/cron/messaging-auto-tag",
