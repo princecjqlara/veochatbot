@@ -88,3 +88,13 @@ These controls reduce preventable application pressure. They cannot guarantee
 uninterrupted provider availability or make a small instance handle unlimited
 traffic. Continue observing real load, memory, swap and service latency before
 deciding whether additional compute is needed; no paid capacity change is made.
+
+The later live audit found that normal SQL admission deferrals (`55P03`) were
+opening the same availability circuit used to save scan checkpoints and release
+run leases. Runtime logs showed release warnings, and Page attempts repeated
+only after run-lease expiry while their prior checkpoints stayed unchanged.
+The availability gate now recognizes JSON `55P03` responses at HTTP 500/503
+as completed database deferrals. It retains the caller's error and performs
+no retry, while permitting the caller's subsequent checkpoint and release.
+Other database failures, query timeouts, rate limits, malformed error bodies
+and gateway failures retain the existing outage circuit behavior.

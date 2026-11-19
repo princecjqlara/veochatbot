@@ -23,6 +23,7 @@ const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modul
     'src/app/api/workspace/profile/telegram-link/route.test.ts',
     'src/app/dashboard/workspace/page.test.ts',
     'src/lib/__tests__/supabase-client.test.ts',
+    'src/lib/__tests__/supabase-availability.test.ts',
     'src/lib/__tests__/database-resource-health.test.ts',
     'src/lib/__tests__/veo-storage-health.test.ts',
     'src/lib/__tests__/veo-events.test.ts',

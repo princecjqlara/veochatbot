@@ -1,5 +1,14 @@
 import { isSupabaseTimeoutOrOverload, isSupabaseUnavailable } from './supabase-errors';
 
+/** SQL admission contention is a completed database response. Preserve the
+ * error for its caller, but let that worker checkpoint and release its lease.
+ * Real connection, statement-timeout and gateway failures still open the gate. */
+async function isBackgroundDeferral(response: Response) {
+    if (![500, 503].includes(response.status) || !response.headers.get('content-type')?.includes('application/json')) return false;
+    try { return (await response.clone().json())?.code === '55P03'; }
+    catch { return false; }
+}
+
 /** Protect each warm server worker; persisted queue leases still coordinate
  * separate workers. Successful recovery probes restore normal throughput. */
 export function createSupabaseAvailabilityGate(fetcher: typeof fetch): typeof fetch {
@@ -29,11 +38,12 @@ export function createSupabaseAvailabilityGate(fetcher: typeof fetch): typeof fe
         };
         try {
             const response = await fetcher(input, init);
-            if (response.status === 429 || response.status >= 500) failed(startedGeneration);
+            const unavailable = response.status === 429 || response.status >= 500 && !(await isBackgroundDeferral(response));
+            if (unavailable) failed(startedGeneration);
             else if (!probe || !response.body) healthy();
             // Headers can arrive before a stalled response body. Observe body
             // failures too, while preserving cancellation and generation fences.
-            if (response.status === 429 || response.status >= 500 || !response.body) return response;
+            if (unavailable || !response.body) return response;
             const reader = response.body.getReader();
             bodyOwnsProbe = probe;
             let settled = false;

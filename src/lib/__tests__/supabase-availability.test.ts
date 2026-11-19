@@ -2,6 +2,29 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createSupabaseAvailabilityGate } from '../supabase-availability';
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });
+it.each([500,503])('keeps an expected SQL admission deferral at HTTP %s from blocking checkpoint and lease-release writes',async status=>{
+    const upstream=vi.fn().mockResolvedValueOnce(Response.json({code:'55P03',message:'Background capacity busy'},{status})).mockImplementation(async()=>Response.json(true));
+    const fetch=createSupabaseAvailabilityGate(upstream);
+    const deferred=await fetch('https://database.example/rpc/repair',{method:'POST'});
+    expect(deferred.status).toBe(status);expect((await deferred.json()).code).toBe('55P03');
+    for(const path of ['finish','release']){const response=await fetch('https://database.example/rpc/'+path,{method:'POST'});expect(response.status).toBe(200);expect(await response.json()).toBe(true);}
+    expect(upstream).toHaveBeenCalledTimes(3);
+});
+it.each(['PGRST002','57014','53300'])('still blocks follow-up writes during a genuine %s failure',async code=>{
+    const upstream=vi.fn(async()=>Response.json({code},{status:503})),fetch=createSupabaseAvailabilityGate(upstream);
+    expect((await fetch('https://database.example/rpc/repair',{method:'POST'})).status).toBe(503);
+    expect((await fetch('https://database.example/rpc/finish',{method:'POST'})).status).toBe(503);expect(upstream).toHaveBeenCalledOnce();
+});
+it('restores a recovery probe on a verified deferral while retaining the caller-visible busy result',async()=>{
+    const upstream=vi.fn().mockResolvedValueOnce(Response.json({code:'PGRST002'},{status:503})).mockResolvedValueOnce(Response.json({code:'55P03'},{status:503})).mockResolvedValue(Response.json(true));
+    const fetch=createSupabaseAvailabilityGate(upstream);await fetch('https://database.example');await vi.advanceTimersByTimeAsync(2000);
+    expect((await (await fetch('https://database.example')).json()).code).toBe('55P03');
+    const cleanup=await fetch('https://database.example/rpc/release',{method:'POST'});expect(cleanup.status).toBe(200);expect(await cleanup.json()).toBe(true);
+});
+it.each([Response.json({code:'55P03'},{status:429}),new Response('{"code":"55P03"}',{status:503,headers:{'content-type':'text/html'}}),new Response('{',{status:503,headers:{'content-type':'application/json'}})])('never treats rate limiting, HTML or malformed errors as verified SQL deferrals',async response=>{
+    const upstream=vi.fn(async()=>response),fetch=createSupabaseAvailabilityGate(upstream);await fetch('https://database.example');
+    expect((await fetch('https://database.example/rpc/release')).status).toBe(503);expect(upstream).toHaveBeenCalledOnce();
+});
 it('sheds new traffic after an internal request deadline even when its signal is aborted',async()=>{
     const controller=new AbortController(),timeout=Object.assign(Error('Database deadline'),{code:'DATABASE_UNAVAILABLE'});
     const upstream=vi.fn(async()=>{controller.abort(timeout);throw timeout;});const fetch=createSupabaseAvailabilityGate(upstream);

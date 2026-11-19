@@ -19,7 +19,7 @@ export async function runBackgroundJob<T>(name: string, operation: () => Promise
         return await operation();
     } finally {
         if (db && claimed) {
-            try { const released = await db.rpc('veo_release_background_job', { p_job: name, p_owner: owner }); if (released.error) console.warn('[BACKGROUND_JOB] Lease release will recover on expiry', { name }); }
+            try { const released = await db.rpc('veo_release_background_job', { p_job: name, p_owner: owner }); if (released.error) console.warn('[BACKGROUND_JOB] Lease release will recover on expiry', { name, code: released.error.code || 'UNKNOWN' }); }
             catch { console.warn('[BACKGROUND_JOB] Lease release will recover on expiry', { name }); }
         }
         active.delete(name);

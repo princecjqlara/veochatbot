@@ -108,8 +108,12 @@ export async function scanVeoAutoTags(page: PageScan, db = getSupabaseAdmin()) {
         if (finished.error || finished.data !== true) throw failure('SCAN_LEASE_LOST');
         return { complete: true, ...counts };
     } catch (error: any) {
+        console.warn('[VEO_AUTO_TAG] Scan deferred', { page_id: page.page_id, reason: error.scanCode || 'TAG_STORAGE_UNAVAILABLE' });
         const finished = await db.rpc('veo_finish_autotag_page', { p_page: page.page_id, p_lease: page.lease_token, p_result: { ...counts, error: error.scanCode || 'TAG_STORAGE_UNAVAILABLE' } });
-        if (finished.error) throw failure('SCAN_CHECKPOINT_UNAVAILABLE');
+        if (finished.error) {
+            console.warn('[VEO_AUTO_TAG] Checkpoint deferred', { page_id: page.page_id, code: finished.error.code || 'UNKNOWN' });
+            throw failure('SCAN_CHECKPOINT_UNAVAILABLE');
+        }
         return { complete: false, ...counts };
     }
 }
