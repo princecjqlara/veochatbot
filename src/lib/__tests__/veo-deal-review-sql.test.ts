@@ -72,9 +72,11 @@ it('shows current balances and backlog independently of the selected payment per
  expect(report.backlog).toMatchObject({working_orders:1,overdue_orders:1});expect(report.backlog.oldest_orders).toHaveLength(1);
  expect(Number(report.backlog.oldest_hours)).toBeGreaterThanOrEqual(48);
 });
-it('returns unavailable balances for invalid negative net-paid records rather than silently overstating receivables',async()=>{
- const order=await insightOrder();await insightPayment(order,1000,'refund');const report=await insights();
- expect(report.money[0]).toMatchObject({currency:'PHP',outstanding_minor:null,balance_review_orders:1,net_cash_minor:-1000});
+it('shows a negative period cash result when a valid refund reverses an earlier-period payment',async()=>{
+ await db.query("UPDATE veo_tenants SET launch_at=now()-interval '5 days'");
+ const order=await insightOrder();await db.query("UPDATE veo_orders SET created_at=now()-interval '3 days' WHERE id=$1",[order]);
+ await insightPayment(order,1000,'deposit',48*3600);await insightPayment(order,1000,'refund');const report=await insights();
+ expect(report.money[0]).toMatchObject({currency:'PHP',received_minor:0,refunds_minor:1000,outstanding_minor:50000,balance_review_orders:0,net_cash_minor:-1000});
 });
 it('protects insights roles, dates, Pages and direct database permissions',async()=>{
  await expect(insights(member)).rejects.toThrow('Owner or Team Leader');await expect(insights(manager)).rejects.toThrow('Owner or Team Leader');
