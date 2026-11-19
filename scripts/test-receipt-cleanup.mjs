@@ -12,6 +12,8 @@ const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modul
     'src/lib/__tests__/temporary-background-pause.test.ts',
     'src/components/VeoDealEvidenceInbox.test.ts',
     'src/components/VeoClientAssignment.test.ts',
+    'src/components/VeoBusinessInsights.test.ts',
+    'src/app/api/workspace/insights/route.test.ts',
     'src/components/VeoNewClients.test.ts',
     'src/app/api/workspace/client-assignment/route.test.ts',
     'src/lib/__tests__/veo-deal-review-sql.test.ts',

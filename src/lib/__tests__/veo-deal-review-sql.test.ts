@@ -37,6 +37,57 @@ const submit=(e:any)=>rpc('veo_submit_deal_review',[member,JSON.stringify(e.data
 const approve=(r:any,actor=owner)=>rpc('veo_review_deal',[actor,r.id,'approve',true,true,true,'Checked all evidence']);
 const discipline=(actor:string,action:string,data:any)=>rpc('veo_discipline_action',[actor,action,JSON.stringify(data)]);
 const resourceSample=(extra:any={})=>({available:true,disk_size_bytes:2000000000,disk_available_bytes:1500000000,resource_metrics_available:true,memory_total_bytes:400000000,memory_available_bytes:150000000,swap_total_bytes:1000000000,swap_free_bytes:800000000,cpu_count:2,load_5m:0.5,load_1m:0.5,resource_sample_epoch:Date.now()/1000,...extra});
+async function insightOrder(seller=member,currency='PHP',price=50000,contact=client){
+ const order=id(seq++);
+ await db.query("INSERT INTO veo_orders(id,request_id,tenant_id,team_id,page_id,contact_id,seller_id,description,total_minor,currency,created_by) SELECT $1,$1,$2,t.id,$3,$4,$5,'Insights fixture',$6,$7,$8 FROM veo_teams t WHERE t.manager_id=(SELECT CASE WHEN role='manager' THEN user_id ELSE parent_id END FROM veo_accounts WHERE user_id=$5) LIMIT 1",[order,tenant,page,contact,seller,price,currency,owner]);
+ return order;
+}
+async function insightPayment(order:string,amount:number,kind='deposit',seconds=3){
+ await db.query('INSERT INTO veo_payments(request_id,order_id,kind,amount_minor,reference,occurred_at,verified_by) VALUES($1,$2,$3,$4,$5,$6,$7)',[id(seq++),order,kind,amount,'insights-'+seq,new Date(Date.now()-seconds*1000).toISOString(),owner]);
+}
+async function insights(actor=owner,selectedPage:string|null=null){const day=(await db.query<any>('SELECT veo_today() d')).rows[0].d;return rpc('veo_business_insights',[actor,day,day,selectedPage]);}
+it('aggregates insights payments once across multiple orders and distinguishes clients, orders and refunds',async()=>{
+ const first=await insightOrder(),second=await insightOrder(member,'PHP',70000);
+ await insightPayment(first,10000);await insightPayment(first,5000,'balance',2);await insightPayment(first,2000,'refund',1);await insightPayment(second,7000);
+ const before=(await db.query('SELECT to_jsonb(p) row FROM veo_payments p ORDER BY id')).rows;
+ const report=await insights();expect(report.period).toMatchObject({created_orders:2,paying_clients:1,paid_orders:2,refunded_orders:1});
+ expect(report.money).toEqual([expect.objectContaining({currency:'PHP',received_minor:22000,refunds_minor:2000,net_cash_minor:20000,outstanding_minor:100000,outstanding_orders:2})]);
+ expect((await db.query('SELECT to_jsonb(p) row FROM veo_payments p ORDER BY id')).rows).toEqual(before);
+});
+it('keeps currencies separate and limits money and work to the authorized seller branch',async()=>{
+ await insightPayment(await insightOrder(),1000);await insightPayment(await insightOrder(member,'USD',10000),500);await insightPayment(await insightOrder(other),9000);
+ const report=await insights(leader);expect(report.money.map((m:any)=>[m.currency,m.received_minor])).toEqual([['PHP',1000],['USD',500]]);expect(report.period.paid_orders).toBe(2);
+ expect((await insights()).money.find((m:any)=>m.currency==='PHP').received_minor).toBe(10000);
+});
+it('reports missing inquiry dates separately and does not fabricate ad coverage for empty cohorts',async()=>{
+ let report=await insights();expect(report.readiness).toMatchObject({page_contacts:2,contacts_without_inquiry_date:2,inquiries:0,verified_ad_inquiries:0,unknown_ad_inquiries:0});
+ await db.query('UPDATE contacts SET first_interaction_at=now() WHERE id=$1',[client]);
+ report=await insights();expect(report.readiness).toMatchObject({contacts_without_inquiry_date:1,inquiries:1,verified_ad_inquiries:0,unknown_ad_inquiries:1});
+ expect(report.money).toEqual([]);expect(report.backlog.oldest_hours).toBeNull();
+});
+it('shows current balances and backlog independently of the selected payment period',async()=>{
+ await db.query("UPDATE veo_tenants SET launch_at=now()-interval '10 days'");const order=await insightOrder();
+ await db.query("UPDATE veo_orders SET created_at=now()-interval '3 days' WHERE id=$1",[order]);await insightPayment(order,10000,'deposit',48*3600);
+ const report=await insights();expect(report.period.paid_orders).toBe(0);expect(report.money[0]).toMatchObject({received_minor:0,net_cash_minor:0,outstanding_minor:40000});
+ expect(report.backlog).toMatchObject({working_orders:1,overdue_orders:1});expect(report.backlog.oldest_orders).toHaveLength(1);
+ expect(Number(report.backlog.oldest_hours)).toBeGreaterThanOrEqual(48);
+});
+it('returns unavailable balances for invalid negative net-paid records rather than silently overstating receivables',async()=>{
+ const order=await insightOrder();await insightPayment(order,1000,'refund');const report=await insights();
+ expect(report.money[0]).toMatchObject({currency:'PHP',outstanding_minor:null,balance_review_orders:1,net_cash_minor:-1000});
+});
+it('protects insights roles, dates, Pages and direct database permissions',async()=>{
+ await expect(insights(member)).rejects.toThrow('Owner or Team Leader');await expect(insights(manager)).rejects.toThrow('Owner or Team Leader');
+ await expect(insights(owner,id(999))).rejects.toThrow('assigned Pages');
+ await expect(rpc('veo_business_insights',[owner,'2020-01-01','2020-01-02',null])).rejects.toThrow('93 Philippine dates');
+ await db.query('UPDATE users SET is_active=false WHERE id=$1',[owner]);await expect(insights()).rejects.toThrow('Owner or Team Leader');
+ expect((await db.query<any>("SELECT has_function_privilege('anon','veo_business_insights(uuid,date,date,uuid)','EXECUTE') OR has_function_privilege('authenticated','veo_business_insights(uuid,date,date,uuid)','EXECUTE') exposed")).rows[0].exposed).toBe(false);
+});
+it('defers optional insights before aggregation while database resource pressure is reported',async()=>{
+ await db.exec(`CREATE OR REPLACE FUNCTION veo_storage_status() RETURNS jsonb LANGUAGE sql AS $$SELECT '{"resource_pressure":true}'::jsonb$$`);
+ await expect(insights()).rejects.toThrow('temporarily paused');
+ expect((await db.query('SELECT * FROM veo_payments')).rows).toHaveLength(0);
+});
 const manualAssignment=(actor:string,target:string,expected:string|null,reason='Correct client assignment')=>rpc('veo_manual_client_assignment',[actor,client,target,expected,reason]);
 it('lets Managers manually assign a client to their active Page workers without a Ready offer',async()=>{
  const context=await rpc('veo_client_assignment_context',[manager,client]);

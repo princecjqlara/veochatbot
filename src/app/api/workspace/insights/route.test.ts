@@ -1,0 +1,16 @@
+import {beforeEach,afterEach,expect,it,vi} from 'vitest';import {NextRequest} from 'next/server';
+const m=vi.hoisted(()=>({session:vi.fn(),scope:vi.fn(),rpc:vi.fn()}));
+vi.mock('@/lib/get-session',()=>({getSessionFromRequest:m.session}));vi.mock('@/lib/supabase',()=>({getSupabaseAdmin:()=>({rpc:m.rpc})}));
+vi.mock('@/lib/veo-workspace',async()=>({...await vi.importActual<any>('@/lib/veo-workspace'),workspaceScope:m.scope}));
+import {GET} from './route';
+const actor='00000000-0000-4000-8000-000000000001',page='00000000-0000-4000-8000-000000000002';
+const get=(q='')=>GET(new NextRequest('https://veo.test/api/workspace/insights?'+q));
+const report={version:1,money:[],readiness:{},period:{},backlog:{},pages:[]};
+beforeEach(()=>{m.session.mockResolvedValue({user:{id:actor}});m.scope.mockResolvedValue({user_id:actor,role:'owner',tenant_id:'tenant',launch_at:'2026-11-01T00:00:00Z',page_ids:[page],worker_ids:[actor]});m.rpc.mockResolvedValue({data:report});});
+afterEach(()=>{vi.clearAllMocks();});
+it.each(['owner','team_leader'])('allows %s a scoped report with fresh authorization and no writes',async role=>{m.scope.mockResolvedValue({user_id:actor,role,launch_at:'2026-11-01',page_ids:[page]});const r=await get('from=2026-11-02&to=2026-11-03&page_id='+page);expect(r.status).toBe(200);expect(r.headers.get('cache-control')).toBe('no-store');expect(m.rpc).toHaveBeenCalledWith('veo_business_insights',{p_actor:actor,p_from:'2026-11-02',p_to:'2026-11-03',p_page:page});});
+it('rejects anonymous and nonexecutive users before reading facts',async()=>{m.session.mockResolvedValueOnce(null);expect((await get()).status).toBe(401);for(const role of ['member','manager']){m.scope.mockResolvedValue({role,launch_at:'2026-11-01'});expect((await get()).status).toBe(403);}expect(m.rpc).not.toHaveBeenCalled();});
+it('rejects invalid dates and unauthorized Pages before SQL',async()=>{for(const q of ['from=2026-02-30','from=2026-11-03&to=2026-11-02','to=2099-01-01','from=2020-01-01'])expect((await get(q)).status).toBe(400);expect((await get('page_id=00000000-0000-4000-8000-000000000099')).status).toBe(403);expect(m.rpc).not.toHaveBeenCalled();});
+it('rechecks permissions after a successful read instead of caching authorized financial output',async()=>{expect((await get()).status).toBe(200);m.scope.mockResolvedValue({role:'member',launch_at:'2026-11-01'});expect((await get()).status).toBe(403);expect(m.scope).toHaveBeenCalledTimes(2);expect(m.rpc).toHaveBeenCalledTimes(1);});
+it('does not turn missing source arrays into a successful empty report',async()=>{m.rpc.mockResolvedValue({data:{version:1}});expect((await get()).status).toBe(503);});
+it('shares only concurrent identical reads',async()=>{let finish:(value:any)=>void=()=>{};m.rpc.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));const one=get(),two=get();await new Promise(resolve=>setTimeout(resolve,0));expect(m.rpc).toHaveBeenCalledTimes(1);finish({data:report});expect((await one).status).toBe(200);expect((await two).status).toBe(200);m.rpc.mockResolvedValue({data:report});expect((await get()).status).toBe(200);expect(m.rpc).toHaveBeenCalledTimes(2);});
