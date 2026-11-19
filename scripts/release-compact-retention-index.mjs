@@ -15,12 +15,12 @@ const predicate = "((status = 'done'::text) AND (payload <> '{}'::jsonb))";
 const db = new pg.Client({ connectionString: target.connectionString, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 10000, query_timeout: 70000 });
 db.on('error', () => {});
 const report = { at: new Date().toISOString(), project: target.project, mode, migration: item.name, business_records_deleted: 0, payloads_changed: 0 };
-let schemaLock = false, capacityLock = false;
+let schemaLock = false, capacityLock = false, tableOid;
 async function index(name) {
   return (await db.query(`SELECT i.oid::int oid,i.relname name,x.indrelid::int table_oid,t.relfilenode table_filenode,am.amname method,x.indnkeyatts keys,x.indnatts attributes,x.indisvalid valid,x.indisready ready,x.indislive live,x.indisunique unique_key,x.indisprimary primary_key,x.indisreplident replica_identity,pg_relation_size(i.oid)::double precision bytes,pg_get_indexdef(i.oid) definition,pg_get_indexdef(i.oid,1,true) first_key,CASE WHEN x.indnkeyatts>1 THEN pg_get_indexdef(i.oid,2,true) END second_key,pg_get_expr(x.indpred,x.indrelid) predicate,(SELECT count(*)::int FROM pg_constraint c WHERE c.conindid=i.oid) constraints FROM pg_index x JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_class t ON t.oid=x.indrelid JOIN pg_am am ON am.oid=i.relam WHERE i.oid=to_regclass($1)`, ['public.' + name])).rows[0];
 }
 function checkIndex(i, keys) {
-  assert(i && i.method === 'btree' && i.keys === keys && i.attributes === keys && i.first_key === 'received_at' && (keys === 1 || i.second_key === 'event_key') && i.predicate === predicate && !i.unique_key && !i.primary_key && !i.replica_identity && !i.constraints, 'Unexpected index definition; retain it for review');
+  assert(i && i.table_oid === tableOid && i.method === 'btree' && i.keys === keys && i.attributes === keys && i.first_key === 'received_at' && (keys === 1 || i.second_key === 'event_key') && i.predicate === predicate && !i.unique_key && !i.primary_key && !i.replica_identity && !i.constraints, 'Unexpected index definition; retain it for review');
 }
 async function resources() {
   const h = (await db.query('SELECT veo_storage_status() v')).rows[0].v;
@@ -62,8 +62,10 @@ async function sample() {
 try {
   await db.connect();
   for (const sql of ["SET application_name='veo-compact-retention-release'", "SET statement_timeout='45s'", "SET lock_timeout='3s'", "SET maintenance_work_mem='16MB'", "SET work_mem='2MB'", 'SET max_parallel_maintenance_workers=0', 'SET max_parallel_workers_per_gather=0', 'SET jit=off']) await db.query(sql);
+  tableOid = (await db.query("SELECT 'public.veo_event_inbox'::regclass::oid::int oid")).rows[0].oid;
   const installed = (await db.query('SELECT filename,sha256,project_ref FROM app_private.veobot_project_migrations WHERE filename=$1', [item.name])).rows[0];
   if (installed) assert(migrationFingerprintMatches(installed, item, target.project));
+  if (mode === 'verify') assert(installed, 'Migration installation receipt is missing');
   report.before = await index(oldName);
   if (!report.before && mode === 'apply' && !installed) {
     const replacement = await index(newName);
