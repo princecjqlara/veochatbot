@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
             userId 
         });
 
-        const supabase = getSupabaseAdmin();
+        const supabase = getSupabaseAdmin(undefined, 'interactive');
 
         const userPages = await requestDeadline(signal => fetchAllSupabaseRows<any>(supabase
             .from('user_pages')

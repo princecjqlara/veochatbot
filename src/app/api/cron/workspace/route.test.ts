@@ -90,12 +90,31 @@ describe('private photo cleanup during unrelated worker failures', () => {
     it('continues new-event collection during Telegram and planning outages and reports retry health', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true'); vi.stubEnv('CRON_SECRET', 'cron');
         m.from.mockImplementation(() => { const q: any = { select: () => q, is: () => q, or: () => q, lte: () => q, limit: async () => ({ data: [] }) }; return q; });
-        m.rpc.mockImplementation(async name => name === 'veo_operations_maintenance' ? { error: { message: 'Planning outage' } } : { data: name === 'veo_claim_submissions' ? [] : {} });
+        m.rpc.mockImplementation(async name => name === 'veo_operations_maintenance' ? { error: { message: 'Planning outage' } } : { data: name === 'veo_claim_submissions' ? [] : true });
         m.sync.mockRejectedValue(new Error('Telegram unavailable')); m.budget.mockRejectedValue(new Error('Budget unavailable')); m.events.mockResolvedValue(5);
         const response = await GET(new NextRequest('https://veo.test/api/cron/workspace', { headers: { Authorization: 'Bearer cron' } }));
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ processed: 5, integration: { retry: true }, budget_retry: true, operations_retry: true });
         expect(m.events).toHaveBeenCalled();
+    });
+    it.each([false, true])('keeps receipt delivery running when maintenance is cooling down or pressure rises between phases: %s', async pressureRises => {
+        vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true');vi.stubEnv('CRON_SECRET', 'cron');
+        m.from.mockImplementation(() => { const q: any = { select: () => q, is: () => q, or: () => q, lte: () => q, limit: async () => ({ data: [] }) };return q; });
+        m.sync.mockResolvedValue({ checked: 8 });m.events.mockResolvedValue(0);m.sourceJobs.mockResolvedValue({});m.budget.mockResolvedValue({});
+        if (pressureRises) m.guard.mockResolvedValueOnce({}).mockRejectedValue(Error('Pressure rose'));
+        m.rpc.mockImplementation(async name => ({ data: name === 'veo_claim_maintenance_phase' ? pressureRises
+            : name === 'veo_claim_submissions' ? [{ id: 'submission', claim_token: 'lease' }]
+            : name === 'veo_handoff' ? null : name === 'veo_submission_requirements' ? { blockers: ['page_access_changed'] } : true }));
+        const response = await GET(new NextRequest('https://veo.test/api/cron/workspace', { headers: { Authorization: 'Bearer cron' } }));
+        expect(response.status).toBe(200);
+        expect(m.rpc).toHaveBeenCalledWith('veo_finish_submission', expect.objectContaining({ p_id: 'submission', p_status: 'blocked' }));
+        if (pressureRises) {
+            expect(m.rpc.mock.calls.map(([name]) => name)).not.toContain('veo_operations_maintenance');
+            expect(m.sourceJobs).not.toHaveBeenCalled();expect(m.budget).not.toHaveBeenCalled();
+        } else {
+            expect(m.rpc.mock.calls.map(([name]) => name)).not.toContain('veo_maintenance');
+            expect(await response.json()).toMatchObject({ maintenance_retry: false, operations_retry: false });
+        }
     });
     it('deletes expired objects before a salary or event outage can interrupt the cron', async () => {
         vi.stubEnv('VEO_WORKSPACE_ENABLED', 'true'); vi.stubEnv('CRON_SECRET', 'cron');

@@ -11,6 +11,7 @@ import { runBackgroundJob } from '@/lib/background-run';
 import { queueReceiptDeletions } from '@/lib/veo-receipt-deletion';
 import { requireStorageForOptionalWork } from '@/lib/veo-storage-health';
 import { cleanupDeliveredReceiptPhotos } from '@/lib/veo-delivered-photo-cleanup';
+import { runMaintenancePhase } from '@/lib/veo-maintenance-phase';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -43,16 +44,28 @@ async function processWorkspace(request: NextRequest) {
         try { await requireStorageForOptionalWork(db); } catch { optionalWorkPaused = true; }
         let operations: any = { error: true }, maintenanceRetry = optionalWorkPaused;
         if (!optionalWorkPaused) {
-            try { const maintained = await db.rpc('veo_maintenance');maintenanceRetry = !!maintained.error; }
+            try {
+                const maintained = await runMaintenancePhase(db, 'salary', async () => db.rpc('veo_maintenance'));
+                maintenanceRetry = 'error' in maintained && !!maintained.error;
+            }
             catch { maintenanceRetry = true; }
             if (maintenanceRetry) optionalWorkPaused = true;
-            else try { operations = await db.rpc('veo_operations_maintenance'); } catch { /* Preserve collection during a planning outage. */ }
+            else try {
+                operations = await runMaintenancePhase(db, 'operations', async () => {
+                    try { await requireStorageForOptionalWork(db); }
+                    catch (error) { optionalWorkPaused = true;throw error; }
+                    return db.rpc('veo_operations_maintenance');
+                });
+            } catch { /* Preserve collection during a planning outage. */ }
         }
         let intakeRetry = false;
         try { const cleaned = await db.rpc('veo_telegram_intake_maintenance');intakeRetry = !!cleaned.error; } catch { intakeRetry = true; }
         // Editor dispatch has an independent minute worker so maintenance and
         // enrichment cannot prevent a due offer from being considered.
         let sourceRetry = optionalWorkPaused, budgetRetry = optionalWorkPaused;
+        if (!optionalWorkPaused) {
+            try { await requireStorageForOptionalWork(db); } catch { optionalWorkPaused = true;sourceRetry = true;budgetRetry = true; }
+        }
         if (!optionalWorkPaused) {
             try { await processJevInterruptionReviews({ limit: 1, timeBudgetMs: 20000 }); } catch { /* Keep the bot paused and retry independently of editor dispatch. */ }
             try { await processVeoSourceJobs(2, 25000); } catch { sourceRetry = true; }

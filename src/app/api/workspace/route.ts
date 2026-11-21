@@ -24,7 +24,7 @@ async function actor(request: NextRequest) {
 }
 export async function GET(request: NextRequest) {
     try {
-        const scope = await actor(request), db = getSupabaseAdmin();
+        const scope = await actor(request), db = getSupabaseAdmin(undefined, request.nextUrl.searchParams.get('view') === 'accounts' ? 'interactive' : 'default');
         const day = request.nextUrl.searchParams.get('date') || philippineDate();
         if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('Invalid date');
         if (day < philippineDate(new Date(scope.launch_at!)) || day > philippineDate()) throw new Error('Choose a Philippine work date from launch through today');

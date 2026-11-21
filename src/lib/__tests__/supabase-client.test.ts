@@ -23,6 +23,26 @@ it('still fails closed when the permission database itself is unavailable',async
     const access=getSupabaseAdmin(undefined,'access');expect((await access.rpc('veo_access_context',{p_actor:'member'})).error).not.toBeNull();
     expect((await access.rpc('veo_access_context',{p_actor:'member'})).error?.code).toBe('SUPABASE_CIRCUIT_OPEN');expect(fetcher).toHaveBeenCalledOnce();
 });
+it('keeps basic workspace reads available after a heavy query opens its own circuit',async()=>{
+    const fetcher=vi.fn().mockResolvedValueOnce(Response.json({code:'57014',message:'Statement timed out'},{status:503}))
+        .mockResolvedValueOnce(Response.json({accounts:[]}));
+    vi.stubGlobal('fetch',fetcher);
+    expect((await getSupabaseAdmin().rpc('veo_maintenance')).error).not.toBeNull();
+    expect((await getSupabaseAdmin().rpc('veo_maintenance')).error?.code).toBe('SUPABASE_CIRCUIT_OPEN');
+    const interactive=getSupabaseAdmin(undefined,'interactive');expect(interactive).toBe(getSupabaseAdmin(undefined,'interactive'));
+    expect((await interactive.rpc('veo_account_directory')).data).toEqual({accounts:[]});
+    expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('gates an actual interactive database outage without blocking an independent healthy worker',async()=>{
+    const fetcher=vi.fn().mockResolvedValueOnce(Response.json({code:'PGRST002',message:'Database unavailable'},{status:503}))
+        .mockResolvedValueOnce(Response.json({ok:true}));
+    vi.stubGlobal('fetch',fetcher);
+    const interactive=getSupabaseAdmin(undefined,'interactive');
+    expect((await interactive.rpc('veo_account_directory')).error).not.toBeNull();
+    expect((await interactive.rpc('veo_account_directory')).error?.code).toBe('SUPABASE_CIRCUIT_OPEN');
+    expect((await getSupabaseAdmin().rpc('veo_maintenance')).data).toEqual({ok:true});
+    expect(fetcher).toHaveBeenCalledTimes(2);
+});
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 it('cancels all work on the request client without affecting other requests or replaying writes', async () => {

@@ -24,6 +24,10 @@ SQL, pool and transport timeouts are not automatically repeated. A transient
 gateway error may retry once. The recovery circuit observes failures after
 response headers as well as failures while connecting, and allows one recovery
 probe during a cooldown. Writes are never automatically replayed.
+Basic Accounts, Pages and contact-list reads have their own recovery circuit,
+separate from heavy reports/background work and from live permission checks.
+An unrelated background timeout cannot open that circuit; a genuine interactive
+database outage still fails closed and receives its own cooldown.
 
 `scripts/repair-data-api-schema-cache.mjs --preflight` checks the API role
 settings without committing changes. `--apply` allows metadata startup up to
@@ -31,6 +35,27 @@ sixty seconds, preserves ordinary service-query deadlines, and limits abandoned
 API transactions to thirty seconds. Use `--reconnect` only for an existing API
 pool that needs its login-time settings refreshed; it is not a scheduled action.
 No automatic database restart is added.
+
+Maintenance cadence is persisted across server instances by migration
+`202611210001`. Previous-day salary reconciliation runs at most every two minutes;
+planning and completed-event upkeep run at most every five minutes. Their
+existing calculations, correction queue and transaction admission lock are
+unchanged. A failed phase retries after one to five minutes, and an abandoned
+30-second lease cannot be completed by a newer or expired owner. Live inbound
+ingestion, editor offers, receipt delivery and independent photo expiry retain
+their own schedules.
+
+The database-health endpoint checks both maintenance phases separately from
+host and storage metrics. Missing, repeatedly failing or stale successes remain
+unhealthy; monitoring does not run a worker or restart the database. Optional
+work rechecks resource pressure after maintenance before starting enrichment.
+Discipline and expired intake-menu cleanup also have five-second SQL deadlines
+and one-second lock deadlines.
+
+Install this migration before deploying the updated routes. Run
+`node scripts/release-maintenance-cadence.mjs preflight`, then `apply` and `verify`.
+Preflight exercises recovery inside a rolled-back transaction; verification
+checks cross-connection contention without executing maintenance or delivery.
 
 Monitor Collection health and the existing database-health schedule. Memory,
 swap, disk and stale monitoring pause optional bulk work. A healthy reading is

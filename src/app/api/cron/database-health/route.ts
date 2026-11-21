@@ -11,9 +11,12 @@ export async function GET(request: NextRequest) {
     try {
         const recorded = await db.rpc('veo_record_storage_metrics', { p_metrics: metrics });
         if (recorded.error || !recorded.data) throw Error('Storage monitor checkpoint unavailable');
-        const healthy = recorded.data.status === 'healthy' && recorded.data.maintenance_healthy && recorded.data.resource_metrics_fresh === true && recorded.data.resource_pressure === false;
+        const phases = await db.rpc('veo_maintenance_phase_status');
+        const phaseHealthy = !phases.error && phases.data?.healthy === true;
+        const healthy = recorded.data.status === 'healthy' && recorded.data.maintenance_healthy && recorded.data.resource_metrics_fresh === true && recorded.data.resource_pressure === false && phaseHealthy;
         if (!healthy) console.warn('[DATABASE_HEALTH] Database requires attention', { status: recorded.data.status, maintenanceHealthy: recorded.data.maintenance_healthy,
-            resourceMetricsFresh: recorded.data.resource_metrics_fresh, resourcePressure: recorded.data.resource_pressure_reasons });
-        return NextResponse.json({ ok: healthy, ...recorded.data }, { status: healthy ? 200 : 503, headers: { 'Cache-Control': 'no-store' } });
+            resourceMetricsFresh: recorded.data.resource_metrics_fresh, resourcePressure: recorded.data.resource_pressure_reasons, maintenancePhasesHealthy: phaseHealthy });
+        return NextResponse.json({ ok: healthy, ...recorded.data, maintenance_phases_healthy: phaseHealthy,
+            maintenance_phases: phases.error ? null : phases.data?.phases }, { status: healthy ? 200 : 503, headers: { 'Cache-Control': 'no-store' } });
     } catch { return NextResponse.json({ ok: false, error: 'Storage health is temporarily unavailable' }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
 }
